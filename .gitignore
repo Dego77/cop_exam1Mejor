@@ -1,0 +1,15 @@
+# Node
+node_modules/
+
+# Angular
+dist/
+.angular/
+
+# Variables privadas
+.env
+
+# Editor
+.vscode/
+
+# Logs
+*.log
