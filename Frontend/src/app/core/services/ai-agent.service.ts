@@ -26,23 +26,25 @@ export class AIAgentService {
     return new HttpHeaders({ Authorization: `Bearer ${this.auth.token}` });
   }
 
-  sendTextPrompt(projectId: string, prompt: string): Observable<any> {
-    return this.http.post(`${this.apiUrl}/chat`, { projectId, prompt }, { headers: this.headers });
+  sendTextPrompt(projectId: string, prompt: string, model?: string): Observable<any> {
+    return this.http.post(`${this.apiUrl}/chat`, { projectId, prompt, model }, { headers: this.headers });
   }
 
-  sendPhoto(projectId: string, file: File): Observable<any> {
+  sendPhoto(projectId: string, file: File, model?: string): Observable<any> {
     const formData = new FormData();
     formData.append('photo', file);
     formData.append('projectId', projectId);
+    if (model) formData.append('model', model);
     return this.http.post(`${this.apiUrl}/photo`, formData, {
       headers: new HttpHeaders({ Authorization: `Bearer ${this.auth.token}` })
     });
   }
 
-  sendVoice(projectId: string, blob: Blob): Observable<any> {
+  sendVoice(projectId: string, blob: Blob, model?: string): Observable<any> {
     const formData = new FormData();
     formData.append('voice', blob, 'voice-note.webm');
     formData.append('projectId', projectId);
+    if (model) formData.append('model', model);
     return this.http.post(`${this.apiUrl}/voice`, formData, {
       headers: new HttpHeaders({ Authorization: `Bearer ${this.auth.token}` })
     });
@@ -65,21 +67,21 @@ export class AIAgentService {
     clean = clean.replace(/\s+/g, ' ').trim();
 
     // 2. Normalize compound PK/FK attribute patterns: "id rol" or "id de rol" -> "id_rol"
-    clean = clean.replace(/\bid\s+(?:de\s+)?([A-Za-z0-9_]+)\b/gi, (match, p1) => {
+    clean = clean.replace(/\bid\s+(?:de\s+)?([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)\b/gi, (match, p1) => {
       const lowerP1 = p1.toLowerCase();
       if (['que', 'se', 'una', 'la', 'un', 'el', 'los', 'las', 'del'].includes(lowerP1)) return match;
       return `id_${lowerP1}`;
     });
 
     // 3. Normalize "nombre rol" / "nombre de rol" -> "nombre_rol"
-    clean = clean.replace(/\bnombre\s+(?:de\s+)?([A-Za-z0-9_]+)\b/gi, (match, p1) => {
+    clean = clean.replace(/\bnombre\s+(?:de\s+)?([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)\b/gi, (match, p1) => {
       const lowerP1 = p1.toLowerCase();
       if (['que', 'se', 'una', 'la', 'un', 'el', 'los', 'las', 'del'].includes(lowerP1)) return match;
       return `nombre_${lowerP1}`;
     });
 
     // 4. Normalize "fecha creacion" / "fecha de creacion" -> "fecha_creacion"
-    clean = clean.replace(/\bfecha\s+(?:de\s+)?([A-Za-z0-9_]+)\b/gi, (match, p1) => {
+    clean = clean.replace(/\bfecha\s+(?:de\s+)?([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)\b/gi, (match, p1) => {
       const lowerP1 = p1.toLowerCase();
       if (['que', 'se', 'una', 'la', 'un', 'el', 'los', 'las', 'del'].includes(lowerP1)) return match;
       return `fecha_${lowerP1}`;
@@ -186,16 +188,16 @@ export class AIAgentService {
 
       // Extract target attribute/method name requested
       let extractedItemName = '';
-      const explicitMatch = cleanPrompt.match(/(?:q\s+se\s+llame|que\s+se\s+llame|llamado|llamada|nombrado|nombrada|denominado|denominada)\s+([A-Za-z0-9_]+)/i);
+      const explicitMatch = cleanPrompt.match(/(?:q\s+se\s+llame|que\s+se\s+llame|llamado|llamada|nombrado|nombrada|denominado|denominada)\s+([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)/i);
       if (explicitMatch && explicitMatch[1]) {
         extractedItemName = explicitMatch[1];
       } else {
-        const itemMatch = cleanPrompt.match(/(?:atributo|campo|propiedad|metodo|método)\s+([A-Za-z0-9_]+)/i);
+        const itemMatch = cleanPrompt.match(/(?:atributo|campo|propiedad|metodo|método)\s+([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)/i);
         if (itemMatch && itemMatch[1]) {
           extractedItemName = itemMatch[1];
         } else {
           // Fallback: match last word if user says "borra el atributo nombre_rol"
-          const lastWordMatch = cleanPrompt.match(/(?:atributo|campo|propiedad|metodo|método)\s+.*?\b([A-Za-z0-9_]+)$/i);
+          const lastWordMatch = cleanPrompt.match(/(?:atributo|campo|propiedad|metodo|método)\s+.*?\b([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)$/i);
           if (lastWordMatch && lastWordMatch[1]) {
             extractedItemName = lastWordMatch[1];
           }
@@ -248,15 +250,15 @@ export class AIAgentService {
 
     // 1. High-precision Class Name Extraction (Only for NEW classes that do not exist)
     let rawClassName = '';
-    const explicitNameMatch = cleanPrompt.match(/(?:q\s+se\s+llame|que\s+se\s+llame|llamada|llamado|nombrada|nombrado|denominada|denominado)\s+([A-Za-z0-9_]+)/i);
+    const explicitNameMatch = cleanPrompt.match(/(?:q\s+se\s+llame|que\s+se\s+llame|llamada|llamado|nombrada|nombrado|denominada|denominado)\s+([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)/i);
     if (explicitNameMatch && explicitNameMatch[1]) {
       rawClassName = explicitNameMatch[1];
     } else {
-      const classKeywordsMatch = cleanPrompt.match(/(?:clase|entidad|interface|enum)\s+([A-Za-z0-9_]+)/i);
+      const classKeywordsMatch = cleanPrompt.match(/(?:clase|entidad|interface|enum)\s+([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)/i);
       if (classKeywordsMatch && classKeywordsMatch[1] && !stopWords.has(classKeywordsMatch[1].toLowerCase())) {
         rawClassName = classKeywordsMatch[1];
       } else {
-        const verbMatch = cleanPrompt.match(/(?:agrega|agregame|crea|creame|añade|añademe|nueva|poner|insertar)\s+(?:me\s+)?(?:una\s+|la\s+|un\s+|el\s+)?([A-Za-z0-9_]+)/i);
+        const verbMatch = cleanPrompt.match(/(?:agrega|agregame|crea|creame|añade|añademe|nueva|poner|insertar)\s+(?:me\s+)?(?:una\s+|la\s+|un\s+|el\s+)?([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)/i);
         if (verbMatch && verbMatch[1] && !stopWords.has(verbMatch[1].toLowerCase())) {
           rawClassName = verbMatch[1];
         }
@@ -276,7 +278,7 @@ export class AIAgentService {
 
       // Extract attributes mentioned (e.g. "q tenga como atributos id_rol", "con atributos id, nombre: String")
       const attributes: any[] = [];
-      const attrSectionMatch = cleanPrompt.match(/(?:tenga|tengan|con|atributo|atributos|campos?|propiedad|propiedades)\s+(?:como\s+atributos?\s+)?([A-Za-z0-9_:\s,]+)/i);
+      const attrSectionMatch = cleanPrompt.match(/(?:tenga|tengan|con|atributo|atributos|campos?|propiedad|propiedades)\s+(?:como\s+atributos?\s+)?([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ:\s,]+)/i);
 
       if (attrSectionMatch && attrSectionMatch[1]) {
         const rawTokens = attrSectionMatch[1].split(/,|\sy\s|\scom\s|\scomo\s/i);
@@ -300,7 +302,7 @@ export class AIAgentService {
               attrType = 'Double';
             }
 
-            const idMatch = attrName.match(/[A-Za-z_][A-Za-z0-9_]*/);
+            const idMatch = attrName.match(/[A-Za-z_áéíóúÁÉÍÓÚñÑ][A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]*/);
             if (idMatch) {
               attrName = idMatch[0];
               if (attrName && !stopWords.has(attrName.toLowerCase()) && !attributes.some(a => a.name === attrName)) {
@@ -334,7 +336,7 @@ export class AIAgentService {
     }
 
     // 2. Detect Relationship / Connector creation (e.g., "relaciona Usuario con Rol")
-    const relMatch = cleanPrompt.match(/(?:relaciona|conecta|asocia|vincula)\s+(?:a\s+)?([A-Za-z0-9_]+)\s+(?:con|y|a)\s+([A-Za-z0-9_]+)/i);
+    const relMatch = cleanPrompt.match(/(?:relaciona|conecta|asocia|vincula)\s+(?:a\s+)?([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)\s+(?:con|y|a)\s+([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)/i);
     if (relMatch && relMatch[1] && relMatch[2]) {
       const srcName = relMatch[1].trim();
       const tgtName = relMatch[2].trim();

@@ -68,32 +68,213 @@ export class DiagramService {
     return new HttpHeaders({ Authorization: `Bearer ${this.auth.token}` });
   }
 
+  private currentProjectId = '';
+
   loadDiagram(projectId: string): Observable<Diagram> {
+    const memoryNodesBackup = [...this.nodesSubject.value];
+    const memoryConnectorsBackup = [...this.connectorsSubject.value];
+
+    this.currentProjectId = projectId;
     return new Observable(observer => {
+      // Clear memory subjects immediately so elements from previous project don't bleed into new project
+      this.nodesSubject.next([]);
+      this.connectorsSubject.next([]);
+
       this.http.get<Diagram>(`${this.apiUrl}/${projectId}`, { headers: this.headers }).subscribe({
         next: (d) => {
           this.currentDiagramId = d.id;
-          this.nodesSubject.next(d.nodes || []);
-          this.connectorsSubject.next(d.connectors || []);
-          observer.next(d);
+          const serverNodes = d.nodes || [];
+          this.nodesSubject.next(serverNodes);
+          let serverConnectors = d.connectors || [];
+
+          // Auto-Synthesize Connectors if project has nodes but 0 connectors
+          if (serverConnectors.length === 0 && serverNodes.length >= 2) {
+            const synthesized = this.autoSynthesizeConnectors(serverNodes);
+            if (synthesized.length > 0) {
+              serverConnectors = synthesized;
+              // Persist to PostgreSQL asynchronously
+              synthesized.forEach(c => this.addConnector(c).subscribe());
+            }
+          }
+
+          this.connectorsSubject.next(serverConnectors);
+          this.saveDiagramLocalSnapshot(projectId, serverNodes, serverConnectors);
+          observer.next({ ...d, connectors: serverConnectors });
           observer.complete();
         },
-        error: err => observer.error(err)
+        error: err => {
+          const cached = this.getDiagramLocalSnapshot(projectId);
+          if (cached && cached.nodes && cached.nodes.length > 0) {
+            let cachedConns = cached.connectors || [];
+            if (cachedConns.length === 0 && cached.nodes.length >= 2) {
+              cachedConns = this.autoSynthesizeConnectors(cached.nodes);
+            }
+            this.nodesSubject.next(cached.nodes);
+            this.connectorsSubject.next(cachedConns);
+            observer.next({ id: '', name: '', nodes: cached.nodes, connectors: cachedConns });
+            observer.complete();
+          } else {
+            observer.error(err);
+          }
+        }
       });
     });
   }
 
+  autoSynthesizeConnectors(nodes: UMLNode[]): UMLConnector[] {
+    const connectors: UMLConnector[] = [];
+    if (!nodes || nodes.length < 2) return connectors;
+
+    // 1. Foreign Key Attribute Matching
+    for (let i = 0; i < nodes.length; i++) {
+      const srcNode = nodes[i];
+      const attrs = srcNode.attributes || [];
+      for (const attr of attrs) {
+        const attrName = (attr.name || '').trim().toLowerCase();
+        if (attrName.length > 2 && (attrName.endsWith('id') || attrName.endsWith('_id'))) {
+          const targetNamePart = attrName.replace(/_?id$/i, '');
+          if (!targetNamePart) continue;
+
+          const targetNode = nodes.find(n => {
+            if (n.id === srcNode.id) return false;
+            const nClean = (n.name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+            return nClean === targetNamePart || nClean.includes(targetNamePart) || targetNamePart.includes(nClean);
+          });
+
+          if (targetNode) {
+            const exists = connectors.some(c => 
+              (c.sourceNodeId === srcNode.id && c.targetNodeId === targetNode.id) ||
+              (c.sourceNodeId === targetNode.id && c.targetNodeId === srcNode.id)
+            );
+            if (!exists) {
+              connectors.push({
+                id: `conn_fk_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+                sourceNodeId: srcNode.id,
+                targetNodeId: targetNode.id,
+                type: 'Composition',
+                sourceMultiplicity: '0..*',
+                targetMultiplicity: '1',
+                label: ''
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Specific Domain Matching (Customer -> User, etc.)
+    const findNodeByName = (nameStr: string) => {
+      const clean = nameStr.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      return nodes.find(n => {
+        const nClean = (n.name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+        return nClean === clean || nClean.includes(clean) || clean.includes(nClean);
+      });
+    };
+
+    const userNode = findNodeByName('user');
+    const customerNode = findNodeByName('customer');
+    if (customerNode && userNode && customerNode.id !== userNode.id) {
+      const exists = connectors.some(c => c.sourceNodeId === customerNode.id && c.targetNodeId === userNode.id);
+      if (!exists) {
+        connectors.push({
+          id: `conn_inh_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+          sourceNodeId: customerNode.id,
+          targetNodeId: userNode.id,
+          type: 'Inheritance',
+          sourceMultiplicity: '',
+          targetMultiplicity: '',
+          label: ''
+        });
+      }
+    }
+
+    // 3. Fallback: Sequential Chain for remaining disconnected nodes
+    if (connectors.length === 0 && nodes.length >= 2) {
+      for (let i = 0; i < nodes.length - 1; i++) {
+        connectors.push({
+          id: `conn_chain_${i}_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+          sourceNodeId: nodes[i + 1].id,
+          targetNodeId: nodes[i].id,
+          type: i === 0 ? 'Inheritance' : 'Composition',
+          sourceMultiplicity: i === 0 ? '' : '0..*',
+          targetMultiplicity: i === 0 ? '' : '1',
+          label: ''
+        });
+      }
+    }
+
+    return connectors;
+  }
+
+  saveDiagramLocalSnapshot(projectId: string, nodes: UMLNode[], connectors: UMLConnector[]): void {
+    if (!projectId) return;
+    try {
+      localStorage.setItem(`classforge_diagram_${projectId}`, JSON.stringify({ nodes, connectors }));
+    } catch (e) {}
+  }
+
+  getDiagramLocalSnapshot(projectId: string): { nodes: UMLNode[]; connectors: UMLConnector[] } | null {
+    if (!projectId) return null;
+    try {
+      const raw = localStorage.getItem(`classforge_diagram_${projectId}`);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   addNode(node: Partial<UMLNode>): Observable<UMLNode> {
     return new Observable(observer => {
-      const payload = { diagramId: this.currentDiagramId, ...node };
-      this.http.post<UMLNode>(`${this.apiUrl}/nodes`, payload, { headers: this.headers }).subscribe({
-        next: (n) => {
-          const current = this.nodesSubject.value;
-          this.nodesSubject.next([...current, n]);
-          observer.next(n);
+      const ensureDiagramId = (cb: (diagId: string) => void) => {
+        if (this.currentDiagramId) {
+          cb(this.currentDiagramId);
+        } else if (this.currentProjectId) {
+          this.http.get<Diagram>(`${this.apiUrl}/${this.currentProjectId}`, { headers: this.headers }).subscribe({
+            next: (d) => {
+              this.currentDiagramId = d.id;
+              cb(d.id);
+            },
+            error: () => cb('')
+          });
+        } else {
+          cb('');
+        }
+      };
+
+      ensureDiagramId((diagId) => {
+        const tempNode: UMLNode = {
+          id: node.id || `node_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+          name: node.name || 'NewClass',
+          stereotype: node.stereotype || 'Entity',
+          attributes: node.attributes || [],
+          methods: node.methods || [],
+          positionX: node.positionX || 150,
+          positionY: node.positionY || 150
+        };
+
+        if (!diagId) {
+          this.nodesSubject.next([...this.nodesSubject.value, tempNode]);
+          observer.next(tempNode);
           observer.complete();
-        },
-        error: err => observer.error(err)
+          return;
+        }
+
+        const payload = { diagramId: diagId, ...node };
+        this.http.post<UMLNode>(`${this.apiUrl}/nodes`, payload, { headers: this.headers }).subscribe({
+          next: (n) => {
+            const current = this.nodesSubject.value.filter(x => x.id !== tempNode.id);
+            this.nodesSubject.next([...current, n]);
+            observer.next(n);
+            observer.complete();
+          },
+          error: () => {
+            if (!this.nodesSubject.value.some(x => x.id === tempNode.id)) {
+              this.nodesSubject.next([...this.nodesSubject.value, tempNode]);
+            }
+            observer.next(tempNode);
+            observer.complete();
+          }
+        });
       });
     });
   }
@@ -106,29 +287,80 @@ export class DiagramService {
 
   deleteNode(nodeId: string): void {
     this.http.delete(`${this.apiUrl}/nodes/${nodeId}`, { headers: this.headers }).subscribe();
-    this.nodesSubject.next(this.nodesSubject.value.filter(n => n.id !== nodeId));
-    this.connectorsSubject.next(
-      this.connectorsSubject.value.filter(c => c.sourceNodeId !== nodeId && c.targetNodeId !== nodeId)
-    );
+    const updatedNodes = this.nodesSubject.value.filter(n => n.id !== nodeId);
+    const updatedConns = this.connectorsSubject.value.filter(c => c.sourceNodeId !== nodeId && c.targetNodeId !== nodeId);
+    this.nodesSubject.next(updatedNodes);
+    this.connectorsSubject.next(updatedConns);
+    if (this.currentProjectId) {
+      this.saveDiagramLocalSnapshot(this.currentProjectId, updatedNodes, updatedConns);
+    }
   }
 
   addConnector(conn: Partial<UMLConnector>): Observable<UMLConnector> {
     return new Observable(observer => {
-      const payload = { diagramId: this.currentDiagramId, ...conn };
-      this.http.post<UMLConnector>(`${this.apiUrl}/connectors`, payload, { headers: this.headers }).subscribe({
-        next: (c) => {
-          this.connectorsSubject.next([...this.connectorsSubject.value, c]);
-          observer.next(c);
+      const ensureDiagramId = (cb: (diagId: string) => void) => {
+        if (this.currentDiagramId) {
+          cb(this.currentDiagramId);
+        } else if (this.currentProjectId) {
+          this.http.get<Diagram>(`${this.apiUrl}/${this.currentProjectId}`, { headers: this.headers }).subscribe({
+            next: (d) => {
+              this.currentDiagramId = d.id;
+              cb(d.id);
+            },
+            error: () => cb('')
+          });
+        } else {
+          cb('');
+        }
+      };
+
+      ensureDiagramId((diagId) => {
+        const tempConn: UMLConnector = {
+          id: conn.id || `conn_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+          sourceNodeId: conn.sourceNodeId || '',
+          targetNodeId: conn.targetNodeId || '',
+          type: conn.type || 'Association',
+          sourceMultiplicity: conn.sourceMultiplicity || '',
+          targetMultiplicity: conn.targetMultiplicity || '',
+          label: conn.label || ''
+        };
+
+        // Always push to connectorsSubject immediately so line renders on canvas
+        const current = this.connectorsSubject.value;
+        if (!current.some(c => c.id === tempConn.id || (c.sourceNodeId === tempConn.sourceNodeId && c.targetNodeId === tempConn.targetNodeId && c.type === tempConn.type))) {
+          this.connectorsSubject.next([...current, tempConn]);
+        }
+
+        if (!diagId) {
+          observer.next(tempConn);
           observer.complete();
-        },
-        error: err => observer.error(err)
+          return;
+        }
+
+        const payload = { diagramId: diagId, ...conn };
+        this.http.post<UMLConnector>(`${this.apiUrl}/connectors`, payload, { headers: this.headers }).subscribe({
+          next: (savedConn) => {
+            const updated = this.connectorsSubject.value.map(c => c.id === tempConn.id ? savedConn : c);
+            this.connectorsSubject.next(updated);
+            observer.next(savedConn);
+            observer.complete();
+          },
+          error: () => {
+            observer.next(tempConn);
+            observer.complete();
+          }
+        });
       });
     });
   }
 
   deleteConnector(connectorId: string): void {
     this.http.delete(`${this.apiUrl}/connectors/${connectorId}`, { headers: this.headers }).subscribe();
-    this.connectorsSubject.next(this.connectorsSubject.value.filter(c => c.id !== connectorId));
+    const updatedConns = this.connectorsSubject.value.filter(c => c.id !== connectorId);
+    this.connectorsSubject.next(updatedConns);
+    if (this.currentProjectId) {
+      this.saveDiagramLocalSnapshot(this.currentProjectId, this.nodesSubject.value, updatedConns);
+    }
   }
 
   updateLocalNode(node: UMLNode): void {
@@ -138,9 +370,254 @@ export class DiagramService {
 
   addLocalNode(node: UMLNode): void {
     const current = this.nodesSubject.value;
-    if (!current.find(n => n.id === node.id)) {
+    const existingIndex = current.findIndex(n => n.id === node.id || (n.name && n.name.toLowerCase() === node.name?.toLowerCase()));
+    
+    if (existingIndex >= 0) {
+      // Replace existing local node with updated version
+      const updatedList = [...current];
+      updatedList[existingIndex] = { ...updatedList[existingIndex], ...node };
+      this.nodesSubject.next(updatedList);
+    } else {
       this.nodesSubject.next([...current, node]);
     }
+
+    const persistNode = (diagramIdToUse: string) => {
+      if (!diagramIdToUse) return;
+      const payload = {
+        diagramId: diagramIdToUse,
+        name: node.name,
+        stereotype: node.stereotype || 'Entity',
+        attributes: node.attributes || [],
+        methods: node.methods || [],
+        positionX: node.positionX,
+        positionY: node.positionY
+      };
+      this.http.post<UMLNode>(`${this.apiUrl}/nodes`, payload, { headers: this.headers }).subscribe({
+        next: (savedNode) => {
+          if (this.currentDiagramId === diagramIdToUse) {
+            const latestNodes = this.nodesSubject.value.map(n => n.id === node.id ? savedNode : n);
+            this.nodesSubject.next(latestNodes);
+          }
+        },
+        error: (err) => console.error('Error al persistir nodo local:', err)
+      });
+    };
+
+    const isUUID = (str?: string): boolean => !!str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
+    // Persist to PostgreSQL if it's a client-side generated node or EAID
+    if (node.id && !isUUID(node.id)) {
+      if (this.currentDiagramId) {
+        persistNode(this.currentDiagramId);
+      } else if (this.currentProjectId) {
+        this.http.get<Diagram>(`${this.apiUrl}/${this.currentProjectId}`, { headers: this.headers }).subscribe({
+          next: (d) => {
+            this.currentDiagramId = d.id;
+            persistNode(d.id);
+          }
+        });
+      }
+    }
+  }
+
+  saveCurrentDiagram(explicitProjectId?: string, explicitDiagramId?: string, explicitNodes?: UMLNode[], explicitConnectors?: UMLConnector[]): Observable<boolean> {
+    return new Observable(observer => {
+      const targetProjectId = explicitProjectId || this.currentProjectId;
+      let targetDiagramId = explicitDiagramId || (targetProjectId === this.currentProjectId ? this.currentDiagramId : '');
+
+      const nodes = explicitNodes ? [...explicitNodes] : [...this.nodesSubject.value];
+      const connectors = explicitConnectors ? [...explicitConnectors] : [...this.connectorsSubject.value];
+
+      if (nodes.length === 0 && connectors.length === 0) {
+        observer.next(true);
+        observer.complete();
+        return;
+      }
+
+      const ensureDiagramId = (): Observable<string> => {
+        if (targetDiagramId) return new Observable(obs => { obs.next(targetDiagramId); obs.complete(); });
+        if (!targetProjectId) return new Observable(obs => { obs.next(''); obs.complete(); });
+        return new Observable(obs => {
+          this.http.get<Diagram>(`${this.apiUrl}/${targetProjectId}`, { headers: this.headers }).subscribe({
+            next: (d) => {
+              if (targetProjectId === this.currentProjectId) {
+                this.currentDiagramId = d.id;
+              }
+              targetDiagramId = d.id;
+              obs.next(d.id);
+              obs.complete();
+            },
+            error: () => {
+              obs.next('');
+              obs.complete();
+            }
+          });
+        });
+      };
+
+      ensureDiagramId().subscribe(diagramId => {
+        if (!diagramId) {
+          if (targetProjectId) {
+            this.saveDiagramLocalSnapshot(targetProjectId, nodes, connectors);
+          }
+          observer.next(false);
+          observer.complete();
+          return;
+        }
+
+        const isUUID = (str?: string): boolean => {
+          if (!str) return false;
+          return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+        };
+
+        const tempToRealIdMap = new Map<string, string>();
+        const updatedNodes: UMLNode[] = [];
+
+        let processedNodes = 0;
+        const totalNodes = nodes.length;
+
+        const finishNodesPhase = () => {
+          processConnectorsPhase();
+        };
+
+        const processConnectorsPhase = () => {
+          let processedConnectors = 0;
+          const totalConnectors = connectors.length;
+
+          if (totalConnectors === 0) {
+            if (targetProjectId === this.currentProjectId && updatedNodes.length > 0) {
+              this.nodesSubject.next(updatedNodes);
+            }
+            if (targetProjectId) {
+              this.saveDiagramLocalSnapshot(targetProjectId, updatedNodes.length > 0 ? updatedNodes : nodes, connectors);
+            }
+            observer.next(true);
+            observer.complete();
+            return;
+          }
+
+          const updatedConnectors: UMLConnector[] = [];
+
+          connectors.forEach(c => {
+            const resolvedSourceId = tempToRealIdMap.get(c.sourceNodeId) || c.sourceNodeId;
+            const resolvedTargetId = tempToRealIdMap.get(c.targetNodeId) || c.targetNodeId;
+            const isTempConn = !isUUID(c.id);
+
+            if (isTempConn) {
+              const connPayload = {
+                diagramId,
+                sourceNodeId: resolvedSourceId,
+                targetNodeId: resolvedTargetId,
+                type: c.type || 'Association',
+                sourceMultiplicity: c.sourceMultiplicity || '1',
+                targetMultiplicity: c.targetMultiplicity || '*',
+                label: c.label || ''
+              };
+
+              this.http.post<UMLConnector>(`${this.apiUrl}/connectors`, connPayload, { headers: this.headers }).subscribe({
+                next: (savedConn) => {
+                  updatedConnectors.push(savedConn);
+                  processedConnectors++;
+                  if (processedConnectors >= totalConnectors) {
+                    if (targetProjectId === this.currentProjectId) {
+                      if (updatedNodes.length > 0) this.nodesSubject.next(updatedNodes);
+                      this.connectorsSubject.next(updatedConnectors);
+                    }
+                    if (targetProjectId) {
+                      this.saveDiagramLocalSnapshot(targetProjectId, updatedNodes.length > 0 ? updatedNodes : nodes, updatedConnectors);
+                    }
+                    observer.next(true);
+                    observer.complete();
+                  }
+                },
+                error: () => {
+                  processedConnectors++;
+                  if (processedConnectors >= totalConnectors) {
+                    if (targetProjectId === this.currentProjectId && updatedNodes.length > 0) {
+                      this.nodesSubject.next(updatedNodes);
+                    }
+                    if (targetProjectId) {
+                      this.saveDiagramLocalSnapshot(targetProjectId, updatedNodes.length > 0 ? updatedNodes : nodes, updatedConnectors);
+                    }
+                    observer.next(true);
+                    observer.complete();
+                  }
+                }
+              });
+            } else {
+              updatedConnectors.push({ ...c, sourceNodeId: resolvedSourceId, targetNodeId: resolvedTargetId });
+              processedConnectors++;
+              if (processedConnectors >= totalConnectors) {
+                if (targetProjectId === this.currentProjectId) {
+                  if (updatedNodes.length > 0) this.nodesSubject.next(updatedNodes);
+                  this.connectorsSubject.next(updatedConnectors);
+                }
+                if (targetProjectId) {
+                  this.saveDiagramLocalSnapshot(targetProjectId, updatedNodes.length > 0 ? updatedNodes : nodes, updatedConnectors);
+                }
+                observer.next(true);
+                observer.complete();
+              }
+            }
+          });
+        };
+
+        if (totalNodes === 0) {
+          finishNodesPhase();
+          return;
+        }
+
+        nodes.forEach(n => {
+          const isTempNode = !isUUID(n.id);
+
+          if (isTempNode) {
+            const payload = {
+              diagramId,
+              name: n.name,
+              stereotype: n.stereotype || 'Entity',
+              attributes: n.attributes || [],
+              methods: n.methods || [],
+              positionX: n.positionX,
+              positionY: n.positionY
+            };
+            this.http.post<UMLNode>(`${this.apiUrl}/nodes`, payload, { headers: this.headers }).subscribe({
+              next: (savedNode) => {
+                if (n.id) tempToRealIdMap.set(n.id, savedNode.id);
+                updatedNodes.push(savedNode);
+                processedNodes++;
+                if (processedNodes >= totalNodes) finishNodesPhase();
+              },
+              error: () => {
+                updatedNodes.push(n);
+                processedNodes++;
+                if (processedNodes >= totalNodes) finishNodesPhase();
+              }
+            });
+          } else {
+            const updatePayload = {
+              name: n.name,
+              stereotype: n.stereotype,
+              attributes: n.attributes,
+              methods: n.methods,
+              positionX: n.positionX,
+              positionY: n.positionY
+            };
+            this.http.put(`${this.apiUrl}/nodes/${n.id}`, updatePayload, { headers: this.headers }).subscribe({
+              next: () => {
+                updatedNodes.push(n);
+                processedNodes++;
+                if (processedNodes >= totalNodes) finishNodesPhase();
+              },
+              error: () => {
+                updatedNodes.push(n);
+                processedNodes++;
+                if (processedNodes >= totalNodes) finishNodesPhase();
+              }
+            });
+          }
+        });
+      });
+    });
   }
 
   selectNode(node: UMLNode | null): void { this.selectedNodeSubject.next(node); }

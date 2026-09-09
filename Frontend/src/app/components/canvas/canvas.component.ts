@@ -17,8 +17,14 @@ import { UMLNode, UMLConnector, CanvasLabel, DiagramService } from '../../core/s
       (click)="onCanvasClick($event)"
       (dblclick)="onCanvasDblClick($event)"
     >
-      <!-- SVG Connectors Layer (z-index: 25) -->
-      <svg class="svg-layer">
+      <!-- Unified Canvas Viewport (Scales SVG Connectors, Nodes, Labels & Cursors 1:1) -->
+      <div 
+        class="canvas-viewport"
+        [style.transform]="'scale(' + zoomLevel + ')'"
+        [style.transform-origin]="'0 0'"
+      >
+        <!-- SVG Connectors Layer (z-index: 25) -->
+        <svg class="svg-layer">
         <defs>
           <!-- Association / Dependency Arrow -->
           <marker id="arrow" viewBox="0 0 14 14" refX="13" refY="7" markerWidth="10" markerHeight="10" orient="auto">
@@ -41,7 +47,7 @@ import { UMLNode, UMLConnector, CanvasLabel, DiagramService } from '../../core/s
         <!-- Render Connectors -->
         <g *ngFor="let conn of connectors">
           <!-- Standard Non-Reflexive Connectors -->
-          <ng-container *ngIf="conn.sourceNodeId !== conn.targetNodeId">
+          <ng-container *ngIf="!isReflexive(conn)">
             <!-- Invisible 16px Hitbox Path for Super Easy Line Clicking -->
             <path 
               [attr.d]="getConnectorPath(conn)" 
@@ -259,11 +265,7 @@ import { UMLNode, UMLConnector, CanvasLabel, DiagramService } from '../../core/s
       </svg>
 
       <!-- UML Class Nodes Layer (z-index: 20) -->
-      <div 
-        class="nodes-layer" 
-        [style.transform]="'scale(' + zoomLevel + ')'"
-        [style.transform-origin]="'0 0'"
-      >
+      <div class="nodes-layer">
         <div 
           *ngFor="let node of nodes" 
           class="uml-card glass-panel"
@@ -439,6 +441,7 @@ import { UMLNode, UMLConnector, CanvasLabel, DiagramService } from '../../core/s
           </span>
         </div>
       </div>
+    </div>
 
       <!-- Connector Multiplicity Editor Floating Popup Modal (z-index: 200) -->
       <div 
@@ -593,11 +596,19 @@ import { UMLNode, UMLConnector, CanvasLabel, DiagramService } from '../../core/s
         radial-gradient(circle, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
       background-size: 20px 20px;
     }
+    .canvas-viewport {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
     .svg-layer {
       position: absolute;
       inset: 0;
       width: 100%;
       height: 100%;
+      overflow: visible;
       pointer-events: none;
       z-index: 10;
     }
@@ -1242,8 +1253,25 @@ export class CanvasComponent {
     this.labelDragOffsetY = mouseCanvasY - label.positionY;
   }
 
+  findNode(idOrName?: string): UMLNode | undefined {
+    if (!idOrName || !this.nodes) return undefined;
+    const searchStr = String(idOrName).trim().toLowerCase();
+    return this.nodes.find(n => 
+      (n.id && String(n.id).trim().toLowerCase() === searchStr) ||
+      (n.name && String(n.name).trim().toLowerCase() === searchStr)
+    );
+  }
+
+  isReflexive(conn: UMLConnector): boolean {
+    if (!conn || !conn.sourceNodeId || !conn.targetNodeId) return false;
+    if (conn.sourceNodeId === conn.targetNodeId) return true;
+    const s = this.findNode(conn.sourceNodeId);
+    const t = this.findNode(conn.targetNodeId);
+    return !!s && !!t && s.id === t.id;
+  }
+
   getReflexiveBox(conn: UMLConnector): { x: number; y: number; width: number; height: number } {
-    const node = this.nodes.find(n => n.id === conn.sourceNodeId);
+    const node = this.findNode(conn.sourceNodeId);
     if (!node) return { x: 0, y: 0, width: 100, height: 140 };
 
     const nodeH = node.height || 160;
@@ -1272,7 +1300,7 @@ export class CanvasComponent {
     event.stopPropagation();
     this.selectedConnector = conn;
     this.draggingLoopConn = conn;
-    const node = this.nodes.find(n => n.id === conn.sourceNodeId);
+    const node = this.findNode(conn.sourceNodeId);
     if (!node) return;
 
     const w = conn.loopWidth || 100;
@@ -1291,7 +1319,7 @@ export class CanvasComponent {
     this.resizeCorner = corner;
 
     const w = conn.loopWidth || 100;
-    const nodeH = conn.sourceNodeId ? (this.nodes.find(n => n.id === conn.sourceNodeId)?.height || 160) : 160;
+    const nodeH = conn.sourceNodeId ? (this.findNode(conn.sourceNodeId)?.height || 160) : 160;
 
     this.loopStartX = event.clientX;
     this.loopStartY = event.clientY;
@@ -1370,13 +1398,13 @@ export class CanvasComponent {
     }
     if (this.draggingMultiplicity) {
       const conn = this.draggingMultiplicity.connector;
-      const source = this.nodes.find(n => n.id === conn.sourceNodeId);
+      const source = this.findNode(conn.sourceNodeId);
       if (source) this.nodeMoved.emit(source);
       this.draggingMultiplicity = null;
     }
     if (this.draggingLoopConn || this.resizingLoopConn) {
       const conn = this.draggingLoopConn || this.resizingLoopConn;
-      const source = this.nodes.find(n => n.id === conn?.sourceNodeId);
+      const source = this.findNode(conn?.sourceNodeId);
       if (source) this.nodeMoved.emit(source);
       this.draggingLoopConn = null;
       this.resizingLoopConn = null;
@@ -1487,23 +1515,23 @@ export class CanvasComponent {
   }
 
   onQuickChange(conn: UMLConnector): void {
-    const source = this.nodes.find(n => n.id === conn.sourceNodeId);
+    const source = this.findNode(conn.sourceNodeId);
     if (source) this.nodeMoved.emit(source);
   }
 
   getSourceNodeName(conn: UMLConnector | null): string {
     if (!conn) return 'Origen';
-    return this.nodes.find(n => n.id === conn.sourceNodeId)?.name || 'Origen';
+    return this.findNode(conn.sourceNodeId)?.name || 'Origen';
   }
 
   getTargetNodeName(conn: UMLConnector | null): string {
     if (!conn) return 'Destino';
-    return this.nodes.find(n => n.id === conn.targetNodeId)?.name || 'Destino';
+    return this.findNode(conn.targetNodeId)?.name || 'Destino';
   }
 
   saveConnectorEditDirect(): void {
     if (this.editingConnector) {
-      const source = this.nodes.find(n => n.id === this.editingConnector?.sourceNodeId);
+      const source = this.findNode(this.editingConnector?.sourceNodeId);
       if (source) this.nodeMoved.emit(source);
     }
   }
@@ -1593,8 +1621,8 @@ export class CanvasComponent {
   }
 
   getConnectorPath(conn: UMLConnector): string {
-    const source = this.nodes.find(n => n.id === conn.sourceNodeId);
-    const target = this.nodes.find(n => n.id === conn.targetNodeId);
+    const source = this.findNode(conn.sourceNodeId);
+    const target = this.findNode(conn.targetNodeId);
     if (!source || !target) return '';
 
     const sourceW = source.width || 230;
@@ -1660,15 +1688,15 @@ export class CanvasComponent {
   }
 
   getConnectorSourceAnchorX(conn: UMLConnector): number {
-    const source = this.nodes.find(n => n.id === conn.sourceNodeId);
-    const target = this.nodes.find(n => n.id === conn.targetNodeId);
+    const source = this.findNode(conn.sourceNodeId);
+    const target = this.findNode(conn.targetNodeId);
     if (!source || !target) return 0;
     return source.positionX + (target.positionX - source.positionX) * 0.25 + 115;
   }
 
   getConnectorSourceAnchorY(conn: UMLConnector): number {
-    const source = this.nodes.find(n => n.id === conn.sourceNodeId);
-    const target = this.nodes.find(n => n.id === conn.targetNodeId);
+    const source = this.findNode(conn.sourceNodeId);
+    const target = this.findNode(conn.targetNodeId);
     if (!source || !target) return 0;
     return source.positionY + (target.positionY - source.positionY) * 0.25 + 80;
   }
@@ -1684,15 +1712,15 @@ export class CanvasComponent {
   }
 
   getConnectorTargetAnchorX(conn: UMLConnector): number {
-    const source = this.nodes.find(n => n.id === conn.sourceNodeId);
-    const target = this.nodes.find(n => n.id === conn.targetNodeId);
+    const source = this.findNode(conn.sourceNodeId);
+    const target = this.findNode(conn.targetNodeId);
     if (!source || !target) return 0;
     return source.positionX + (target.positionX - source.positionX) * 0.75 + 115;
   }
 
   getConnectorTargetAnchorY(conn: UMLConnector): number {
-    const source = this.nodes.find(n => n.id === conn.sourceNodeId);
-    const target = this.nodes.find(n => n.id === conn.targetNodeId);
+    const source = this.findNode(conn.sourceNodeId);
+    const target = this.findNode(conn.targetNodeId);
     if (!source || !target) return 0;
     return source.positionY + (target.positionY - source.positionY) * 0.75 + 80;
   }
@@ -1708,36 +1736,36 @@ export class CanvasComponent {
   }
 
   getConnectorMidX(conn: UMLConnector): number {
-    const source = this.nodes.find(n => n.id === conn.sourceNodeId);
-    const target = this.nodes.find(n => n.id === conn.targetNodeId);
+    const source = this.findNode(conn.sourceNodeId);
+    const target = this.findNode(conn.targetNodeId);
     if (!source || !target) return 0;
     return (source.positionX + target.positionX) / 2 + 115;
   }
 
   getConnectorMidY(conn: UMLConnector): number {
-    const source = this.nodes.find(n => n.id === conn.sourceNodeId);
-    const target = this.nodes.find(n => n.id === conn.targetNodeId);
+    const source = this.findNode(conn.sourceNodeId);
+    const target = this.findNode(conn.targetNodeId);
     if (!source || !target) return 0;
     return (source.positionY + target.positionY) / 2 + 80;
   }
 
   getAssocClassTopX(conn: UMLConnector): number {
     if (!conn.associationClassNodeId) return 0;
-    const node = this.nodes.find(n => n.id === conn.associationClassNodeId);
+    const node = this.findNode(conn.associationClassNodeId);
     if (!node) return 0;
     return node.positionX + (node.width || 230) / 2;
   }
 
   getAssocClassTopY(conn: UMLConnector): number {
     if (!conn.associationClassNodeId) return 0;
-    const node = this.nodes.find(n => n.id === conn.associationClassNodeId);
+    const node = this.findNode(conn.associationClassNodeId);
     if (!node) return 0;
     return node.positionY;
   }
 
   getSourceEndpoint(conn: UMLConnector): { x: number; y: number; angle: number } {
-    const source = this.nodes.find(n => n.id === conn.sourceNodeId);
-    const target = this.nodes.find(n => n.id === conn.targetNodeId);
+    const source = this.findNode(conn.sourceNodeId);
+    const target = this.findNode(conn.targetNodeId);
     if (!source || !target) return { x: 0, y: 0, angle: 0 };
 
     const sourceW = source.width || 230;
@@ -1767,8 +1795,8 @@ export class CanvasComponent {
   }
 
   getTargetEndpoint(conn: UMLConnector): { x: number; y: number; angle: number } {
-    const source = this.nodes.find(n => n.id === conn.sourceNodeId);
-    const target = this.nodes.find(n => n.id === conn.targetNodeId);
+    const source = this.findNode(conn.sourceNodeId);
+    const target = this.findNode(conn.targetNodeId);
     if (!source || !target) return { x: 0, y: 0, angle: 0 };
 
     const sourceW = source.width || 230;
@@ -1798,7 +1826,7 @@ export class CanvasComponent {
   }
 
   getDiamondPoints(conn: UMLConnector): string {
-    const ep = this.getSourceEndpoint(conn);
+    const ep = this.getTargetEndpoint(conn);
     const size = 12;
     const width = 7;
 
@@ -1808,14 +1836,14 @@ export class CanvasComponent {
     const x0 = ep.x;
     const y0 = ep.y;
 
-    const x1 = ep.x + size * cos - width * sin;
-    const y1 = ep.y + size * sin + width * cos;
+    const x1 = ep.x - size * cos + width * sin;
+    const y1 = ep.y - size * sin - width * cos;
 
-    const x2 = ep.x + (size * 2) * cos;
-    const y2 = ep.y + (size * 2) * sin;
+    const x2 = ep.x - (size * 2) * cos;
+    const y2 = ep.y - (size * 2) * sin;
 
-    const x3 = ep.x + size * cos + width * sin;
-    const y3 = ep.y + size * sin - width * cos;
+    const x3 = ep.x - size * cos - width * sin;
+    const y3 = ep.y - size * sin + width * cos;
 
     return `${x0},${y0} ${x1},${y1} ${x2},${y2} ${x3},${y3}`;
   }

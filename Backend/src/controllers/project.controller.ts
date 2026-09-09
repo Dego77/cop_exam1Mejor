@@ -121,12 +121,17 @@ export const addCollaborator = async (req: AuthRequest, res: Response): Promise<
     const { email, role } = req.body;
     const userId = req.user!.id;
 
-    // Verify user owns or is admin of project
-    const project = await prisma.project.findFirst({
-      where: { id, ownerId: userId },
+    // Verify project exists in database first
+    const project = await prisma.project.findUnique({
+      where: { id },
     });
 
     if (!project) {
+      res.status(404).json({ error: 'El proyecto no existe en la base de datos real. Por favor guarda o crea un proyecto primero.' });
+      return;
+    }
+
+    if (project.ownerId !== userId) {
       res.status(403).json({ error: 'Solo el propietario del proyecto puede invitar colaboradores.' });
       return;
     }
@@ -158,5 +163,41 @@ export const addCollaborator = async (req: AuthRequest, res: Response): Promise<
     res.json({ message: 'Colaborador añadido exitosamente', collaborator });
   } catch (error: any) {
     res.status(500).json({ error: 'Error al agregar colaborador: ' + error.message });
+  }
+};
+
+export const getWorkHistory = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id: projectId } = req.params;
+    const userId = req.query.userId ? Number(req.query.userId) : undefined;
+
+    const whereClause: any = { projectId };
+    if (userId) {
+      whereClause.userId = userId;
+    }
+
+    const sessions = await (prisma as any).workSession.findMany({
+      where: whereClause,
+      include: {
+        user: { select: { id: true, fullName: true, email: true, avatarUrl: true } }
+      },
+      orderBy: { startTime: 'desc' }
+    });
+
+    const totalDurationSeconds = sessions.reduce((acc: number, s: any) => {
+      if (s.duration) return acc + s.duration;
+      if (!s.endTime && s.startTime) {
+        const diff = Math.floor((Date.now() - new Date(s.startTime).getTime()) / 1000);
+        return acc + Math.max(0, diff);
+      }
+      return acc;
+    }, 0);
+
+    res.json({
+      sessions,
+      totalDurationSeconds
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Error al obtener historial de trabajo: ' + error.message });
   }
 };

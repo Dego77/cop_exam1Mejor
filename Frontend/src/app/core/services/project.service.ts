@@ -54,6 +54,13 @@ export class ProjectService {
     );
   }
 
+  getWorkHistory(projectId: string, userId?: number): Observable<{ sessions: any[]; totalDurationSeconds: number }> {
+    const url = userId 
+      ? `${this.apiUrl}/${projectId}/work-history?userId=${userId}` 
+      : `${this.apiUrl}/${projectId}/work-history`;
+    return this.http.get<{ sessions: any[]; totalDurationSeconds: number }>(url, { headers: this.headers });
+  }
+
   generateSQL(projectId: string): Observable<{ sql: string }> {
     return this.http.post<{ sql: string }>(
       `http://localhost:3000/api/sql/generate/${projectId}`,

@@ -3,6 +3,9 @@ import { UMLNode, UMLConnector } from './diagram.service';
 
 @Injectable({ providedIn: 'root' })
 export class EaExporterService {
+  activeFileHandle: any = null;
+  activeFileName: string = '';
+
   generateXMI(projectName: string, nodes: UMLNode[], connectors: UMLConnector[]): string {
     const timestamp = new Date().toISOString();
 
@@ -87,6 +90,9 @@ export class EaExporterService {
         await writable.write(blob);
         await writable.close();
 
+        this.activeFileHandle = handle;
+        this.activeFileName = projectName;
+
         return projectName;
       } catch (err: any) {
         if (err.name === 'AbortError') {
@@ -102,6 +108,48 @@ export class EaExporterService {
     const xmiContent = this.generateXMI(cleanName, nodes, connectors);
     this.downloadEAPFile(cleanName, xmiContent);
     return cleanName;
+  }
+
+  async saveDirectlyToActiveFile(projectName: string, nodes: UMLNode[], connectors: UMLConnector[]): Promise<boolean> {
+    const xmiContent = this.generateXMI(projectName, nodes, connectors);
+    const blob = new Blob([xmiContent], { type: 'application/x-enterprise-architect-project;charset=utf-8' });
+
+    if (this.activeFileHandle) {
+      try {
+        const writable = await this.activeFileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return true;
+      } catch (err) {
+        console.warn('Could not write directly to active handle, falling back...', err);
+      }
+    }
+
+    // Fallback if no active handle exists: open save picker once and save handle
+    if ('showSaveFilePicker' in window) {
+      try {
+        const cleanFilename = projectName.toLowerCase().endsWith('.eap') ? projectName : `${projectName}.eap`;
+        const handle = await (window as any).showSaveFilePicker({
+          suggestedName: cleanFilename,
+          types: [{
+            description: 'Enterprise Architect Project (*.eap)',
+            accept: { 'application/x-enterprise-architect-project': ['.eap', '.xmi', '.xml'] }
+          }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+
+        this.activeFileHandle = handle;
+        this.activeFileName = projectName;
+        return true;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return false;
+      }
+    }
+
+    this.triggerFallbackDownload(projectName.toLowerCase().endsWith('.eap') ? projectName : `${projectName}.eap`, blob);
+    return true;
   }
 
   downloadEAPFile(filename: string, content: string): void {

@@ -34,8 +34,10 @@ import { Subscription } from 'rxjs';
         (createProjectEvent)="onCreateProject($event)"
         (deleteProjectEvent)="onDeleteProject($event)"
         (openFileEvent)="onOpenFile()"
+        (saveProjectEvent)="onSaveProject()"
         (exportXMI)="onExportXMI()"
         (exportSQL)="onExportSQL()"
+        (projectInvited)="onProjectInvited()"
       ></app-navbar>
 
       <!-- Main Workspace (3 columns) -->
@@ -110,7 +112,10 @@ export class EditorComponent implements OnInit, OnDestroy {
   rightSidebarWidth = 320;
 
   onlineUsers: any[] = [];
+  activeRoomUsers: any[] = [];
   remoteCursorsMap = new Map<string, CursorData>();
+
+  private userAvatarColors = ['#00d4ff', '#a855f7', '#ec4899', '#22c55e', '#f59e0b', '#3b82f6', '#10b981'];
 
   private subs = new Subscription();
 
@@ -150,6 +155,26 @@ export class EditorComponent implements OnInit, OnDestroy {
 
     // Subscribe to WebSocket events
     this.subs.add(
+      this.wsService.roomUsers$.subscribe(users => {
+        this.activeRoomUsers = users || [];
+        this.updateOnlineCollaboratorsList();
+      })
+    );
+    this.subs.add(
+      this.wsService.userJoined$.subscribe(data => {
+        this.updateOnlineCollaboratorsList();
+      })
+    );
+    this.subs.add(
+      this.wsService.userLeft$.subscribe((data: any) => {
+        const socketId = typeof data === 'string' ? data : data?.socketId;
+        if (socketId) {
+          this.remoteCursorsMap.delete(socketId);
+        }
+        this.updateOnlineCollaboratorsList();
+      })
+    );
+    this.subs.add(
       this.wsService.cursorMoved$.subscribe(data => {
         this.remoteCursorsMap.set(data.socketId, data);
       })
@@ -165,7 +190,38 @@ export class EditorComponent implements OnInit, OnDestroy {
     );
     this.subs.add(
       this.wsService.nodeUpdated$.subscribe(node => {
+        this.diagramService.updateLocalNode(node);
+      })
+    );
+    this.subs.add(
+      this.wsService.nodeCreated$.subscribe(node => {
         this.diagramService.addLocalNode(node);
+      })
+    );
+    this.subs.add(
+      this.wsService.nodeDeleted$.subscribe(nodeId => {
+        this.diagramService.deleteNode(nodeId);
+      })
+    );
+    this.subs.add(
+      this.wsService.connectorCreated$.subscribe(connector => {
+        const current = this.diagramService.currentConnectors;
+        if (!current.some(c => c.id === connector.id)) {
+          (this.diagramService as any).connectorsSubject.next([...current, connector]);
+        }
+      })
+    );
+    this.subs.add(
+      this.wsService.connectorDeleted$.subscribe(connectorId => {
+        const current = this.diagramService.currentConnectors;
+        (this.diagramService as any).connectorsSubject.next(current.filter(c => c.id !== connectorId));
+      })
+    );
+    this.subs.add(
+      this.wsService.diagramReloaded$.subscribe(() => {
+        if (this.currentProject?.id) {
+          this.diagramService.loadDiagram(this.currentProject.id).subscribe();
+        }
       })
     );
 
@@ -173,6 +229,7 @@ export class EditorComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.remoteCursorsMap.clear();
     this.subs.unsubscribe();
     this.wsService.disconnect();
   }
@@ -182,19 +239,62 @@ export class EditorComponent implements OnInit, OnDestroy {
   }
 
   loadProjects(): void {
+    const cachedStr = localStorage.getItem('classforge_projects_cache');
+    let localCachedProjects: Project[] = [];
+    if (cachedStr) {
+      try { localCachedProjects = JSON.parse(cachedStr); } catch (e) {}
+    }
+
     this.projectService.getAll().subscribe({
-      next: (projs) => {
-        this.projects = projs || [];
-        if (this.projects.length > 0) {
-          this.onSelectProject(this.projects[0]);
+      next: (res: any) => {
+        let serverProjects: Project[] = [];
+        if (Array.isArray(res)) {
+          serverProjects = res;
+        } else if (res && typeof res === 'object') {
+          const owned = Array.isArray(res.owned) ? res.owned : [];
+          const shared = Array.isArray(res.shared) ? res.shared : [];
+          serverProjects = [...owned, ...shared];
+        }
+
+        // Merge server projects with local cached projects to preserve all opened .eap projects
+        const mergedMap = new Map<string, Project>();
+        localCachedProjects.forEach(p => mergedMap.set(p.id, p));
+        serverProjects.forEach(p => mergedMap.set(p.id, p));
+
+        const combined = Array.from(mergedMap.values());
+
+        if (combined.length > 0) {
+          this.projects = combined;
+          this.saveProjectsCache();
+          this.onSelectProject(combined[0]);
         } else {
-          this.createDefaultDemoProject();
+          this.projectService.create('actores_casodeUso4', 'Proyecto inicial de diagramación UML').subscribe({
+            next: (createdProj) => {
+              this.projects = [createdProj];
+              this.saveProjectsCache();
+              this.onSelectProject(createdProj);
+            },
+            error: () => {
+              this.createDefaultDemoProject();
+            }
+          });
         }
       },
       error: () => {
-        this.createDefaultDemoProject();
+        if (localCachedProjects.length > 0) {
+          this.projects = localCachedProjects;
+          this.onSelectProject(localCachedProjects[0]);
+        } else {
+          this.createDefaultDemoProject();
+        }
       }
     });
+  }
+
+  saveProjectsCache(): void {
+    try {
+      localStorage.setItem('classforge_projects_cache', JSON.stringify(this.projects));
+    } catch (e) {}
   }
 
   createDefaultDemoProject(): void {
@@ -207,6 +307,7 @@ export class EditorComponent implements OnInit, OnDestroy {
       updatedAt: new Date().toISOString()
     };
     this.projects = [defaultProject];
+    this.saveProjectsCache();
     this.currentProject = defaultProject;
     this.loadDemoDiagram();
   }
@@ -303,27 +404,189 @@ export class EditorComponent implements OnInit, OnDestroy {
     (this.diagramService as any).nodesSubject.next(demoNodes);
     (this.diagramService as any).connectorsSubject.next(demoConnectors);
 
-    // Add simulated online collaborators for rich aesthetics
-    this.onlineUsers = [
-      { fullName: 'Alex Rivera', color: '#00d4ff' },
-      { fullName: 'Sofia Castro', color: '#a855f7' }
-    ];
+    this.updateOnlineCollaboratorsList();
   }
 
-  onSelectProject(p: Project): void {
+  private getColorForUser(idOrEmail: any): string {
+    const str = String(idOrEmail || '');
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const index = Math.abs(hash) % this.userAvatarColors.length;
+    return this.userAvatarColors[index];
+  }
+
+  updateOnlineCollaboratorsList(): void {
+    if (!this.currentProject) {
+      this.onlineUsers = [];
+      return;
+    }
+
+    const allUsersMap = new Map<string, any>();
+
+    // 1. Owner
+    const owner = (this.currentProject as any).owner;
+    if (owner && (owner.id || owner.email)) {
+      const key = String(owner.id || owner.email);
+      allUsersMap.set(key, {
+        id: owner.id,
+        fullName: owner.fullName || 'Propietario',
+        email: owner.email,
+        isOwner: true,
+        color: this.getColorForUser(owner.id || owner.email)
+      });
+    } else if (this.auth.currentUser) {
+      const u = this.auth.currentUser;
+      allUsersMap.set(String(u.id || u.email), {
+        id: u.id,
+        fullName: u.fullName || 'Usuario',
+        email: u.email,
+        isOwner: true,
+        color: this.getColorForUser(u.id || u.email)
+      });
+    }
+
+    // 2. Invited Collaborators
+    const collaborators = (this.currentProject as any).collaborators;
+    if (Array.isArray(collaborators)) {
+      for (const colab of collaborators) {
+        const u = colab.user || colab;
+        if (u && (u.id || u.email)) {
+          const key = String(u.id || u.email);
+          if (!allUsersMap.has(key)) {
+            allUsersMap.set(key, {
+              id: u.id,
+              fullName: u.fullName || u.email || 'Colaborador',
+              email: u.email,
+              role: colab.role || 'EDITOR',
+              isOwner: false,
+              color: this.getColorForUser(u.id || u.email)
+            });
+          }
+        }
+      }
+    }
+
+    // 3. Active WebSocket Room User Keys
+    const activeUserMap = new Map<string, any>();
+    for (const roomUser of this.activeRoomUsers) {
+      if (roomUser) {
+        if (roomUser.id) activeUserMap.set(String(roomUser.id), roomUser);
+        if (roomUser.email) activeUserMap.set(String(roomUser.email), roomUser);
+      }
+    }
+
+    // 4. Build output array with isOnline status and joinedAt timestamp
+    const result: any[] = [];
+    for (const [key, userObj] of allUsersMap.entries()) {
+      const activeObj = activeUserMap.get(String(userObj.id)) || activeUserMap.get(String(userObj.email));
+      const isOnline = Boolean(activeObj);
+      result.push({
+        ...userObj,
+        isOnline,
+        joinedAt: activeObj?.joinedAt
+      });
+    }
+
+    // Add active room users not in project DB yet
+    for (const roomUser of this.activeRoomUsers) {
+      if (roomUser && (roomUser.id || roomUser.email)) {
+        const key = String(roomUser.id || roomUser.email);
+        if (!allUsersMap.has(key)) {
+          result.push({
+            id: roomUser.id,
+            fullName: roomUser.fullName || roomUser.email || 'Usuario',
+            email: roomUser.email,
+            isOwner: false,
+            color: this.getColorForUser(roomUser.id || roomUser.email),
+            isOnline: true,
+            joinedAt: roomUser.joinedAt
+          });
+        }
+      }
+    }
+
+    // Online users first
+    result.sort((a, b) => (b.isOnline ? 1 : 0) - (a.isOnline ? 1 : 0));
+    this.onlineUsers = result;
+
+    // Purge any remote cursors from disconnected users
+    if (this.remoteCursorsMap.size > 0) {
+      const activeSockets = new Set(
+        this.activeRoomUsers
+          .map((u: any) => u.socketId)
+          .filter((sId: any): sId is string => Boolean(sId))
+      );
+      for (const sId of Array.from(this.remoteCursorsMap.keys())) {
+        if (activeSockets.size > 0 && !activeSockets.has(sId)) {
+          this.remoteCursorsMap.delete(sId);
+        }
+      }
+    }
+  }
+
+  async onSelectProject(p: Project): Promise<void> {
+    if (this.currentProject && this.currentProject.id !== p.id) {
+      const oldProjectId = this.currentProject.id;
+      const oldDiagramId = this.diagramService.diagramId;
+      const oldNodes = [...this.diagramService.currentNodes];
+      const oldConnectors = [...this.diagramService.currentConnectors];
+      if (oldProjectId && (oldNodes.length > 0 || oldConnectors.length > 0)) {
+        try {
+          await this.diagramService.saveCurrentDiagram(oldProjectId, oldDiagramId, oldNodes, oldConnectors).toPromise();
+        } catch (err) {
+          console.error('Error al autoguardar proyecto previo:', err);
+        }
+      }
+    }
+
+    // Immediately clear canvas state so old elements do not bleed into the incoming project
+    (this.diagramService as any).nodesSubject.next([]);
+    (this.diagramService as any).connectorsSubject.next([]);
+
+    this.remoteCursorsMap.clear();
     this.currentProject = p;
+    this.updateOnlineCollaboratorsList();
+
+    this.projectService.getById(p.id).subscribe({
+      next: (fullProj) => {
+        this.currentProject = fullProj;
+        this.updateOnlineCollaboratorsList();
+      },
+      error: () => {}
+    });
+
     this.diagramService.loadDiagram(p.id).subscribe({
       next: () => {},
-      error: () => this.loadDemoDiagram()
+      error: () => {
+        (this.diagramService as any).nodesSubject.next([]);
+        (this.diagramService as any).connectorsSubject.next([]);
+      }
     });
+
     if (this.auth.currentUser) {
       this.wsService.joinProject(p.id, this.auth.currentUser);
     }
   }
 
+  onProjectInvited(): void {
+    if (!this.currentProject) return;
+    this.projectService.getById(this.currentProject.id).subscribe({
+      next: (fullProj) => {
+        this.currentProject = fullProj;
+        this.updateOnlineCollaboratorsList();
+      }
+    });
+  }
+
   async onCreateProject(data: { name: string; description: string; fileType?: string }): Promise<void> {
     const defaultName = data.name || 'actores_casodeUso';
-    const savedProjectName = await this.eaExporterService.promptSaveEAPFile(this.nodes, this.connectors, defaultName);
+    // Clear canvas for brand new project
+    (this.diagramService as any).nodesSubject.next([]);
+    (this.diagramService as any).connectorsSubject.next([]);
+
+    const savedProjectName = await this.eaExporterService.promptSaveEAPFile([], [], defaultName);
 
     if (!savedProjectName) {
       return; // User clicked Cancel in Windows file save dialog
@@ -332,7 +595,10 @@ export class EditorComponent implements OnInit, OnDestroy {
     this.projectService.create(savedProjectName, data.description || 'Proyecto Enterprise Architect').subscribe({
       next: (newProj) => {
         this.projects.push(newProj);
+        this.saveProjectsCache();
         this.onSelectProject(newProj);
+        (this.diagramService as any).nodesSubject.next([]);
+        (this.diagramService as any).connectorsSubject.next([]);
       },
       error: () => {
         const mockProj: Project = {
@@ -344,7 +610,10 @@ export class EditorComponent implements OnInit, OnDestroy {
           updatedAt: new Date().toISOString()
         };
         this.projects.push(mockProj);
+        this.saveProjectsCache();
         this.onSelectProject(mockProj);
+        (this.diagramService as any).nodesSubject.next([]);
+        (this.diagramService as any).connectorsSubject.next([]);
       }
     });
   }
@@ -353,6 +622,7 @@ export class EditorComponent implements OnInit, OnDestroy {
     this.projectService.delete(p.id).subscribe({
       next: () => {
         this.projects = this.projects.filter(item => item.id !== p.id);
+        this.saveProjectsCache();
         if (this.currentProject?.id === p.id) {
           if (this.projects.length > 0) {
             this.onSelectProject(this.projects[0]);
@@ -363,6 +633,7 @@ export class EditorComponent implements OnInit, OnDestroy {
       },
       error: () => {
         this.projects = this.projects.filter(item => item.id !== p.id);
+        this.saveProjectsCache();
         if (this.currentProject?.id === p.id) {
           if (this.projects.length > 0) {
             this.onSelectProject(this.projects[0]);
@@ -380,8 +651,9 @@ export class EditorComponent implements OnInit, OnDestroy {
 
   onNodeMoved(node: UMLNode): void {
     this.diagramService.updateNode(node.id, node);
-    if (this.currentProject) {
+    if (this.currentProject?.id) {
       this.wsService.emitNodeDragged(this.currentProject.id, node.id, node.positionX, node.positionY);
+      this.wsService.emitNodeUpdated(this.currentProject.id, node);
     }
   }
 
@@ -396,7 +668,12 @@ export class EditorComponent implements OnInit, OnDestroy {
     };
 
     this.diagramService.addNode(newNode).subscribe({
-      next: (node) => this.diagramService.selectNode(node),
+      next: (node) => {
+        this.diagramService.selectNode(node);
+        if (this.currentProject?.id) {
+          this.wsService.emitNodeCreated(this.currentProject.id, node);
+        }
+      },
       error: () => {
         const localNode: UMLNode = {
           id: 'node_' + Date.now(),
@@ -404,6 +681,9 @@ export class EditorComponent implements OnInit, OnDestroy {
         };
         this.diagramService.addLocalNode(localNode);
         this.diagramService.selectNode(localNode);
+        if (this.currentProject?.id) {
+          this.wsService.emitNodeCreated(this.currentProject.id, localNode);
+        }
       }
     });
   }
@@ -420,10 +700,16 @@ export class EditorComponent implements OnInit, OnDestroy {
     };
     this.diagramService.addLocalNode(newNode);
     this.diagramService.selectNode(newNode);
+    if (this.currentProject?.id) {
+      this.wsService.emitNodeCreated(this.currentProject.id, newNode);
+    }
   }
 
   onDeleteNode(nodeId: string): void {
     this.diagramService.deleteNode(nodeId);
+    if (this.currentProject?.id) {
+      this.wsService.emitNodeDeleted(this.currentProject.id, nodeId);
+    }
   }
 
   onCreateConnector(event: { sourceId: string; targetId: string; type: string }): void {
@@ -521,6 +807,26 @@ export class EditorComponent implements OnInit, OnDestroy {
     // Canvas nodes and connectors are reactively updated by AIAgentService and DiagramService
   }
 
+  onSaveProject(): void {
+    const projectName = this.currentProject?.name || 'colab';
+    
+    // 1. Guardar en Base de Datos PostgreSQL
+    this.diagramService.saveCurrentDiagram().subscribe({
+      next: async () => {
+        // 2. Sobrescribir directamente sobre el mismo archivo físico (.eap / Uso1_1.eap) sin abrir diálogos emergentes
+        await this.eaExporterService.saveDirectlyToActiveFile(projectName, this.nodes, this.connectors);
+        
+        const cleanName = projectName.toLowerCase().endsWith('.eap') ? projectName : `${projectName}.eap`;
+        alert(`💾 Guardado exitoso:\n- Proyecto "${projectName}" en PostgreSQL DB actualizado.\n- Archivo físico "${cleanName}" actualizado directamente en tu equipo.`);
+      },
+      error: async (err) => {
+        console.error('Error al guardar en base de datos:', err);
+        await this.eaExporterService.saveDirectlyToActiveFile(projectName, this.nodes, this.connectors);
+        alert(`💾 Archivo físico ${projectName}.eap actualizado.`);
+      }
+    });
+  }
+
   async onOpenFile(): Promise<void> {
     if ('showOpenFilePicker' in window) {
       try {
@@ -533,6 +839,9 @@ export class EditorComponent implements OnInit, OnDestroy {
           }],
           multiple: false
         });
+
+        this.eaExporterService.activeFileHandle = fileHandle;
+        this.eaExporterService.activeFileName = fileHandle.name.replace(/\.(eap|xmi|xml|eapx)$/i, '');
 
         const file = await fileHandle.getFile();
         const text = await file.text();
@@ -566,26 +875,57 @@ export class EditorComponent implements OnInit, OnDestroy {
 
   private processOpenedFile(fileName: string, xmlContent: string): void {
     const imported = this.eaImporterService.parseXMI(fileName, xmlContent);
+    const projName = imported.projectName || fileName.replace(/\.(eap|xmi|xml|eapx)$/i, '');
 
-    // Create project entry
-    const openedProject: Project = {
-      id: 'proj_open_' + Date.now(),
-      name: imported.projectName,
-      description: 'Proyecto Enterprise Architect cargado',
-      ownerId: this.auth.currentUser?.id || 'usr_demo',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+    // Check if a project with this exact name already exists in user's projects list
+    const existing = this.projects.find(p => p.name.toLowerCase() === projName.toLowerCase());
+
+    const handleImportNodes = async (proj: Project) => {
+      await this.onSelectProject(proj);
+      const nodesToImport = imported.nodes || [];
+      const connectorsToImport = imported.connectors || [];
+
+      if (nodesToImport.length > 0 || connectorsToImport.length > 0) {
+        (this.diagramService as any).nodesSubject.next(nodesToImport);
+        (this.diagramService as any).connectorsSubject.next(connectorsToImport);
+
+        // Auto-save imported nodes and connectors to PostgreSQL with UUID mapping
+        setTimeout(() => {
+          this.diagramService.saveCurrentDiagram().subscribe({
+            next: () => console.log('Diagrama de archivo importado guardado exitosamente.'),
+            error: (err) => console.error('Error al guardar diagrama importado:', err)
+          });
+        }, 300);
+      }
     };
 
-    this.projects.push(openedProject);
-    this.currentProject = openedProject;
-
-    // Load nodes and connectors into canvas
-    (this.diagramService as any).nodesSubject.next(imported.nodes);
-    (this.diagramService as any).connectorsSubject.next(imported.connectors);
-
-    if (this.auth.currentUser) {
-      this.wsService.joinProject(openedProject.id, this.auth.currentUser);
+    if (existing) {
+      handleImportNodes(existing);
+    } else {
+      this.projectService.create(projName, 'Proyecto Enterprise Architect cargado').subscribe({
+        next: (newProj) => {
+          if (!this.projects.some(p => p.id === newProj.id)) {
+            this.projects.push(newProj);
+            this.saveProjectsCache();
+          }
+          handleImportNodes(newProj);
+        },
+        error: () => {
+          const fallbackProj: Project = {
+            id: 'proj_open_' + Date.now(),
+            name: projName,
+            description: 'Proyecto Enterprise Architect cargado',
+            ownerId: this.auth.currentUser?.id || 'usr_demo',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          this.projects.push(fallbackProj);
+          this.saveProjectsCache();
+          this.currentProject = fallbackProj;
+          (this.diagramService as any).nodesSubject.next(imported.nodes || []);
+          (this.diagramService as any).connectorsSubject.next(imported.connectors || []);
+        }
+      });
     }
   }
 }

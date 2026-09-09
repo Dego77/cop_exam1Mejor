@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -31,25 +31,35 @@ import { ProjectService, Project } from '../../core/services/project.service';
           <span>📂 Open File</span>
         </button>
 
+        <button class="btn save-file-btn" (click)="saveProjectEvent.emit()" title="Guardar cambios del diagrama en la base de datos">
+          <span>💾 Guardar</span>
+        </button>
+
+        <button class="btn help-btn" (click)="openHelpView()" title="Ir a la interfaz de Ayuda">
+          <span>❓ Ayuda</span>
+        </button>
+
           <div class="dropdown-menu" *ngIf="showProjectMenu">
             <div class="dropdown-header">MIS PROYECTOS</div>
-            <div 
-              class="dropdown-item project-item-row" 
-              *ngFor="let p of projects" 
-              [class.active]="p.id === currentProject?.id"
-              (click)="selectProject(p)"
-            >
-              <div class="project-info">
-                <span class="project-name">{{ p.name }}</span>
-                <span class="item-desc" *ngIf="p.description">{{ p.description }}</span>
-              </div>
-              <button 
-                class="btn-delete-project text-danger" 
-                (click)="deleteProject($event, p)" 
-                title="Eliminar Proyecto"
+            <div class="projects-list-container">
+              <div 
+                class="dropdown-item project-item-row" 
+                *ngFor="let p of projects" 
+                [class.active]="p.id === currentProject?.id"
+                (click)="selectProject(p)"
               >
-                ✕
-              </button>
+                <div class="project-info">
+                  <span class="project-name">{{ p.name }}</span>
+                  <span class="item-desc" *ngIf="p.description">{{ p.description }}</span>
+                </div>
+                <button 
+                  class="btn-delete-project text-danger" 
+                  (click)="deleteProject($event, p)" 
+                  title="Eliminar Proyecto"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
             <div class="dropdown-divider"></div>
             <button class="dropdown-item new-proj-item" (click)="openNewProjectModal()">
@@ -64,17 +74,124 @@ import { ProjectService, Project } from '../../core/services/project.service';
           <span class="collab-label">En vivo:</span>
           <div class="collab-avatars">
             <div 
-              class="avatar avatar-cyan tooltip-wrapper" 
+              class="avatar tooltip-wrapper" 
               *ngFor="let u of onlineUsers"
+              [ngClass]="{'online-live': u.isOnline, 'offline-user': !u.isOnline}"
               [style.background]="u.color || '#00d4ff'"
+              (click)="openUserPopover(u, $event)"
+              style="cursor: pointer;"
+              title="Haz clic para ver información y tiempo de trabajo"
             >
               {{ u.fullName?.charAt(0) || 'U' }}
-              <span class="tooltip-text">{{ u.fullName }} (Activo)</span>
+              <span class="tooltip-text">
+                {{ u.fullName }} {{ u.isOwner ? '(Dueño)' : '' }} - {{ u.isOnline ? '🟢 En vivo' : '⚪ Desconectado' }}
+              </span>
             </div>
           </div>
-          <button class="btn btn-ghost btn-sm invite-btn" (click)="openInviteModal()">
+          <button *ngIf="isOwner" class="btn btn-ghost btn-sm invite-btn" (click)="openInviteModal()" title="Invitar colaborador">
             <span>+ Invitar</span>
           </button>
+        </div>
+      </div>
+
+      <!-- User Profile & Realtime Timer Popover Modal -->
+      <div class="modal-backdrop" *ngIf="showUserPopover" (click)="closeUserPopover()">
+        <div class="modal-card glass-panel user-profile-card" (click)="$event.stopPropagation()">
+          <div class="ea-modal-header">
+            <span>👤 Perfil de Colaborador</span>
+            <button class="icon-btn text-muted" (click)="closeUserPopover()" style="border:none;background:none;cursor:pointer;font-size:16px;">✕</button>
+          </div>
+          
+          <div class="user-popover-content">
+            <div class="user-avatar-large" [style.background]="selectedUserObj?.color || '#00d4ff'">
+              {{ selectedUserObj?.fullName?.charAt(0) || 'U' }}
+            </div>
+
+            <div class="user-info-details">
+              <h3 class="user-info-name">
+                {{ selectedUserObj?.fullName }}
+                <span class="owner-badge" *ngIf="selectedUserObj?.isOwner">👑 Propietario</span>
+                <span class="collab-badge" *ngIf="!selectedUserObj?.isOwner">👤 Colaborador</span>
+              </h3>
+              <p class="user-info-email">✉️ {{ selectedUserObj?.email || 'Sin correo público' }}</p>
+              
+              <div class="user-status-pill" [class.online]="selectedUserObj?.isOnline">
+                <span class="status-dot"></span>
+                <span>{{ selectedUserObj?.isOnline ? 'En vivo (Conectado)' : 'Desconectado' }}</span>
+              </div>
+            </div>
+
+            <div class="realtime-timer-box">
+              <span class="timer-label">⏱️ Tiempo activo en esta sesión:</span>
+              <span class="timer-value">{{ liveTimeString }}</span>
+            </div>
+
+            <button class="btn btn-primary btn-block history-btn" (click)="openWorkHistoryModal(selectedUserObj)">
+              📜 Ver Historial de Trabajo Completo
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Work Session History Modal -->
+      <div class="modal-backdrop" *ngIf="showHistoryModal" (click)="closeHistoryModal()">
+        <div class="modal-card glass-panel history-modal-card" (click)="$event.stopPropagation()">
+          <div class="ea-modal-header">
+            <span>📊 Historial de Sesiones de Trabajo — {{ selectedUserObj?.fullName }}</span>
+            <button class="icon-btn text-muted" (click)="closeHistoryModal()" style="border:none;background:none;cursor:pointer;font-size:16px;">✕</button>
+          </div>
+
+          <div class="history-modal-body">
+            <div class="history-summary-box">
+              <div class="summary-item">
+                <span class="sum-label">Horas Totales Trabajadas:</span>
+                <span class="sum-val">{{ formatSeconds(historyTotalSeconds) }}</span>
+              </div>
+              <div class="summary-item">
+                <span class="sum-label">Total de Sesiones:</span>
+                <span class="sum-val">{{ historySessions.length }}</span>
+              </div>
+            </div>
+
+            <div class="history-loading" *ngIf="isLoadingHistory">
+              <span>⏳ Cargando historial de sesiones de PostgreSQL...</span>
+            </div>
+
+            <div class="history-table-container" *ngIf="!isLoadingHistory">
+              <table class="history-table" *ngIf="historySessions.length > 0; else noHistory">
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Hora Inicio</th>
+                    <th>Hora Fin</th>
+                    <th>Duración</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let s of historySessions">
+                    <td>{{ s.startTime | date:'dd/MM/yyyy' }}</td>
+                    <td>{{ s.startTime | date:'HH:mm:ss' }}</td>
+                    <td>
+                      <span *ngIf="s.endTime">{{ s.endTime | date:'HH:mm:ss' }}</span>
+                      <span *ngIf="!s.endTime" class="badge-online">🟢 En curso</span>
+                    </td>
+                    <td>
+                      <span class="duration-pill">{{ formatSessionDuration(s) }}</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <ng-template #noHistory>
+                <div class="empty-history">
+                  <span>ℹ️ No hay sesiones de trabajo registradas previamente para este usuario.</span>
+                </div>
+              </ng-template>
+            </div>
+          </div>
+
+          <div class="ea-modal-footer">
+            <button class="btn btn-ghost" (click)="closeHistoryModal()">Cerrar</button>
+          </div>
         </div>
       </div>
 
@@ -238,6 +355,49 @@ import { ProjectService, Project } from '../../core/services/project.service';
       transform: translateY(-1px);
       box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
     }
+    .save-file-btn {
+      background: #10b981 !important;
+      color: #0f172a !important;
+      font-weight: 700 !important;
+      border: 1px solid #059669 !important;
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+      margin-left: 4px;
+    }
+    .save-file-btn:hover {
+      background: #34d399 !important;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+    }
+    .help-btn {
+      background: rgba(139, 92, 246, 0.25) !important;
+      color: #a78bfa !important;
+      font-weight: 700 !important;
+      border: 1px solid rgba(139, 92, 246, 0.5) !important;
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      box-shadow: 0 2px 8px rgba(139, 92, 246, 0.25);
+      margin-left: 4px;
+    }
+    .help-btn:hover {
+      background: rgba(139, 92, 246, 0.45) !important;
+      border-color: #a78bfa !important;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(139, 92, 246, 0.5);
+    }
     .project-title {
       font-weight: 600;
       max-width: 180px;
@@ -267,6 +427,27 @@ import { ProjectService, Project } from '../../core/services/project.service';
     }
     .collab-avatars .avatar {
       margin-left: -6px;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 11px;
+      color: #fff;
+      position: relative;
+      transition: all 0.25s ease;
+      cursor: default;
+    }
+    .collab-avatars .avatar.online-live {
+      border: 2px solid #22c55e;
+      box-shadow: 0 0 10px rgba(34, 197, 94, 0.75);
+      z-index: 2;
+    }
+    .collab-avatars .avatar.offline-user {
+      border: 2px solid rgba(255, 255, 255, 0.25);
+      opacity: 0.55;
     }
     .invite-btn {
       font-size: 11px;
@@ -290,6 +471,24 @@ import { ProjectService, Project } from '../../core/services/project.service';
       box-shadow: var(--shadow-lg);
       z-index: 200;
       padding: 6px 0;
+    }
+    .projects-list-container {
+      max-height: 250px;
+      overflow-y: auto;
+      padding-right: 2px;
+    }
+    .projects-list-container::-webkit-scrollbar {
+      width: 5px;
+    }
+    .projects-list-container::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .projects-list-container::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+    }
+    .projects-list-container::-webkit-scrollbar-thumb:hover {
+      background: #00d4ff;
     }
     .dropdown-right {
       left: auto;
@@ -452,9 +651,199 @@ import { ProjectService, Project } from '../../core/services/project.service';
       padding-top: 10px;
       margin-top: 4px;
     }
+
+    /* User Profile Popover & History Modal */
+    .user-profile-card {
+      width: 420px;
+      padding: 20px;
+      gap: 16px;
+      box-shadow: 0 0 30px rgba(0, 212, 255, 0.25);
+    }
+    .user-popover-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 0;
+    }
+    .user-avatar-large {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26px;
+      font-weight: 800;
+      color: #ffffff;
+      box-shadow: 0 0 16px rgba(0, 212, 255, 0.4);
+    }
+    .user-info-details {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+    .user-info-name {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .owner-badge {
+      font-size: 10px;
+      background: rgba(255, 184, 0, 0.2);
+      color: #ffb800;
+      padding: 2px 8px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 184, 0, 0.4);
+    }
+    .collab-badge {
+      font-size: 10px;
+      background: rgba(0, 212, 255, 0.15);
+      color: var(--cyan);
+      padding: 2px 8px;
+      border-radius: 10px;
+      border: 1px solid rgba(0, 212, 255, 0.3);
+    }
+    .user-info-email {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+    .user-status-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+    .user-status-pill.online {
+      color: #10b981;
+      font-weight: 600;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+    .user-status-pill.online .status-dot {
+      background: #10b981;
+      box-shadow: 0 0 8px #10b981;
+    }
+    .realtime-timer-box {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .timer-label {
+      font-size: 11px;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .timer-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--cyan);
+      text-shadow: 0 0 10px rgba(0, 212, 255, 0.6);
+    }
+    .btn-block {
+      width: 100%;
+    }
+    .history-modal-card {
+      width: 600px;
+      max-width: 90vw;
+      padding: 20px;
+    }
+    .history-modal-body {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      margin-top: 10px;
+    }
+    .history-summary-box {
+      display: flex;
+      gap: 16px;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 12px 16px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+    .summary-item {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .sum-label {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .sum-val {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--cyan);
+    }
+    .history-table-container {
+      max-height: 280px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+    }
+    .history-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .history-table th {
+      background: rgba(0, 0, 0, 0.4);
+      padding: 8px 12px;
+      text-align: left;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+    }
+    .history-table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      color: var(--text-primary);
+    }
+    .badge-online {
+      color: #10b981;
+      font-weight: 600;
+    }
+    .duration-pill {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--cyan);
+    }
+    .empty-history {
+      padding: 20px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    .history-loading {
+      padding: 20px;
+      text-align: center;
+      color: var(--cyan);
+      font-size: 13px;
+    }
   `]
 })
-export class NavbarComponent implements OnInit {
+export class NavbarComponent implements OnInit, OnDestroy {
   @Input() currentProject: Project | null = null;
   @Input() projects: Project[] = [];
   @Input() onlineUsers: any[] = [];
@@ -462,13 +851,24 @@ export class NavbarComponent implements OnInit {
   @Output() createProjectEvent = new EventEmitter<{ name: string; description: string; fileType?: string }>();
   @Output() deleteProjectEvent = new EventEmitter<Project>();
   @Output() openFileEvent = new EventEmitter<void>();
+  @Output() saveProjectEvent = new EventEmitter<void>();
   @Output() exportXMI = new EventEmitter<void>();
   @Output() exportSQL = new EventEmitter<void>();
+  @Output() projectInvited = new EventEmitter<void>();
 
   showProjectMenu = false;
   showUserMenu = false;
   showNewModal = false;
   showInviteModal = false;
+
+  selectedUserObj: any = null;
+  showUserPopover = false;
+  showHistoryModal = false;
+  historySessions: any[] = [];
+  historyTotalSeconds = 0;
+  isLoadingHistory = false;
+  liveTimeString = '00h 00m 00s';
+  private timerInterval: any = null;
 
   newProjectName = '';
   newProjectDesc = '';
@@ -482,6 +882,15 @@ export class NavbarComponent implements OnInit {
 
   get currentUser(): User | null {
     return this.auth.currentUser;
+  }
+
+  get isOwner(): boolean {
+    if (!this.currentProject || !this.currentUser) return true;
+    const ownerId = (this.currentProject as any).ownerId || (this.currentProject as any).owner?.id;
+    if (ownerId != null) {
+      return String(ownerId) === String(this.currentUser.id);
+    }
+    return true;
   }
 
   toggleProjectMenu(): void {
@@ -538,13 +947,110 @@ export class NavbarComponent implements OnInit {
         alert(`Invitación enviada a ${this.inviteEmail}`);
         this.inviteEmail = '';
         this.showInviteModal = false;
+        this.projectInvited.emit();
       },
-      error: () => alert('Error al enviar invitación')
+      error: (err) => alert(err?.error?.error || 'Error al enviar invitación')
     });
   }
 
   logout(): void {
     this.auth.logout();
     this.router.navigate(['/login']);
+  }
+
+  openUserPopover(u: any, event: MouseEvent): void {
+    event.stopPropagation();
+    this.selectedUserObj = u;
+    this.showUserPopover = true;
+    this.startLiveTimer();
+  }
+
+  closeUserPopover(): void {
+    this.showUserPopover = false;
+    this.stopLiveTimer();
+  }
+
+  startLiveTimer(): void {
+    this.stopLiveTimer();
+    this.updateLiveTime();
+    this.timerInterval = setInterval(() => {
+      this.updateLiveTime();
+    }, 1000);
+  }
+
+  stopLiveTimer(): void {
+    if (this.timerInterval) {
+      clearInterval(this.timerInterval);
+      this.timerInterval = null;
+    }
+  }
+
+  updateLiveTime(): void {
+    if (!this.selectedUserObj) {
+      this.liveTimeString = '00h 00m 00s';
+      return;
+    }
+    const joinedAtStr = this.selectedUserObj.joinedAt;
+    if (!joinedAtStr || !this.selectedUserObj.isOnline) {
+      this.liveTimeString = 'Sesión no activa';
+      return;
+    }
+
+    const start = new Date(joinedAtStr).getTime();
+    const now = Date.now();
+    const diffSec = Math.max(0, Math.floor((now - start) / 1000));
+    this.liveTimeString = this.formatSeconds(diffSec);
+  }
+
+  formatSeconds(totalSec: number): string {
+    if (totalSec <= 0) return '00h 00m 00s';
+    const hrs = Math.floor(totalSec / 3600);
+    const mins = Math.floor((totalSec % 3600) / 60);
+    const secs = totalSec % 60;
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${pad(hrs)}h ${pad(mins)}m ${pad(secs)}s`;
+  }
+
+  formatSessionDuration(s: any): string {
+    if (s.duration != null) return this.formatSeconds(s.duration);
+    if (!s.endTime && s.startTime) {
+      const diff = Math.floor((Date.now() - new Date(s.startTime).getTime()) / 1000);
+      return this.formatSeconds(Math.max(0, diff));
+    }
+    return '00h 00m 00s';
+  }
+
+  openWorkHistoryModal(u: any): void {
+    if (!this.currentProject) return;
+    this.showUserPopover = false;
+    this.showHistoryModal = true;
+    this.isLoadingHistory = true;
+    this.historySessions = [];
+    this.historyTotalSeconds = 0;
+
+    const userId = u.id ? Number(u.id) : undefined;
+    this.projectService.getWorkHistory(this.currentProject.id, userId).subscribe({
+      next: (res) => {
+        this.isLoadingHistory = false;
+        this.historySessions = res.sessions || [];
+        this.historyTotalSeconds = res.totalDurationSeconds || 0;
+      },
+      error: (err) => {
+        this.isLoadingHistory = false;
+        console.error('Error al cargar historial de trabajo:', err);
+      }
+    });
+  }
+
+  closeHistoryModal(): void {
+    this.showHistoryModal = false;
+  }
+
+  openHelpView(): void {
+    this.router.navigate(['/help']);
+  }
+
+  ngOnDestroy(): void {
+    this.stopLiveTimer();
   }
 }

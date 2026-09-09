@@ -13,24 +13,35 @@ export class WebSocketService {
   private socket: Socket | null = null;
   private readonly serverUrl = 'http://localhost:3000';
 
+  roomUsers$ = new Subject<any[]>();
   userJoined$ = new Subject<any>();
   userLeft$ = new Subject<string>();
   cursorMoved$ = new Subject<CursorData>();
   nodeDragged$ = new Subject<{ nodeId: string; positionX: number; positionY: number }>();
   nodeUpdated$ = new Subject<any>();
+  nodeCreated$ = new Subject<any>();
+  nodeDeleted$ = new Subject<string>();
   connectorCreated$ = new Subject<any>();
+  connectorDeleted$ = new Subject<string>();
+  diagramReloaded$ = new Subject<any>();
 
   connect(): void {
     if (this.socket?.connected) return;
     this.socket = io(this.serverUrl, { transports: ['websocket'] });
 
+    this.socket.on('room-users', (users: any[]) => this.roomUsers$.next(users));
     this.socket.on('user-joined', (data: any) => this.userJoined$.next(data));
     this.socket.on('user-left', (socketId: string) => this.userLeft$.next(socketId));
     this.socket.on('cursor-moved', (data: CursorData) => this.cursorMoved$.next(data));
     this.socket.on('node-dragged', (data: any) => this.nodeDragged$.next(data));
     this.socket.on('node-updated', (data: any) => this.nodeUpdated$.next(data.node));
+    this.socket.on('node-created', (data: any) => this.nodeCreated$.next(data.node));
+    this.socket.on('node-deleted', (data: any) => this.nodeDeleted$.next(data.nodeId));
     this.socket.on('connector-created', (data: any) => this.connectorCreated$.next(data.connector));
+    this.socket.on('connector-deleted', (data: any) => this.connectorDeleted$.next(data.connectorId));
+    this.socket.on('diagram-reloaded', (data: any) => this.diagramReloaded$.next(data));
   }
+
 
   joinProject(projectId: string, user: any): void {
     this.socket?.emit('join-project', { projectId, user });
@@ -48,8 +59,24 @@ export class WebSocketService {
     this.socket?.emit('node-updated', { projectId, node });
   }
 
+  emitNodeCreated(projectId: string, node: any): void {
+    this.socket?.emit('node-created', { projectId, node });
+  }
+
+  emitNodeDeleted(projectId: string, nodeId: string): void {
+    this.socket?.emit('node-deleted', { projectId, nodeId });
+  }
+
   emitConnectorCreated(projectId: string, connector: any): void {
     this.socket?.emit('connector-created', { projectId, connector });
+  }
+
+  emitConnectorDeleted(projectId: string, connectorId: string): void {
+    this.socket?.emit('connector-deleted', { projectId, connectorId });
+  }
+
+  emitDiagramReloaded(projectId: string, payload?: any): void {
+    this.socket?.emit('diagram-reloaded', { projectId, payload });
   }
 
   disconnect(): void {

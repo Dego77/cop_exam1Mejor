@@ -6,17 +6,27 @@ export const getDiagramData = async (req: AuthRequest, res: Response): Promise<v
   try {
     const projectId = req.params.projectId as string;
 
-    const diagram = await prisma.diagram.findFirst({
+    let diagram = await prisma.diagram.findFirst({
       where: { projectId },
       include: {
         nodes: true,
         connectors: true,
       },
+      orderBy: { updatedAt: 'desc' },
     });
 
     if (!diagram) {
-      res.status(404).json({ error: 'Diagrama no encontrado para el proyecto.' });
-      return;
+      // Auto-create diagram in PostgreSQL DB if missing for this project
+      diagram = await prisma.diagram.create({
+        data: {
+          projectId,
+          name: 'Main Diagram',
+        },
+        include: {
+          nodes: true,
+          connectors: true,
+        },
+      });
     }
 
     res.json(diagram);
@@ -45,6 +55,12 @@ export const createNode = async (req: AuthRequest, res: Response): Promise<void>
       },
     });
 
+    // Touch parent diagram timestamp to preserve latest state
+    await prisma.diagram.update({
+      where: { id: diagramId },
+      data: { updatedAt: new Date() },
+    }).catch(() => {});
+
     res.status(201).json(node);
   } catch (error: any) {
     res.status(500).json({ error: 'Error al crear nodo UML: ' + error.message });
@@ -69,6 +85,13 @@ export const updateNode = async (req: AuthRequest, res: Response): Promise<void>
         ...(height !== undefined && { height }),
       },
     });
+
+    if (updatedNode && updatedNode.diagramId) {
+      await prisma.diagram.update({
+        where: { id: updatedNode.diagramId },
+        data: { updatedAt: new Date() },
+      }).catch(() => {});
+    }
 
     res.json(updatedNode);
   } catch (error: any) {
@@ -105,6 +128,11 @@ export const createConnector = async (req: AuthRequest, res: Response): Promise<
         label: label || '',
       },
     });
+
+    await prisma.diagram.update({
+      where: { id: diagramId },
+      data: { updatedAt: new Date() },
+    }).catch(() => {});
 
     res.status(201).json(connector);
   } catch (error: any) {

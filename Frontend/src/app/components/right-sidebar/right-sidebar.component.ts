@@ -5,6 +5,7 @@ import { Router } from '@angular/router';
 import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service';
 import { ProjectService } from '../../core/services/project.service';
 import { DiagramService } from '../../core/services/diagram.service';
+import { WebSocketService } from '../../core/services/websocket.service';
 import { AuthService } from '../../core/services/auth.service';
 
 @Component({
@@ -93,14 +94,30 @@ import { AuthService } from '../../core/services/auth.service';
             </div>
           </div>
 
-          <!-- Quick Suggestion Chips -->
-          <div class="suggestion-chips">
-            <button class="chip" (click)="sendQuickPrompt('Agregar clase ShoppingCart con items')">
-              + ShoppingCart
+          <!-- AI Model / Agent Selector Dropdown (Estilo Imagen 3) -->
+          <div class="agent-selector-wrapper">
+            <button class="agent-selector-btn" (click)="toggleAgentMenu($event)" title="Seleccionar Agente de IA / Modelo">
+              <span class="plus-icon">+</span>
+              <span class="agent-name">{{ selectedAgent.name }}</span>
+              <span class="chevron">▾</span>
             </button>
-            <button class="chip" (click)="sendQuickPrompt('Crear relación User 1..* Order')">
-              + User-Order
-            </button>
+
+            <!-- Floating Agent Dropdown Menu -->
+            <div class="agent-dropdown-menu" *ngIf="showAgentMenu" (click)="$event.stopPropagation()">
+              <div class="agent-dropdown-header">SELECCIONAR AGENTE IA</div>
+              <div 
+                *ngFor="let agent of availableAgents" 
+                class="agent-dropdown-item"
+                [class.active]="agent.id === selectedAgent.id"
+                (click)="selectAgent(agent)"
+              >
+                <div class="agent-item-info">
+                  <span class="agent-item-name">{{ agent.name }}</span>
+                  <span class="agent-item-provider">{{ agent.provider }}</span>
+                </div>
+                <span class="agent-check" *ngIf="agent.id === selectedAgent.id">✓</span>
+              </div>
+            </div>
           </div>
 
           <!-- Prompt Input -->
@@ -163,11 +180,14 @@ import { AuthService } from '../../core/services/auth.service';
             </div>
 
             <div *ngIf="photoPreview" class="photo-preview-box" (click)="$event.stopPropagation()">
-              <img [src]="photoPreview" class="photo-img" />
+              <img [src]="photoPreview" class="photo-img" [class.processing-img]="isProcessing" />
               <div class="photo-actions">
-                <button class="btn btn-ghost btn-sm" (click)="photoPreview = null">Cambiar</button>
-                <button class="btn btn-primary btn-sm" (click)="uploadPhoto()" [disabled]="isProcessing">
-                  ⚡ Escanear e Importar
+                <button class="btn btn-ghost btn-sm" (click)="photoPreview = null" [disabled]="isProcessing">Cambiar</button>
+                <button class="btn btn-primary btn-sm photo-scan-btn" (click)="uploadPhoto()" [disabled]="isProcessing">
+                  <span *ngIf="!isProcessing">⚡ Escanear e Importar</span>
+                  <span *ngIf="isProcessing" class="scan-loading-label">
+                    <span class="scan-spinner"></span> Escaneando con IA...
+                  </span>
                 </button>
               </div>
             </div>
@@ -272,6 +292,10 @@ import { AuthService } from '../../core/services/auth.service';
       font-size: 12px;
       line-height: 1.4;
     }
+    .msg-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     .user-msg {
       align-self: flex-end;
       background: var(--violet);
@@ -297,25 +321,94 @@ import { AuthService } from '../../core/services/auth.service';
       font-size: 11px;
       color: var(--cyan);
     }
-    .suggestion-chips {
-      display: flex;
-      gap: 6px;
-      overflow-x: auto;
-      width: 100%;
+    .agent-selector-wrapper {
+      position: relative;
+      margin-top: 4px;
+      margin-bottom: 2px;
     }
-    .chip {
+    .agent-selector-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .agent-selector-btn:hover {
+      background: var(--bg-surface);
+      color: var(--cyan);
+      border-color: var(--cyan);
+    }
+    .plus-icon {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--cyan);
+    }
+    .agent-name {
+      font-weight: 600;
+      font-size: 11px;
+      color: var(--text-bright);
+    }
+    .chevron {
+      font-size: 10px;
+      opacity: 0.7;
+    }
+    .agent-dropdown-menu {
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 0;
+      width: 250px;
       background: var(--bg-card);
       border: 1px solid var(--border);
-      color: var(--text-secondary);
-      padding: 4px 8px;
-      border-radius: 99px;
-      font-size: 11px;
-      cursor: pointer;
-      white-space: nowrap;
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-lg);
+      z-index: 300;
+      padding: 6px 0;
     }
-    .chip:hover {
-      border-color: var(--cyan);
+    .agent-dropdown-header {
+      padding: 6px 12px;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+    }
+    .agent-dropdown-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .agent-dropdown-item:hover, .agent-dropdown-item.active {
+      background: var(--bg-surface);
+    }
+    .agent-dropdown-item.active .agent-item-name {
       color: var(--cyan);
+      font-weight: 700;
+    }
+    .agent-item-info {
+      display: flex;
+      flex-direction: column;
+    }
+    .agent-item-name {
+      font-size: 11px;
+      color: var(--text-bright);
+    }
+    .agent-item-provider {
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+    .agent-check {
+      color: var(--cyan);
+      font-size: 12px;
+      font-weight: 700;
     }
     .chat-input-row {
       display: flex;
@@ -401,12 +494,34 @@ import { AuthService } from '../../core/services/auth.service';
       max-width: 100%;
       max-height: 200px;
       border-radius: var(--radius-sm);
+      transition: opacity 0.3s ease;
+    }
+    .photo-img.processing-img {
+      opacity: 0.5;
+      filter: blur(1px);
     }
     .photo-actions {
       display: flex;
       gap: 8px;
       justify-content: center;
       margin-top: 12px;
+    }
+    .scan-loading-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .scan-spinner {
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
     }
     .section-box {
       display: flex;
@@ -554,6 +669,26 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
   photoPreview: string | null = null;
   isDraggingPhoto = false;
 
+  availableAgents = [
+    { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', provider: 'Google GenAI (Predeterminado)' },
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', provider: 'Google High-Reasoning' },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'OpenAI Architect' },
+    { id: 'deepseek-v3', name: 'DeepSeek V3', provider: 'DeepSeek Code Architect' },
+    { id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'Anthropic Architect' }
+  ];
+  selectedAgent = this.availableAgents[0];
+  showAgentMenu = false;
+
+  toggleAgentMenu(event: MouseEvent): void {
+    event.stopPropagation();
+    this.showAgentMenu = !this.showAgentMenu;
+  }
+
+  selectAgent(agent: any): void {
+    this.selectedAgent = agent;
+    this.showAgentMenu = false;
+  }
+
   triggerFileSelect(): void {
     if (!this.photoPreview && this.fileInput) {
       this.fileInput.nativeElement.click();
@@ -567,6 +702,7 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
     private aiService: AIAgentService, 
     private projectService: ProjectService,
     private diagramService: DiagramService,
+    private wsService: WebSocketService,
     private auth: AuthService,
     private router: Router
   ) {}
@@ -597,7 +733,7 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
     const localResult = this.aiService.processSmartPromptLocally(prompt, currentNodes, currentConnectors);
 
     if (this.projectId) {
-      this.aiService.sendTextPrompt(this.projectId, prompt).subscribe({
+      this.aiService.sendTextPrompt(this.projectId, prompt, this.selectedAgent.id).subscribe({
         next: (res) => {
           this.isProcessing = false;
           if (res?.createdNodes && res.createdNodes.length > 0) {
@@ -630,6 +766,9 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
             timestamp: new Date()
           });
           this.diagramUpdated.emit();
+          if (this.projectId) {
+            this.wsService.emitDiagramReloaded(this.projectId);
+          }
         },
         error: () => {
           this.isProcessing = false;
@@ -640,6 +779,9 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
             timestamp: new Date()
           });
           this.diagramUpdated.emit();
+          if (this.projectId) {
+            this.wsService.emitDiagramReloaded(this.projectId);
+          }
         }
       });
     } else {
@@ -745,7 +887,7 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
     }
 
     if (this.projectId) {
-      this.aiService.sendVoice(this.projectId, blob).subscribe({
+      this.aiService.sendVoice(this.projectId, blob, this.selectedAgent.id).subscribe({
         next: (res) => {
           this.isProcessing = false;
           if (res?.createdNodes && res.createdNodes.length > 0) {
@@ -766,6 +908,9 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
             timestamp: new Date()
           });
           this.diagramUpdated.emit();
+          if (this.projectId) {
+            this.wsService.emitDiagramReloaded(this.projectId);
+          }
         },
         error: () => {
           this.isProcessing = false;
@@ -778,6 +923,9 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
             });
           }
           this.diagramUpdated.emit();
+          if (this.projectId) {
+            this.wsService.emitDiagramReloaded(this.projectId);
+          }
         }
       });
     } else {
@@ -833,158 +981,30 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
     if (!this.selectedFile) return;
     this.isProcessing = true;
 
-    const importFallbackNodes = () => {
-      const demoNodes: any[] = [
-        {
-          id: `node_user_${Date.now()}`,
-          name: 'User',
-          stereotype: 'Entity',
-          positionX: 350,
-          positionY: 60,
-          attributes: [
-            { visibility: '-', name: 'id', type: 'Int' },
-            { visibility: '-', name: 'email', type: 'String' },
-            { visibility: '-', name: 'password', type: 'String' },
-            { visibility: '-', name: 'lastLogin', type: 'Date' }
-          ],
-          methods: [
-            { visibility: '+', name: 'getSession', returnType: 'void' }
-          ]
-        },
-        {
-          id: `node_customer_${Date.now()}`,
-          name: 'Customer',
-          stereotype: 'Entity',
-          positionX: 350,
-          positionY: 280,
-          attributes: [
-            { visibility: '-', name: 'name', type: 'String' },
-            { visibility: '-', name: 'billingAddress', type: 'String' },
-            { visibility: '-', name: 'defaultShippingAddress', type: 'String' }
-          ],
-          methods: [
-            { visibility: '+', name: 'signUp', returnType: 'void' },
-            { visibility: '+', name: 'login', returnType: 'Boolean' }
-          ]
-        },
-        {
-          id: `node_cart_${Date.now()}`,
-          name: 'Shopping Cart',
-          stereotype: 'Entity',
-          positionX: 80,
-          positionY: 280,
-          attributes: [
-            { visibility: '-', name: 'id', type: 'Int' },
-            { visibility: '-', name: 'productId', type: 'Int' }
-          ],
-          methods: [
-            { visibility: '+', name: 'addProductToCart', returnType: 'void' },
-            { visibility: '+', name: 'removeFromCart', returnType: 'void' },
-            { visibility: '+', name: 'checkOut', returnType: 'void' }
-          ]
-        },
-        {
-          id: `node_orders_${Date.now()}`,
-          name: 'Orders',
-          stereotype: 'Entity',
-          positionX: 640,
-          positionY: 280,
-          attributes: [
-            { visibility: '-', name: 'id', type: 'Int' },
-            { visibility: '-', name: 'customerId', type: 'Int' },
-            { visibility: '-', name: 'orderDate', type: 'Date' },
-            { visibility: '-', name: 'status', type: 'String' },
-            { visibility: '-', name: 'price', type: 'Double' }
-          ],
-          methods: [
-            { visibility: '+', name: 'updateOrderStatus', returnType: 'void' },
-            { visibility: '+', name: 'placeOrder', returnType: 'void' },
-            { visibility: '+', name: 'cancelOrder', returnType: 'void' }
-          ]
-        },
-        {
-          id: `node_details_${Date.now()}`,
-          name: 'Order Details',
-          stereotype: 'Entity',
-          positionX: 480,
-          positionY: 520,
-          attributes: [
-            { visibility: '-', name: 'id', type: 'Int' },
-            { visibility: '-', name: 'orderId', type: 'Int' },
-            { visibility: '-', name: 'shippingAddress', type: 'String' },
-            { visibility: '-', name: 'shippingType', type: 'String' },
-            { visibility: '-', name: 'shippingCost', type: 'Double' },
-            { visibility: '-', name: 'billingAddress', type: 'String' },
-            { visibility: '-', name: 'createdDate', type: 'Date' }
-          ],
-          methods: [
-            { visibility: '+', name: 'cancelOrder', returnType: 'void' }
-          ]
-        }
-      ];
-
-      demoNodes.forEach(n => this.diagramService.addLocalNode(n));
-
-      // Connectors
-      const demoConnectors: any[] = [
-        {
-          id: `conn_inh_${Date.now()}`,
-          sourceNodeId: demoNodes[1].id, // Customer
-          targetNodeId: demoNodes[0].id, // User
-          type: 'Inheritance',
-          sourceMultiplicity: '',
-          targetMultiplicity: '',
-          label: ''
-        },
-        {
-          id: `conn_comp_cart_${Date.now()}`,
-          sourceNodeId: demoNodes[1].id, // Customer
-          targetNodeId: demoNodes[2].id, // Shopping Cart
-          type: 'Composition',
-          sourceMultiplicity: '1',
-          targetMultiplicity: '0..*',
-          label: ''
-        },
-        {
-          id: `conn_comp_orders_${Date.now()}`,
-          sourceNodeId: demoNodes[1].id, // Customer
-          targetNodeId: demoNodes[3].id, // Orders
-          type: 'Composition',
-          sourceMultiplicity: '1',
-          targetMultiplicity: '0..*',
-          label: ''
-        },
-        {
-          id: `conn_comp_details_${Date.now()}`,
-          sourceNodeId: demoNodes[3].id, // Orders
-          targetNodeId: demoNodes[4].id, // Order Details
-          type: 'Composition',
-          sourceMultiplicity: '1',
-          targetMultiplicity: '1',
-          label: ''
-        }
-      ];
-
-      const currentConns = this.diagramService.currentConnectors;
-      (this.diagramService as any).connectorsSubject.next([...currentConns, ...demoConnectors]);
-    };
-
     if (this.projectId) {
-      this.aiService.sendPhoto(this.projectId, this.selectedFile).subscribe({
+      this.aiService.sendPhoto(this.projectId, this.selectedFile, this.selectedAgent.id).subscribe({
         next: (res) => {
           this.isProcessing = false;
           if (res?.createdNodes && res.createdNodes.length > 0) {
             res.createdNodes.forEach((n: any) => this.diagramService.addLocalNode(n));
-          } else {
-            importFallbackNodes();
           }
 
           if (res?.createdConnectors && res.createdConnectors.length > 0) {
             const currentConns = this.diagramService.currentConnectors;
             (this.diagramService as any).connectorsSubject.next([...currentConns, ...res.createdConnectors]);
+          } else {
+            const allNodes = this.diagramService.currentNodes;
+            if (allNodes && allNodes.length >= 2) {
+              const synthesized = this.diagramService.autoSynthesizeConnectors(allNodes);
+              if (synthesized.length > 0) {
+                const currentConns = this.diagramService.currentConnectors;
+                (this.diagramService as any).connectorsSubject.next([...currentConns, ...synthesized]);
+                synthesized.forEach(c => this.diagramService.addConnector(c).subscribe());
+              }
+            }
           }
 
-          const msg = res?.aiResponse?.message || 'Foto analizada: Diagrama importado al lienzo exitosamente.';
+          const msg = res?.aiResponse?.message || 'Foto analizada: Clases y conexiones importadas al lienzo exitosamente.';
           this.chatHistory.push({
             sender: 'AI',
             mode: 'PHOTO',
@@ -994,14 +1014,16 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
           this.photoPreview = null;
           this.selectedFile = null;
           this.diagramUpdated.emit();
+          if (this.projectId) {
+            this.wsService.emitDiagramReloaded(this.projectId);
+          }
         },
-        error: () => {
+        error: (err) => {
           this.isProcessing = false;
-          importFallbackNodes();
           this.chatHistory.push({
             sender: 'AI',
             mode: 'PHOTO',
-            content: '📷 Diagrama digitalizado con éxito: Se importaron 5 clases y sus conexiones al lienzo.',
+            content: `⚠️ No se pudo procesar la imagen: ${err?.error?.error || err?.message || 'Error en el servicio de IA.'}`,
             timestamp: new Date()
           });
           this.photoPreview = null;
@@ -1011,11 +1033,10 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
       });
     } else {
       this.isProcessing = false;
-      importFallbackNodes();
       this.chatHistory.push({
         sender: 'AI',
         mode: 'PHOTO',
-        content: '📷 Diagrama digitalizado con éxito: Se importaron las clases de la imagen al lienzo.',
+        content: '⚠️ Debes seleccionar o crear un proyecto primero para escanear la imagen.',
         timestamp: new Date()
       });
       this.photoPreview = null;
