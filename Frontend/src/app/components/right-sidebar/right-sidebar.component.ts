@@ -29,14 +29,14 @@ import { AuthService } from '../../core/services/auth.service';
           [class.active]="activeTab === 'AI'"
           (click)="activeTab = 'AI'"
         >
-          <span>🤖 Agente IA</span>
+          <span>Agente IA</span>
         </button>
         <button 
           class="tab-btn" 
           [class.active]="activeTab === 'CODE'"
           (click)="activeTab = 'CODE'"
         >
-          <span>💻 Code & Sync</span>
+          <span>Code & Sync</span>
         </button>
       </div>
 
@@ -49,21 +49,21 @@ import { AuthService } from '../../core/services/auth.service';
             [class.active]="aiMode === 'CHAT'"
             (click)="aiMode = 'CHAT'"
           >
-            💬 Chat
+            Chat
           </button>
           <button 
             class="submode-btn" 
             [class.active]="aiMode === 'VOICE'"
             (click)="aiMode = 'VOICE'"
           >
-            🎙️ Voz
+            Voz
           </button>
           <button 
             class="submode-btn" 
             [class.active]="aiMode === 'PHOTO'"
             (click)="aiMode = 'PHOTO'"
           >
-            📷 Foto Pizarrón
+            Foto Pizarrón
           </button>
         </div>
 
@@ -71,10 +71,10 @@ import { AuthService } from '../../core/services/auth.service';
         <div class="chat-container" *ngIf="aiMode === 'CHAT'">
           <div class="chat-messages" #chatScroll>
             <div class="chat-welcome" *ngIf="chatHistory.length === 0">
-              <span class="welcome-icon">✨</span>
               <p>Hola, soy tu <strong>Agente IA de Arquitectura</strong>.</p>
               <p>Describe las clases o relaciones que deseas crear en lenguaje natural.</p>
             </div>
+
 
             <div 
               *ngFor="let msg of chatHistory" 

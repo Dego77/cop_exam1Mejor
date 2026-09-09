@@ -5,6 +5,7 @@ import { NavbarComponent } from '../../components/navbar/navbar.component';
 import { LeftSidebarComponent } from '../../components/left-sidebar/left-sidebar.component';
 import { CanvasComponent } from '../../components/canvas/canvas.component';
 import { RightSidebarComponent } from '../../components/right-sidebar/right-sidebar.component';
+import { AgentBubbleComponent } from '../../components/agent-bubble/agent-bubble.component';
 import { ProjectService, Project } from '../../core/services/project.service';
 import { DiagramService, UMLNode, UMLConnector, CanvasLabel } from '../../core/services/diagram.service';
 import { EaExporterService } from '../../core/services/ea-exporter.service';
@@ -21,7 +22,8 @@ import { Subscription } from 'rxjs';
     NavbarComponent,
     LeftSidebarComponent,
     CanvasComponent,
-    RightSidebarComponent
+    RightSidebarComponent,
+    AgentBubbleComponent
   ],
   template: `
     <div class="editor-layout">
@@ -80,8 +82,12 @@ import { Subscription } from 'rxjs';
           (diagramUpdated)="onAIDiagramUpdated()"
         ></app-right-sidebar>
       </div>
+
+      <!-- Floating Support Agent Mascot/Bubble -->
+      <app-agent-bubble></app-agent-bubble>
     </div>
   `,
+
   styles: [`
     .editor-layout {
       width: 100vw;

@@ -2,12 +2,14 @@ import { Component, Input, Output, EventEmitter, HostListener } from '@angular/c
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { UMLNode, UMLConnector, CanvasLabel, DiagramService } from '../../core/services/diagram.service';
+import { MinimapComponent } from '../minimap/minimap.component';
 
 @Component({
   selector: 'app-canvas',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, MinimapComponent],
   template: `
+
     <div 
       class="canvas-container" 
       [class.grid-active]="showGrid"
@@ -550,8 +552,17 @@ import { UMLNode, UMLConnector, CanvasLabel, DiagramService } from '../../core/s
         </div>
       </div>
 
+      <!-- Navigation Minimap Overlay Widget -->
+      <app-minimap
+        [nodes]="nodes"
+        [connectors]="connectors"
+        [remoteCursors]="remoteCursors"
+        [zoomLevel]="zoomLevel"
+      ></app-minimap>
+
       <!-- Bottom Status & Control Bar -->
       <div class="status-bar">
+
         <div class="status-left">
           <span class="status-item">
             <span class="status-dot dot-connected"></span>

@@ -627,3 +627,20 @@ export const getAIChatHistory = async (req: AuthRequest, res: Response): Promise
     res.status(500).json({ error: 'Error al obtener historial IA: ' + error.message });
   }
 };
+
+export const handleSupportPrompt = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { prompt, isInteractiveMode, model } = req.body;
+
+    if (!prompt) {
+      res.status(400).json({ error: 'El campo prompt es obligatorio.' });
+      return;
+    }
+
+    const response = await AIAgentService.processSupportPrompt(prompt, isInteractiveMode, model);
+    res.json(response);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Error al procesar consulta de soporte: ' + error.message });
+  }
+};
+
