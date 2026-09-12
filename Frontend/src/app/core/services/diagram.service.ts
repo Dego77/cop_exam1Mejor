@@ -99,6 +99,8 @@ export class DiagramService {
             }
           }
 
+          serverConnectors = this.deduplicateConnectors(serverConnectors);
+
           this.nodesSubject.next(serverNodes);
           this.connectorsSubject.next(serverConnectors);
           this.saveDiagramLocalSnapshot(projectId, serverNodes, serverConnectors);
@@ -214,6 +216,27 @@ export class DiagramService {
     }
 
     return connectors;
+  }
+
+  deduplicateConnectors(connectors: UMLConnector[]): UMLConnector[] {
+    if (!connectors || connectors.length === 0) return [];
+    const unique: UMLConnector[] = [];
+    const seen = new Set<string>();
+
+    for (let i = connectors.length - 1; i >= 0; i--) {
+      const c = connectors[i];
+      if (!c || !c.sourceNodeId || !c.targetNodeId) continue;
+      const typeStr = c.type || 'Association';
+      const key1 = `${c.sourceNodeId}_${c.targetNodeId}_${typeStr}`;
+      const key2 = `${c.targetNodeId}_${c.sourceNodeId}_${typeStr}`;
+
+      if (!seen.has(key1) && !seen.has(key2)) {
+        seen.add(key1);
+        seen.add(key2);
+        unique.unshift(c);
+      }
+    }
+    return unique;
   }
 
   saveDiagramLocalSnapshot(projectId: string, nodes: UMLNode[], connectors: UMLConnector[]): void {
@@ -354,6 +377,9 @@ export class DiagramService {
           next: (savedConn) => {
             const updated = this.connectorsSubject.value.map(c => c.id === tempConn.id ? savedConn : c);
             this.connectorsSubject.next(updated);
+            if (this.currentProjectId) {
+              this.saveDiagramLocalSnapshot(this.currentProjectId, this.nodesSubject.value, updated);
+            }
             observer.next(savedConn);
             observer.complete();
           },
@@ -367,7 +393,15 @@ export class DiagramService {
   }
 
   deleteConnector(connectorId: string): void {
-    this.http.delete(`${this.apiUrl}/connectors/${connectorId}`, { headers: this.headers }).subscribe();
+    const targetConn = this.connectorsSubject.value.find(c => c.id === connectorId);
+    const isUUID = (str?: string): boolean => !!str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+    
+    let deleteUrl = `${this.apiUrl}/connectors/${connectorId}`;
+    if (!isUUID(connectorId) && targetConn) {
+      deleteUrl += `?sourceNodeId=${targetConn.sourceNodeId}&targetNodeId=${targetConn.targetNodeId}&type=${targetConn.type || ''}`;
+    }
+
+    this.http.delete(deleteUrl, { headers: this.headers }).subscribe();
     const updatedConns = this.connectorsSubject.value.filter(c => c.id !== connectorId);
     this.connectorsSubject.next(updatedConns);
     if (this.currentProjectId) {

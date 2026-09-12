@@ -1409,6 +1409,12 @@ export class CanvasComponent {
     }
     if (this.draggingMultiplicity) {
       const conn = this.draggingMultiplicity.connector;
+      this.diagramService.updateConnector(conn.id, {
+        sourceMultOffsetX: conn.sourceMultOffsetX,
+        sourceMultOffsetY: conn.sourceMultOffsetY,
+        targetMultOffsetX: conn.targetMultOffsetX,
+        targetMultOffsetY: conn.targetMultOffsetY
+      });
       const source = this.findNode(conn.sourceNodeId);
       if (source) this.nodeMoved.emit(source);
       this.draggingMultiplicity = null;
@@ -1542,7 +1548,18 @@ export class CanvasComponent {
 
   saveConnectorEditDirect(): void {
     if (this.editingConnector) {
-      const source = this.findNode(this.editingConnector?.sourceNodeId);
+      const conn = this.editingConnector;
+      this.diagramService.updateConnector(conn.id, {
+        type: conn.type,
+        sourceMultiplicity: conn.sourceMultiplicity,
+        targetMultiplicity: conn.targetMultiplicity,
+        label: conn.label,
+        sourceMultOffsetX: conn.sourceMultOffsetX,
+        sourceMultOffsetY: conn.sourceMultOffsetY,
+        targetMultOffsetX: conn.targetMultOffsetX,
+        targetMultOffsetY: conn.targetMultOffsetY
+      });
+      const source = this.findNode(conn.sourceNodeId);
       if (source) this.nodeMoved.emit(source);
     }
   }
@@ -1554,6 +1571,7 @@ export class CanvasComponent {
     }
     this.editingConnector = null;
     this.selectedConnector = null;
+    this.diagramService.deleteConnector(connectorId);
   }
 
   onDragOver(event: DragEvent): void {
@@ -1699,17 +1717,21 @@ export class CanvasComponent {
   }
 
   getConnectorSourceAnchorX(conn: UMLConnector): number {
-    const source = this.findNode(conn.sourceNodeId);
-    const target = this.findNode(conn.targetNodeId);
-    if (!source || !target) return 0;
-    return source.positionX + (target.positionX - source.positionX) * 0.25 + 115;
+    const ep = this.getSourceEndpoint(conn);
+    const tep = this.getTargetEndpoint(conn);
+    const dx = tep.x - ep.x;
+    const dy = tep.y - ep.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    return ep.x + (dx / dist) * 20;
   }
 
   getConnectorSourceAnchorY(conn: UMLConnector): number {
-    const source = this.findNode(conn.sourceNodeId);
-    const target = this.findNode(conn.targetNodeId);
-    if (!source || !target) return 0;
-    return source.positionY + (target.positionY - source.positionY) * 0.25 + 80;
+    const ep = this.getSourceEndpoint(conn);
+    const tep = this.getTargetEndpoint(conn);
+    const dx = tep.x - ep.x;
+    const dy = tep.y - ep.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    return ep.y + (dy / dist) * 20;
   }
 
   getConnectorSourceX(conn: UMLConnector): number {
@@ -1723,17 +1745,21 @@ export class CanvasComponent {
   }
 
   getConnectorTargetAnchorX(conn: UMLConnector): number {
-    const source = this.findNode(conn.sourceNodeId);
-    const target = this.findNode(conn.targetNodeId);
-    if (!source || !target) return 0;
-    return source.positionX + (target.positionX - source.positionX) * 0.75 + 115;
+    const ep = this.getTargetEndpoint(conn);
+    const sep = this.getSourceEndpoint(conn);
+    const dx = sep.x - ep.x;
+    const dy = sep.y - ep.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    return ep.x + (dx / dist) * 25;
   }
 
   getConnectorTargetAnchorY(conn: UMLConnector): number {
-    const source = this.findNode(conn.sourceNodeId);
-    const target = this.findNode(conn.targetNodeId);
-    if (!source || !target) return 0;
-    return source.positionY + (target.positionY - source.positionY) * 0.75 + 80;
+    const ep = this.getTargetEndpoint(conn);
+    const sep = this.getSourceEndpoint(conn);
+    const dx = sep.x - ep.x;
+    const dy = sep.y - ep.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    return ep.y + (dy / dist) * 25;
   }
 
   getConnectorTargetX(conn: UMLConnector): number {
@@ -1747,17 +1773,15 @@ export class CanvasComponent {
   }
 
   getConnectorMidX(conn: UMLConnector): number {
-    const source = this.findNode(conn.sourceNodeId);
-    const target = this.findNode(conn.targetNodeId);
-    if (!source || !target) return 0;
-    return (source.positionX + target.positionX) / 2 + 115;
+    const sep = this.getSourceEndpoint(conn);
+    const tep = this.getTargetEndpoint(conn);
+    return (sep.x + tep.x) / 2;
   }
 
   getConnectorMidY(conn: UMLConnector): number {
-    const source = this.findNode(conn.sourceNodeId);
-    const target = this.findNode(conn.targetNodeId);
-    if (!source || !target) return 0;
-    return (source.positionY + target.positionY) / 2 + 80;
+    const sep = this.getSourceEndpoint(conn);
+    const tep = this.getTargetEndpoint(conn);
+    return (sep.y + tep.y) / 2;
   }
 
   getAssocClassTopX(conn: UMLConnector): number {

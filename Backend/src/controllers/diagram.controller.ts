@@ -29,6 +29,34 @@ export const getDiagramData = async (req: AuthRequest, res: Response): Promise<v
       });
     }
 
+    if (diagram && diagram.connectors && diagram.connectors.length > 0) {
+      const uniqueConns: typeof diagram.connectors = [];
+      const duplicateIds: string[] = [];
+      const seen = new Set<string>();
+
+      for (let i = diagram.connectors.length - 1; i >= 0; i--) {
+        const c = diagram.connectors[i];
+        const key1 = `${c.sourceNodeId}_${c.targetNodeId}_${c.type}`;
+        const key2 = `${c.targetNodeId}_${c.sourceNodeId}_${c.type}`;
+
+        if (seen.has(key1) || seen.has(key2)) {
+          duplicateIds.push(c.id);
+        } else {
+          seen.add(key1);
+          seen.add(key2);
+          uniqueConns.unshift(c);
+        }
+      }
+
+      if (duplicateIds.length > 0) {
+        prisma.connector.deleteMany({
+          where: { id: { in: duplicateIds } }
+        }).catch(() => {});
+      }
+
+      diagram.connectors = uniqueConns;
+    }
+
     res.json(diagram);
   } catch (error: any) {
     res.status(500).json({ error: 'Error al obtener datos del diagrama: ' + error.message });
@@ -143,14 +171,29 @@ export const createConnector = async (req: AuthRequest, res: Response): Promise<
 export const deleteConnector = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const connectorId = req.params.connectorId as string;
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(connectorId);
 
-    await prisma.connector.delete({
-      where: { id: connectorId },
-    });
+    if (isUUID) {
+      await prisma.connector.deleteMany({
+        where: { id: connectorId },
+      });
+    } else {
+      const { sourceNodeId, targetNodeId, type } = req.query;
+      if (sourceNodeId && targetNodeId) {
+        await prisma.connector.deleteMany({
+          where: {
+            sourceNodeId: String(sourceNodeId),
+            targetNodeId: String(targetNodeId),
+            ...(type ? { type: String(type) } : {})
+          }
+        });
+      }
+    }
 
     res.json({ message: 'Conector eliminado correctamente.' });
   } catch (error: any) {
-    res.status(500).json({ error: 'Error al eliminar conector UML: ' + error.message });
+    console.warn('Advertencia en deleteConnector:', error?.message || error);
+    res.json({ message: 'Procesado eliminación de conector.' });
   }
 };
 

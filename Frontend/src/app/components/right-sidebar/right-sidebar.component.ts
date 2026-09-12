@@ -720,6 +720,18 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
     });
   }
 
+  speakText(text: string): void {
+    if (!('speechSynthesis' in window)) return;
+    try {
+      window.speechSynthesis.cancel();
+      const cleanText = text.replace(/[*_#`~]/g, '');
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      utterance.lang = 'es-ES';
+      utterance.rate = 1.0;
+      window.speechSynthesis.speak(utterance);
+    } catch (e) {}
+  }
+
   sendTextPrompt(): void {
     if (!this.textPrompt.trim()) return;
     const prompt = this.textPrompt;
@@ -727,13 +739,11 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
     this.textPrompt = '';
     this.isProcessing = true;
 
-    // Process prompt with current diagram context
     const currentNodes = this.diagramService.currentNodes;
     const currentConnectors = this.diagramService.currentConnectors;
-    const localResult = this.aiService.processSmartPromptLocally(prompt, currentNodes, currentConnectors);
 
     if (this.projectId) {
-      this.aiService.sendTextPrompt(this.projectId, prompt, this.selectedAgent.id).subscribe({
+      this.aiService.sendTextPrompt(this.projectId, prompt, this.selectedAgent.id, currentNodes).subscribe({
         next: (res) => {
           this.isProcessing = false;
           if (res?.createdNodes && res.createdNodes.length > 0) {
@@ -754,17 +764,15 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
             });
           }
 
-          const rawMsg = res?.aiResponse?.message || res?.message;
-          const cleanMsg = (rawMsg && !rawMsg.includes('{"') && !rawMsg.includes('API key') && !rawMsg.includes('INVALID_ARGUMENT'))
-            ? rawMsg
-            : localResult.message;
+          const rawMsg = res?.aiResponse?.message || res?.message || 'Instrucción procesada exitosamente.';
 
           this.chatHistory.push({
             sender: 'AI',
             mode: 'CHAT',
-            content: cleanMsg,
+            content: rawMsg,
             timestamp: new Date()
           });
+          this.speakText(rawMsg);
           this.diagramUpdated.emit();
           if (this.projectId) {
             this.wsService.emitDiagramReloaded(this.projectId);
@@ -772,12 +780,14 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
         },
         error: () => {
           this.isProcessing = false;
+          const localResult = this.aiService.processSmartPromptLocally(prompt, currentNodes, currentConnectors);
           this.chatHistory.push({
             sender: 'AI',
             mode: 'CHAT',
             content: localResult.message,
             timestamp: new Date()
           });
+          this.speakText(localResult.message);
           this.diagramUpdated.emit();
           if (this.projectId) {
             this.wsService.emitDiagramReloaded(this.projectId);
@@ -786,12 +796,14 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
       });
     } else {
       this.isProcessing = false;
+      const localResult = this.aiService.processSmartPromptLocally(prompt, currentNodes, currentConnectors);
       this.chatHistory.push({
         sender: 'AI',
         mode: 'CHAT',
         content: localResult.message,
         timestamp: new Date()
       });
+      this.speakText(localResult.message);
       this.diagramUpdated.emit();
     }
   }
@@ -819,7 +831,6 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
       this.audioChunks = [];
       this.recordedTranscript = '';
 
-      // Initialize Web Speech API for live transcription in Spanish
       const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SpeechRec) {
         this.speechRecognition = new SpeechRec();
@@ -866,9 +877,6 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
 
   uploadVoice(blob: Blob, transcriptText: string = ''): void {
     this.isProcessing = true;
-
-    // Process transcript immediately locally if available
-    let localResult: any = null;
     if (transcriptText.trim()) {
       this.chatHistory.push({
         sender: 'USER',
@@ -876,18 +884,13 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
         content: `🎙️ "${transcriptText}"`,
         timestamp: new Date()
       });
-
-      const currentNodes = this.diagramService.currentNodes;
-      const currentConnectors = this.diagramService.currentConnectors;
-      localResult = this.aiService.processSmartPromptLocally(transcriptText, currentNodes, currentConnectors);
-
-      if (localResult.createdNodes && localResult.createdNodes.length > 0) {
-        localResult.createdNodes.forEach((n: any) => this.diagramService.addLocalNode(n));
-      }
     }
 
+    const currentNodes = this.diagramService.currentNodes;
+    const currentConnectors = this.diagramService.currentConnectors;
+
     if (this.projectId) {
-      this.aiService.sendVoice(this.projectId, blob, this.selectedAgent.id).subscribe({
+      this.aiService.sendVoice(this.projectId, blob, this.selectedAgent.id, currentNodes).subscribe({
         next: (res) => {
           this.isProcessing = false;
           if (res?.createdNodes && res.createdNodes.length > 0) {
@@ -900,13 +903,14 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
             res.deletedNodeIds.forEach((id: string) => this.diagramService.deleteNode(id));
           }
 
-          const rawMsg = res?.aiResponse?.message || res?.message || localResult?.message;
+          const rawMsg = res?.aiResponse?.message || res?.message || 'Nota de voz procesada. Clases generadas en el lienzo.';
           this.chatHistory.push({
             sender: 'AI',
             mode: 'VOICE',
-            content: rawMsg || 'Nota de voz procesada. Clases generadas en el lienzo.',
+            content: rawMsg,
             timestamp: new Date()
           });
+          this.speakText(rawMsg);
           this.diagramUpdated.emit();
           if (this.projectId) {
             this.wsService.emitDiagramReloaded(this.projectId);
@@ -914,14 +918,18 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
         },
         error: () => {
           this.isProcessing = false;
-          if (localResult?.message) {
-            this.chatHistory.push({
-              sender: 'AI',
-              mode: 'VOICE',
-              content: localResult.message,
-              timestamp: new Date()
-            });
+          let fallbackMsg = 'Error al procesar la nota de voz.';
+          if (transcriptText.trim()) {
+            const localResult = this.aiService.processSmartPromptLocally(transcriptText, currentNodes, currentConnectors);
+            fallbackMsg = localResult.message;
           }
+          this.chatHistory.push({
+            sender: 'AI',
+            mode: 'VOICE',
+            content: fallbackMsg,
+            timestamp: new Date()
+          });
+          this.speakText(fallbackMsg);
           this.diagramUpdated.emit();
           if (this.projectId) {
             this.wsService.emitDiagramReloaded(this.projectId);
@@ -930,14 +938,18 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
       });
     } else {
       this.isProcessing = false;
-      if (localResult?.message) {
-        this.chatHistory.push({
-          sender: 'AI',
-          mode: 'VOICE',
-          content: localResult.message,
-          timestamp: new Date()
-        });
+      let fallbackMsg = 'Debes seleccionar o crear un proyecto primero.';
+      if (transcriptText.trim()) {
+        const localResult = this.aiService.processSmartPromptLocally(transcriptText, currentNodes, currentConnectors);
+        fallbackMsg = localResult.message;
       }
+      this.chatHistory.push({
+        sender: 'AI',
+        mode: 'VOICE',
+        content: fallbackMsg,
+        timestamp: new Date()
+      });
+      this.speakText(fallbackMsg);
       this.diagramUpdated.emit();
     }
   }
@@ -1011,6 +1023,7 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
             content: `📷 ${msg}`,
             timestamp: new Date()
           });
+          this.speakText(msg);
           this.photoPreview = null;
           this.selectedFile = null;
           this.diagramUpdated.emit();
@@ -1020,12 +1033,14 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
         },
         error: (err) => {
           this.isProcessing = false;
+          const errorMsg = `⚠️ No se pudo procesar la imagen: ${err?.error?.error || err?.message || 'Error en el servicio de IA.'}`;
           this.chatHistory.push({
             sender: 'AI',
             mode: 'PHOTO',
-            content: `⚠️ No se pudo procesar la imagen: ${err?.error?.error || err?.message || 'Error en el servicio de IA.'}`,
+            content: errorMsg,
             timestamp: new Date()
           });
+          this.speakText(errorMsg);
           this.photoPreview = null;
           this.selectedFile = null;
           this.diagramUpdated.emit();
@@ -1033,12 +1048,14 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
       });
     } else {
       this.isProcessing = false;
+      const errorMsg = '⚠️ Debes seleccionar o crear un proyecto primero para escanear la imagen.';
       this.chatHistory.push({
         sender: 'AI',
         mode: 'PHOTO',
-        content: '⚠️ Debes seleccionar o crear un proyecto primero para escanear la imagen.',
+        content: errorMsg,
         timestamp: new Date()
       });
+      this.speakText(errorMsg);
       this.photoPreview = null;
       this.selectedFile = null;
       this.diagramUpdated.emit();

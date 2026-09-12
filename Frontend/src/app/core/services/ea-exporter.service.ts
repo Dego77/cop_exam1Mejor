@@ -20,81 +20,71 @@ export class EaExporterService {
   }
 
   private buildMultiplicityXml(multStr: string, idPrefix: string): { lowVal: string; uppVal: string; eaTypeMult: string } {
-    const clean = (multStr || '').trim();
+    if (!multStr) {
+      return { lowVal: '', uppVal: '', eaTypeMult: '' };
+    }
+
+    // 1. Clean visibility prefixes (+, -, #, ~) and whitespace
+    const clean = multStr.trim().replace(/^[+\-#~]\s*/, '');
 
     if (!clean) {
       return { lowVal: '', uppVal: '', eaTypeMult: '' };
     }
 
+    let low = '';
+    let upp = '';
+    let eaTypeMult = clean;
+
     if (clean === '1') {
-      return {
-        lowVal: `<lowerValue xmi:type="uml:LiteralInteger" xmi:id="${idPrefix}_low" value="1"/>`,
-        uppVal: '',
-        eaTypeMult: '1'
-      };
-    }
-
-    if (clean === '*') {
-      return {
-        lowVal: '',
-        uppVal: `<upperValue xmi:type="uml:LiteralUnlimitedNatural" xmi:id="${idPrefix}_upp" value="*"/>`,
-        eaTypeMult: '*'
-      };
-    }
-
-    if (clean === '0') {
-      return {
-        lowVal: `<lowerValue xmi:type="uml:LiteralInteger" xmi:id="${idPrefix}_low" value="0"/>`,
-        uppVal: `<upperValue xmi:type="uml:LiteralInteger" xmi:id="${idPrefix}_upp" value="0"/>`,
-        eaTypeMult: '0'
-      };
-    }
-
-    if (clean === '0..*') {
-      return {
-        lowVal: `<lowerValue xmi:type="uml:LiteralInteger" xmi:id="${idPrefix}_low" value="0"/>`,
-        uppVal: `<upperValue xmi:type="uml:LiteralUnlimitedNatural" xmi:id="${idPrefix}_upp" value="*"/>`,
-        eaTypeMult: '0..*'
-      };
-    }
-
-    if (clean === '1..*') {
-      return {
-        lowVal: `<lowerValue xmi:type="uml:LiteralInteger" xmi:id="${idPrefix}_low" value="1"/>`,
-        uppVal: `<upperValue xmi:type="uml:LiteralUnlimitedNatural" xmi:id="${idPrefix}_upp" value="*"/>`,
-        eaTypeMult: '1..*'
-      };
-    }
-
-    if (clean === '0..1') {
-      return {
-        lowVal: `<lowerValue xmi:type="uml:LiteralInteger" xmi:id="${idPrefix}_low" value="0"/>`,
-        uppVal: `<upperValue xmi:type="uml:LiteralInteger" xmi:id="${idPrefix}_upp" value="1"/>`,
-        eaTypeMult: '0..1'
-      };
-    }
-
-    if (clean.includes('..')) {
+      low = '1';
+      upp = '1';
+    } else if (clean === '*' || clean === 'n' || clean === 'N' || clean === '0..*') {
+      low = '0';
+      upp = '*';
+      eaTypeMult = clean === '0..*' ? '0..*' : '*';
+    } else if (clean === '1..*') {
+      low = '1';
+      upp = '*';
+    } else if (clean === '0..1') {
+      low = '0';
+      upp = '1';
+    } else if (clean === '0') {
+      low = '0';
+      upp = '0';
+    } else if (clean.includes('..')) {
       const parts = clean.split('..');
-      const low = parts[0].trim();
-      const upp = parts[1].trim();
-      const uppVal = (upp === '*' || !isNaN(Number(upp)))
-        ? `<upperValue xmi:type="uml:LiteralUnlimitedNatural" xmi:id="${idPrefix}_upp" value="${upp}"/>`
-        : `<upperValue xmi:type="uml:LiteralString" xmi:id="${idPrefix}_upp" value="${upp}"/>`;
-
-      return {
-        lowVal: `<lowerValue xmi:type="uml:LiteralInteger" xmi:id="${idPrefix}_low" value="${low}"/>`,
-        uppVal,
-        eaTypeMult: clean
-      };
+      low = parts[0].trim();
+      upp = parts[1].trim();
+    } else if (!isNaN(Number(clean))) {
+      low = clean;
+      upp = clean;
+    } else {
+      low = clean;
+      upp = clean;
     }
 
-    // Custom single value (e.g. "n")
-    return {
-      lowVal: `<lowerValue xmi:type="uml:LiteralString" xmi:id="${idPrefix}_low" value="${clean}"/>`,
-      uppVal: '',
-      eaTypeMult: clean
-    };
+    let lowVal = '';
+    let uppVal = '';
+
+    if (low !== '') {
+      if (!isNaN(Number(low))) {
+        lowVal = `<lowerValue xmi:type="uml:LiteralInteger" xmi:id="${idPrefix}_low" value="${low}"/>`;
+      } else {
+        lowVal = `<lowerValue xmi:type="uml:LiteralString" xmi:id="${idPrefix}_low" value="${low}"/>`;
+      }
+    }
+
+    if (upp !== '') {
+      if (upp === '*') {
+        uppVal = `<upperValue xmi:type="uml:LiteralUnlimitedNatural" xmi:id="${idPrefix}_upp" value="*"/>`;
+      } else if (!isNaN(Number(upp))) {
+        uppVal = `<upperValue xmi:type="uml:LiteralInteger" xmi:id="${idPrefix}_upp" value="${upp}"/>`;
+      } else {
+        uppVal = `<upperValue xmi:type="uml:LiteralString" xmi:id="${idPrefix}_upp" value="${upp}"/>`;
+      }
+    }
+
+    return { lowVal, uppVal, eaTypeMult };
   }
 
   generateXMI(projectName: string, nodes: UMLNode[], connectors: UMLConnector[]): string {
@@ -259,8 +249,15 @@ export class EaExporterService {
             break;
         }
 
-        const srcMult = this.buildMultiplicityXml(conn.sourceMultiplicity !== undefined ? conn.sourceMultiplicity : '', `${connEaId}_src`);
-        const tgtMult = this.buildMultiplicityXml(conn.targetMultiplicity !== undefined ? conn.targetMultiplicity : '', `${connEaId}_tgt`);
+        const isStructuralAssoc = conn.type === 'Association' || conn.type === 'Aggregation' || conn.type === 'Composition' || !conn.type;
+        const defaultSrcMult = isStructuralAssoc ? '1' : '';
+        const defaultTgtMult = isStructuralAssoc ? '*' : '';
+
+        const rawSrcMult = (conn.sourceMultiplicity !== undefined && conn.sourceMultiplicity !== '') ? conn.sourceMultiplicity : defaultSrcMult;
+        const rawTgtMult = (conn.targetMultiplicity !== undefined && conn.targetMultiplicity !== '') ? conn.targetMultiplicity : defaultTgtMult;
+
+        const srcMult = this.buildMultiplicityXml(rawSrcMult, `${connEaId}_src`);
+        const tgtMult = this.buildMultiplicityXml(rawTgtMult, `${connEaId}_tgt`);
 
         // Standard UML 2.1 Association in packagedElement (memberEnd & type xmi:idref)
         if (conn.type !== 'Inheritance') {

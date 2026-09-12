@@ -5,7 +5,7 @@ import { AIAgentService } from '../services/ai.service';
 
 export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { projectId, prompt, model } = req.body;
+    const { projectId, prompt, model, diagramContext } = req.body;
     const userId = req.user!.id;
 
     if (!projectId || !prompt) {
@@ -26,7 +26,8 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
       });
     }
 
-    const aiResponse = await AIAgentService.processTextPrompt(prompt, diagram, model);
+    const contextToUse = diagramContext || diagram;
+    const aiResponse = await AIAgentService.processTextPrompt(prompt, contextToUse, model);
 
     // Save prompt & response to AI chat history
     await prisma.aIChatHistory.create({
@@ -245,12 +246,14 @@ export const handlePhotoPrompt = async (req: AuthRequest, res: Response): Promis
 
     let diagram = await prisma.diagram.findFirst({
       where: { projectId },
+      include: { nodes: true, connectors: true },
       orderBy: { updatedAt: 'desc' },
     });
 
     if (!diagram) {
       diagram = await prisma.diagram.create({
         data: { projectId, name: 'Main Diagram' },
+        include: { nodes: true, connectors: true },
       });
     }
 
@@ -428,7 +431,7 @@ export const handlePhotoPrompt = async (req: AuthRequest, res: Response): Promis
 
 export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { projectId, model } = req.body;
+    const { projectId, model, diagramContext: rawContext } = req.body;
     const userId = req.user?.id;
     const file = req.file;
 
@@ -442,7 +445,12 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
       include: { nodes: true, connectors: true },
     });
 
-    const aiResponse = await AIAgentService.processVoicePrompt(file.path, file.mimetype, diagram, model);
+    let contextToUse = diagram;
+    if (rawContext) {
+      try { contextToUse = typeof rawContext === 'string' ? JSON.parse(rawContext) : rawContext; } catch {}
+    }
+
+    const aiResponse = await AIAgentService.processVoicePrompt(file.path, file.mimetype, contextToUse, model);
 
     // Save history
     if (userId) {

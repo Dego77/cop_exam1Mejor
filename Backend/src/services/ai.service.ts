@@ -101,7 +101,7 @@ CRITICAL RULES:
   }
 
   private static resolveModel(requestedModel?: string): string {
-    if (requestedModel && requestedModel.includes('pro')) {
+    if (requestedModel && (requestedModel.includes('pro') || requestedModel.includes('3.1'))) {
       return 'gemini-3.1-pro-preview';
     }
     return 'gemini-3.6-flash';
@@ -114,9 +114,19 @@ CRITICAL RULES:
   ): Promise<AIServiceResponse> {
     try {
       const ai = await this.getAIInstance();
-      const contextStr = currentDiagramContext
-        ? `Current Canvas Diagram Context: ${JSON.stringify(currentDiagramContext)}`
-        : '';
+      let contextStr = '';
+      if (currentDiagramContext) {
+        let cleanNodes = currentDiagramContext.nodes || currentDiagramContext;
+        if (Array.isArray(cleanNodes)) {
+          cleanNodes = cleanNodes.map((n: any) => ({
+            name: n.name,
+            stereotype: n.stereotype || 'Entity',
+            attributes: n.attributes || [],
+            methods: n.methods || []
+          }));
+        }
+        contextStr = `Current Canvas Diagram Context: ${JSON.stringify(cleanNodes)}`;
+      }
 
       const fullPrompt = `${this.getSystemInstruction()}\n${contextStr}\nUser Request: ${prompt}`;
 
@@ -144,32 +154,40 @@ CRITICAL RULES:
     const ai = await this.getAIInstance();
     const imageBytes = fs.readFileSync(filePath);
     const base64Data = imageBytes.toString('base64');
+    const cleanMimeType = (mimeType && mimeType.startsWith('image/')) ? mimeType : 'image/png';
     const promptText = `${this.getSystemInstruction()}\nAnalyze this whiteboard/notebook image of a UML software class diagram. Extract ALL detected classes with exact class names, stereotypes (Entity, Interface, Abstract, Enum), visibility (- private, + public, # protected), attribute names, attribute data types, method names, return types.\nMANDATORY: You MUST detect and extract ALL connecting lines, arrows, and diamonds between classes into 'connectorsGenerated' specifying 'sourceClassName', 'targetClassName', and 'type' (Association | Aggregation | Composition | Inheritance | Implementation | Dependency).\nCRITICAL: Respond ONLY with a valid JSON object matching the requested schema. Do not output any markdown text or conversational greeting outside the JSON object.`;
 
     const primaryModel = this.resolveModel(model);
-    const modelsToTry = Array.from(new Set([primaryModel, 'gemini-3.6-flash']));
+    const modelsToTry = Array.from(new Set([primaryModel, 'gemini-3.6-flash', 'gemini-3.1-pro-preview']));
 
     for (const modName of modelsToTry) {
-      try {
-        const response = await ai.models.generateContent({
-          model: modName,
-          contents: [
-            promptText,
-            { inlineData: { mimeType: mimeType || 'image/png', data: base64Data } },
-          ],
-          config: {
-            responseMimeType: 'application/json',
-            temperature: 0.1,
-          },
-        });
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await ai.models.generateContent({
+            model: modName,
+            contents: [
+              promptText,
+              { inlineData: { mimeType: cleanMimeType, data: base64Data } },
+            ],
+            config: {
+              responseMimeType: 'application/json',
+              temperature: 0.1,
+            },
+          });
 
-        const text = response.text || '';
-        const parsed = this.parseJsonResponse(text);
-        if (parsed && (parsed.classesGenerated?.length || parsed.message)) {
-          return parsed;
+          const text = response.text || '';
+          const parsed = this.parseJsonResponse(text);
+          if (parsed && typeof parsed === 'object') {
+            return parsed;
+          }
+        } catch (err: any) {
+          console.warn(`Gemini Vision model ${modName} attempt ${attempt} failed:`, err?.message || err);
+          if (attempt < 3 && (err?.status === 'UNAVAILABLE' || err?.status === 'RESOURCE_EXHAUSTED' || err?.message?.includes('503') || err?.message?.includes('429'))) {
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
+          break;
         }
-      } catch (err: any) {
-        console.warn(`Gemini Vision model ${modName} failed, trying fallback...`, err?.message || err);
       }
     }
 
@@ -254,14 +272,19 @@ CRITICAL RULES:
   private static normalizeAIResponse(parsed: AIServiceResponse): AIServiceResponse {
     if (!parsed) return parsed;
 
-    const classesList = parsed.classesGenerated || (parsed as any).classes || (parsed as any).nodes || (parsed as any).classesCreated || [];
+    const classesList = parsed.classesGenerated || (parsed as any).classes || (parsed as any).nodes || (parsed as any).entities || (parsed as any).classesCreated || (parsed as any).elements || (parsed as any).diagram || [];
+    const connectorsList = parsed.connectorsGenerated || (parsed as any).connectors || (parsed as any).relationships || (parsed as any).links || (parsed as any).edges || [];
 
     classesList.forEach((cls: any) => {
       if (!cls.name && cls.className) cls.name = cls.className;
+      if (!cls.name && cls.title) cls.name = cls.title;
+      if (!cls.name && cls.entityName) cls.name = cls.entityName;
+      if (!cls.name && cls.nodeName) cls.name = cls.nodeName;
 
       // Normalize Attributes
-      if (Array.isArray(cls.attributes)) {
-        cls.attributes = cls.attributes.map((attr: any) => {
+      const rawAttrs = cls.attributes || cls.fields || cls.properties || cls.columns || [];
+      if (Array.isArray(rawAttrs)) {
+        cls.attributes = rawAttrs.map((attr: any) => {
           if (typeof attr === 'string') {
             let visibility = '+';
             let str = attr.trim();
@@ -276,17 +299,20 @@ CRITICAL RULES:
           } else if (attr && typeof attr === 'object') {
             return {
               visibility: attr.visibility || '+',
-              name: attr.name || attr.attributeName || 'attribute',
+              name: attr.name || attr.attributeName || attr.fieldName || 'attribute',
               type: attr.type || attr.dataType || 'String'
             };
           }
           return { visibility: '+', name: 'attr', type: 'String' };
         });
+      } else {
+        cls.attributes = [];
       }
 
       // Normalize Methods
-      if (Array.isArray(cls.methods)) {
-        cls.methods = cls.methods.map((method: any) => {
+      const rawMeths = cls.methods || cls.functions || cls.operations || cls.actions || [];
+      if (Array.isArray(rawMeths)) {
+        cls.methods = rawMeths.map((method: any) => {
           if (typeof method === 'string') {
             let visibility = '+';
             let str = method.trim();
@@ -301,16 +327,19 @@ CRITICAL RULES:
           } else if (method && typeof method === 'object') {
             return {
               visibility: method.visibility || '+',
-              name: method.name || method.methodName || 'method()',
+              name: method.name || method.methodName || method.functionName || 'method()',
               returnType: method.returnType || method.type || 'void'
             };
           }
           return { visibility: '+', name: 'op()', returnType: 'void' };
         });
+      } else {
+        cls.methods = [];
       }
     });
 
     parsed.classesGenerated = classesList;
+    parsed.connectorsGenerated = connectorsList;
     return parsed;
   }
 
