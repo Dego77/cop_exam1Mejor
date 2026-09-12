@@ -5,6 +5,7 @@ import {
   updateNode,
   deleteNode,
   createConnector,
+  updateConnector,
   deleteConnector,
 } from '../controllers/diagram.controller';
 import { authenticateToken } from '../middlewares/auth.middleware';
@@ -18,6 +19,7 @@ router.post('/nodes', createNode);
 router.put('/nodes/:nodeId', updateNode);
 router.delete('/nodes/:nodeId', deleteNode);
 router.post('/connectors', createConnector);
+router.put('/connectors/:connectorId', updateConnector);
 router.delete('/connectors/:connectorId', deleteConnector);
 
 export default router;

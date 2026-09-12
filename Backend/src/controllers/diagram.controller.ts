@@ -153,3 +153,33 @@ export const deleteConnector = async (req: AuthRequest, res: Response): Promise<
     res.status(500).json({ error: 'Error al eliminar conector UML: ' + error.message });
   }
 };
+
+export const updateConnector = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const connectorId = req.params.connectorId as string;
+    const { sourceNodeId, targetNodeId, type, sourceMultiplicity, targetMultiplicity, label } = req.body;
+
+    const updatedConnector = await prisma.connector.update({
+      where: { id: connectorId },
+      data: {
+        ...(sourceNodeId && { sourceNodeId }),
+        ...(targetNodeId && { targetNodeId }),
+        ...(type && { type }),
+        ...(sourceMultiplicity !== undefined && { sourceMultiplicity }),
+        ...(targetMultiplicity !== undefined && { targetMultiplicity }),
+        ...(label !== undefined && { label }),
+      },
+    });
+
+    if (updatedConnector && updatedConnector.diagramId) {
+      await prisma.diagram.update({
+        where: { id: updatedConnector.diagramId },
+        data: { updatedAt: new Date() },
+      }).catch(() => {});
+    }
+
+    res.json(updatedConnector);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Error al actualizar conector UML: ' + error.message });
+  }
+};

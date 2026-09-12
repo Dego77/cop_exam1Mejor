@@ -42,8 +42,17 @@ export class AuthService {
   logout(): void {
     localStorage.removeItem('classforge_token');
     localStorage.removeItem('classforge_user');
+    
+    // Clear all user-specific projects cache from localStorage
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith('classforge_projects_cache')) {
+        localStorage.removeItem(key);
+      }
+    });
+
     this.currentUserSubject.next(null);
   }
+
 
   private saveSession(res: any): void {
     localStorage.setItem('classforge_token', res.token);

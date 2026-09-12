@@ -244,8 +244,14 @@ export class EditorComponent implements OnInit, OnDestroy {
     return Array.from(this.remoteCursorsMap.values());
   }
 
+  getUserCacheKey(): string {
+    const uId = this.auth.currentUser?.id || this.auth.currentUser?.email || 'anonymous';
+    return `classforge_projects_cache_${uId}`;
+  }
+
   loadProjects(): void {
-    const cachedStr = localStorage.getItem('classforge_projects_cache');
+    const cacheKey = this.getUserCacheKey();
+    const cachedStr = localStorage.getItem(cacheKey);
     let localCachedProjects: Project[] = [];
     if (cachedStr) {
       try { localCachedProjects = JSON.parse(cachedStr); } catch (e) {}
@@ -262,7 +268,7 @@ export class EditorComponent implements OnInit, OnDestroy {
           serverProjects = [...owned, ...shared];
         }
 
-        // Merge server projects with local cached projects to preserve all opened .eap projects
+        // Merge user's server projects with user's isolated local cached projects
         const mergedMap = new Map<string, Project>();
         localCachedProjects.forEach(p => mergedMap.set(p.id, p));
         serverProjects.forEach(p => mergedMap.set(p.id, p));
@@ -274,16 +280,11 @@ export class EditorComponent implements OnInit, OnDestroy {
           this.saveProjectsCache();
           this.onSelectProject(combined[0]);
         } else {
-          this.projectService.create('actores_casodeUso4', 'Proyecto inicial de diagramación UML').subscribe({
-            next: (createdProj) => {
-              this.projects = [createdProj];
-              this.saveProjectsCache();
-              this.onSelectProject(createdProj);
-            },
-            error: () => {
-              this.createDefaultDemoProject();
-            }
-          });
+          // Clean state for brand new users without auto-creating demo projects
+          this.projects = [];
+          this.currentProject = null;
+          this.saveProjectsCache();
+          this.diagramService.clearCanvas();
         }
       },
       error: () => {
@@ -291,7 +292,9 @@ export class EditorComponent implements OnInit, OnDestroy {
           this.projects = localCachedProjects;
           this.onSelectProject(localCachedProjects[0]);
         } else {
-          this.createDefaultDemoProject();
+          this.projects = [];
+          this.currentProject = null;
+          this.diagramService.clearCanvas();
         }
       }
     });
@@ -299,9 +302,11 @@ export class EditorComponent implements OnInit, OnDestroy {
 
   saveProjectsCache(): void {
     try {
-      localStorage.setItem('classforge_projects_cache', JSON.stringify(this.projects));
+      const cacheKey = this.getUserCacheKey();
+      localStorage.setItem(cacheKey, JSON.stringify(this.projects));
     } catch (e) {}
   }
+
 
   createDefaultDemoProject(): void {
     const defaultProject: Project = {
@@ -424,34 +429,43 @@ export class EditorComponent implements OnInit, OnDestroy {
   }
 
   updateOnlineCollaboratorsList(): void {
-    if (!this.currentProject) {
-      this.onlineUsers = [];
-      return;
-    }
-
     const allUsersMap = new Map<string, any>();
 
-    // 1. Owner
-    const owner = (this.currentProject as any).owner;
-    if (owner && (owner.id || owner.email)) {
-      const key = String(owner.id || owner.email);
-      allUsersMap.set(key, {
-        id: owner.id,
-        fullName: owner.fullName || 'Propietario',
-        email: owner.email,
-        isOwner: true,
-        color: this.getColorForUser(owner.id || owner.email)
-      });
-    } else if (this.auth.currentUser) {
+    // 1. Current Logged-in User
+    if (this.auth.currentUser) {
       const u = this.auth.currentUser;
-      allUsersMap.set(String(u.id || u.email), {
+      const key = String(u.id || u.email);
+      allUsersMap.set(key, {
         id: u.id,
-        fullName: u.fullName || 'Usuario',
+        fullName: u.fullName || u.email || 'Usuario',
         email: u.email,
         isOwner: true,
+        isOnline: true,
         color: this.getColorForUser(u.id || u.email)
       });
     }
+
+    if (!this.currentProject) {
+      this.onlineUsers = Array.from(allUsersMap.values());
+      return;
+    }
+
+    // 2. Project Owner
+    const owner = (this.currentProject as any).owner;
+    if (owner && (owner.id || owner.email)) {
+      const key = String(owner.id || owner.email);
+      if (!allUsersMap.has(key)) {
+        allUsersMap.set(key, {
+          id: owner.id,
+          fullName: owner.fullName || 'Propietario',
+          email: owner.email,
+          isOwner: true,
+          isOnline: true,
+          color: this.getColorForUser(owner.id || owner.email)
+        });
+      }
+    }
+
 
     // 2. Invited Collaborators
     const collaborators = (this.currentProject as any).collaborators;
@@ -634,6 +648,7 @@ export class EditorComponent implements OnInit, OnDestroy {
             this.onSelectProject(this.projects[0]);
           } else {
             this.currentProject = null;
+            this.diagramService.clearCanvas();
           }
         }
       },
@@ -645,11 +660,13 @@ export class EditorComponent implements OnInit, OnDestroy {
             this.onSelectProject(this.projects[0]);
           } else {
             this.currentProject = null;
+            this.diagramService.clearCanvas();
           }
         }
       }
     });
   }
+
 
   onSelectNode(node: UMLNode | null): void {
     this.diagramService.selectNode(node);
@@ -776,21 +793,10 @@ export class EditorComponent implements OnInit, OnDestroy {
   }
 
   onExportXMI(): void {
-    if (!this.currentProject) return;
-    this.projectService.exportXMI(this.currentProject.id).subscribe({
-      next: (res) => {
-        const blob = new Blob([res.xmi], { type: 'text/xml' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${this.currentProject?.name || 'diagram'}.xmi`;
-        a.click();
-      },
-      error: () => {
-        alert('Archivo Enterprise Architect XMI generado y listo para descarga.');
-      }
-    });
+    const defaultName = this.currentProject?.name || 'modelo_diagrama';
+    this.eaExporterService.promptSaveEAPFile(this.nodes, this.connectors, defaultName);
   }
+
 
   onExportSQL(): void {
     if (!this.currentProject) return;

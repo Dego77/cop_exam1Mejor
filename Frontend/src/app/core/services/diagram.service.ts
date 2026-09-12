@@ -71,9 +71,6 @@ export class DiagramService {
   private currentProjectId = '';
 
   loadDiagram(projectId: string): Observable<Diagram> {
-    const memoryNodesBackup = [...this.nodesSubject.value];
-    const memoryConnectorsBackup = [...this.connectorsSubject.value];
-
     this.currentProjectId = projectId;
     return new Observable(observer => {
       // Clear memory subjects immediately so elements from previous project don't bleed into new project
@@ -84,11 +81,16 @@ export class DiagramService {
         next: (d) => {
           this.currentDiagramId = d.id;
           const serverNodes = d.nodes || [];
-          this.nodesSubject.next(serverNodes);
           let serverConnectors = d.connectors || [];
 
-          // Auto-Synthesize Connectors if project has nodes but 0 connectors
-          if (serverConnectors.length === 0 && serverNodes.length >= 2) {
+          // Check if local snapshot has saved connectors for this user/project
+          const cached = this.getDiagramLocalSnapshot(projectId);
+          if (cached && cached.connectors && cached.connectors.length > 0 && serverConnectors.length === 0) {
+            serverConnectors = cached.connectors;
+          }
+
+          // Auto-Synthesize Connectors ONLY if neither server nor local snapshot has any saved connectors
+          if (serverConnectors.length === 0 && serverNodes.length >= 2 && (!cached || !cached.nodes || cached.nodes.length === 0)) {
             const synthesized = this.autoSynthesizeConnectors(serverNodes);
             if (synthesized.length > 0) {
               serverConnectors = synthesized;
@@ -97,6 +99,7 @@ export class DiagramService {
             }
           }
 
+          this.nodesSubject.next(serverNodes);
           this.connectorsSubject.next(serverConnectors);
           this.saveDiagramLocalSnapshot(projectId, serverNodes, serverConnectors);
           observer.next({ ...d, connectors: serverConnectors });
@@ -106,9 +109,6 @@ export class DiagramService {
           const cached = this.getDiagramLocalSnapshot(projectId);
           if (cached && cached.nodes && cached.nodes.length > 0) {
             let cachedConns = cached.connectors || [];
-            if (cachedConns.length === 0 && cached.nodes.length >= 2) {
-              cachedConns = this.autoSynthesizeConnectors(cached.nodes);
-            }
             this.nodesSubject.next(cached.nodes);
             this.connectorsSubject.next(cachedConns);
             observer.next({ id: '', name: '', nodes: cached.nodes, connectors: cachedConns });
@@ -120,6 +120,16 @@ export class DiagramService {
       });
     });
   }
+
+  clearCanvas(): void {
+    this.currentDiagramId = '';
+    this.currentProjectId = '';
+    this.nodesSubject.next([]);
+    this.connectorsSubject.next([]);
+    this.selectedNodeSubject.next(null);
+    this.labelsSubject.next([]);
+  }
+
 
   autoSynthesizeConnectors(nodes: UMLNode[]): UMLConnector[] {
     const connectors: UMLConnector[] = [];
@@ -209,14 +219,16 @@ export class DiagramService {
   saveDiagramLocalSnapshot(projectId: string, nodes: UMLNode[], connectors: UMLConnector[]): void {
     if (!projectId) return;
     try {
-      localStorage.setItem(`classforge_diagram_${projectId}`, JSON.stringify({ nodes, connectors }));
+      const uId = this.auth.currentUser?.id || this.auth.currentUser?.email || 'anon';
+      localStorage.setItem(`classforge_diagram_${uId}_${projectId}`, JSON.stringify({ nodes, connectors }));
     } catch (e) {}
   }
 
   getDiagramLocalSnapshot(projectId: string): { nodes: UMLNode[]; connectors: UMLConnector[] } | null {
     if (!projectId) return null;
     try {
-      const raw = localStorage.getItem(`classforge_diagram_${projectId}`);
+      const uId = this.auth.currentUser?.id || this.auth.currentUser?.email || 'anon';
+      const raw = localStorage.getItem(`classforge_diagram_${uId}_${projectId}`);
       return raw ? JSON.parse(raw) : null;
     } catch (e) {
       return null;
@@ -357,6 +369,18 @@ export class DiagramService {
   deleteConnector(connectorId: string): void {
     this.http.delete(`${this.apiUrl}/connectors/${connectorId}`, { headers: this.headers }).subscribe();
     const updatedConns = this.connectorsSubject.value.filter(c => c.id !== connectorId);
+    this.connectorsSubject.next(updatedConns);
+    if (this.currentProjectId) {
+      this.saveDiagramLocalSnapshot(this.currentProjectId, this.nodesSubject.value, updatedConns);
+    }
+  }
+
+  updateConnector(connectorId: string, changes: Partial<UMLConnector>): void {
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(connectorId);
+    if (connectorId && isUUID) {
+      this.http.put(`${this.apiUrl}/connectors/${connectorId}`, changes, { headers: this.headers }).subscribe();
+    }
+    const updatedConns = this.connectorsSubject.value.map(c => c.id === connectorId ? { ...c, ...changes } : c);
     this.connectorsSubject.next(updatedConns);
     if (this.currentProjectId) {
       this.saveDiagramLocalSnapshot(this.currentProjectId, this.nodesSubject.value, updatedConns);
@@ -545,19 +569,46 @@ export class DiagramService {
                 }
               });
             } else {
-              updatedConnectors.push({ ...c, sourceNodeId: resolvedSourceId, targetNodeId: resolvedTargetId });
-              processedConnectors++;
-              if (processedConnectors >= totalConnectors) {
-                if (targetProjectId === this.currentProjectId) {
-                  if (updatedNodes.length > 0) this.nodesSubject.next(updatedNodes);
-                  this.connectorsSubject.next(updatedConnectors);
+              const connPayload = {
+                sourceNodeId: resolvedSourceId,
+                targetNodeId: resolvedTargetId,
+                type: c.type || 'Association',
+                sourceMultiplicity: c.sourceMultiplicity !== undefined ? c.sourceMultiplicity : '',
+                targetMultiplicity: c.targetMultiplicity !== undefined ? c.targetMultiplicity : '',
+                label: c.label || ''
+              };
+              this.http.put<UMLConnector>(`${this.apiUrl}/connectors/${c.id}`, connPayload, { headers: this.headers }).subscribe({
+                next: (savedConn) => {
+                  updatedConnectors.push(savedConn || { ...c, sourceNodeId: resolvedSourceId, targetNodeId: resolvedTargetId });
+                  processedConnectors++;
+                  if (processedConnectors >= totalConnectors) {
+                    if (targetProjectId === this.currentProjectId) {
+                      if (updatedNodes.length > 0) this.nodesSubject.next(updatedNodes);
+                      this.connectorsSubject.next(updatedConnectors);
+                    }
+                    if (targetProjectId) {
+                      this.saveDiagramLocalSnapshot(targetProjectId, updatedNodes.length > 0 ? updatedNodes : nodes, updatedConnectors);
+                    }
+                    observer.next(true);
+                    observer.complete();
+                  }
+                },
+                error: () => {
+                  updatedConnectors.push({ ...c, sourceNodeId: resolvedSourceId, targetNodeId: resolvedTargetId });
+                  processedConnectors++;
+                  if (processedConnectors >= totalConnectors) {
+                    if (targetProjectId === this.currentProjectId) {
+                      if (updatedNodes.length > 0) this.nodesSubject.next(updatedNodes);
+                      this.connectorsSubject.next(updatedConnectors);
+                    }
+                    if (targetProjectId) {
+                      this.saveDiagramLocalSnapshot(targetProjectId, updatedNodes.length > 0 ? updatedNodes : nodes, updatedConnectors);
+                    }
+                    observer.next(true);
+                    observer.complete();
+                  }
                 }
-                if (targetProjectId) {
-                  this.saveDiagramLocalSnapshot(targetProjectId, updatedNodes.length > 0 ? updatedNodes : nodes, updatedConnectors);
-                }
-                observer.next(true);
-                observer.complete();
-              }
+              });
             }
           });
         };
