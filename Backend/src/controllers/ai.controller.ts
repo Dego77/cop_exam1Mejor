@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { prisma } from '../config/prisma';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { AIAgentService } from '../services/ai.service';
+import { SupportAIAgentService } from '../services/support-ai.service';
 
 export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -655,7 +656,7 @@ export const handleSupportPrompt = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    const response = await AIAgentService.processSupportPrompt(prompt, isInteractiveMode, model);
+    const response = await SupportAIAgentService.processSupportPrompt(prompt, isInteractiveMode, model);
     res.json(response);
   } catch (error: any) {
     res.status(500).json({ error: 'Error al procesar consulta de soporte: ' + error.message });

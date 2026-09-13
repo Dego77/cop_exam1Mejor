@@ -25,9 +25,18 @@ export class WebSocketService {
   connectorDeleted$ = new Subject<string>();
   diagramReloaded$ = new Subject<any>();
 
+  private activeProjectRoom: string | null = null;
+  private activeUser: any = null;
+
   connect(): void {
     if (this.socket?.connected) return;
     this.socket = io(this.serverUrl, { transports: ['websocket'] });
+
+    this.socket.on('connect', () => {
+      if (this.activeProjectRoom && this.activeUser) {
+        this.socket?.emit('join-project', { projectId: this.activeProjectRoom, user: this.activeUser });
+      }
+    });
 
     this.socket.on('room-users', (users: any[]) => this.roomUsers$.next(users));
     this.socket.on('user-joined', (data: any) => this.userJoined$.next(data));
@@ -44,6 +53,8 @@ export class WebSocketService {
 
 
   joinProject(projectId: string, user: any): void {
+    this.activeProjectRoom = projectId;
+    this.activeUser = user;
     this.socket?.emit('join-project', { projectId, user });
   }
 

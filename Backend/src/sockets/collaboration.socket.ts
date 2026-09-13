@@ -11,6 +11,24 @@ export const setupCollaborationSockets = (io: Server) => {
     // Join collaborative project room
     socket.on('join-project', async ({ projectId, user }) => {
       if (!projectId) return;
+
+      // Validate user authorization for project if it exists in database
+      try {
+        const project = await prisma.project.findUnique({
+          where: { id: projectId },
+          include: { collaborators: true }
+        });
+        if (project && user && user.id) {
+          const uId = Number(user.id);
+          const isOwner = project.ownerId === uId;
+          const isCollab = project.collaborators?.some((c: any) => c.userId === uId);
+          if (!isOwner && !isCollab) {
+            console.warn(`[Socket] Acceso denegado: Usuario ${user.fullName || uId} no pertenece al proyecto ${projectId}`);
+            return;
+          }
+        }
+      } catch (err) {}
+
       socket.join(projectId);
 
       if (!roomUsers.has(projectId)) {

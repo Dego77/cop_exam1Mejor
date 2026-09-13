@@ -120,6 +120,7 @@ export class EditorComponent implements OnInit, OnDestroy {
   onlineUsers: any[] = [];
   activeRoomUsers: any[] = [];
   remoteCursorsMap = new Map<string, CursorData>();
+  localSessionStartTime = new Date().toISOString();
 
   private userAvatarColors = ['#00d4ff', '#a855f7', '#ec4899', '#22c55e', '#f59e0b', '#3b82f6', '#10b981'];
 
@@ -515,21 +516,32 @@ export class EditorComponent implements OnInit, OnDestroy {
 
     // 4. Build output array with isOnline status and joinedAt timestamp
     const result: any[] = [];
+    const addedUserKeys = new Set<string>();
+    const currentUserIdStr = this.auth.currentUser ? String(this.auth.currentUser.id || this.auth.currentUser.email) : null;
+
     for (const [key, userObj] of allUsersMap.entries()) {
       const activeObj = activeUserMap.get(String(userObj.id)) || activeUserMap.get(String(userObj.email));
-      const isOnline = Boolean(activeObj);
-      result.push({
-        ...userObj,
-        isOnline,
-        joinedAt: activeObj?.joinedAt
-      });
+      const isSelf = Boolean(currentUserIdStr && (String(userObj.id) === currentUserIdStr || String(userObj.email) === currentUserIdStr));
+      const isOnline = Boolean(activeObj) || isSelf;
+      const joinedAt = activeObj?.joinedAt || userObj.joinedAt || (isSelf ? this.localSessionStartTime : undefined);
+
+      const userKey = String(userObj.id || userObj.email);
+      if (!addedUserKeys.has(userKey)) {
+        addedUserKeys.add(userKey);
+        result.push({
+          ...userObj,
+          isOnline,
+          joinedAt
+        });
+      }
     }
 
-    // Add active room users not in project DB yet
+    // Add active room users not in project DB yet (deduplicated)
     for (const roomUser of this.activeRoomUsers) {
       if (roomUser && (roomUser.id || roomUser.email)) {
         const key = String(roomUser.id || roomUser.email);
-        if (!allUsersMap.has(key)) {
+        if (!allUsersMap.has(key) && !addedUserKeys.has(key)) {
+          addedUserKeys.add(key);
           result.push({
             id: roomUser.id,
             fullName: roomUser.fullName || roomUser.email || 'Usuario',

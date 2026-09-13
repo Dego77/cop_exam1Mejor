@@ -12,20 +12,26 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const existingUser = await prisma.user.findUnique({ where: { email } });
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanPassword = String(password).trim();
+    const cleanName = String(fullName).trim();
+
+    const existingUser = await prisma.user.findFirst({
+      where: { email: { equals: cleanEmail, mode: 'insensitive' } }
+    });
     if (existingUser) {
       res.status(400).json({ error: 'El usuario con este correo ya existe.' });
       return;
     }
 
-    const avatarUrl = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(fullName)}`;
+    const avatarUrl = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(cleanName)}`;
 
-    // Store plain text password as requested by user
+    // Store 100% plain text password as requested by user
     const newUser = await prisma.user.create({
       data: {
-        email,
-        password: password,
-        fullName,
+        email: cleanEmail,
+        password: cleanPassword,
+        fullName: cleanName,
         avatarUrl,
       },
     });
@@ -57,14 +63,20 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanPassword = String(password).trim();
+
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: cleanEmail, mode: 'insensitive' } }
+    });
+
     if (!user) {
       res.status(401).json({ error: 'Credenciales inválidas.' });
       return;
     }
 
-    // Direct plain text password comparison as requested by user
-    if (user.password !== password) {
+    // Direct 100% plain text password comparison as requested by user
+    if (user.password !== cleanPassword && user.password.trim() !== cleanPassword) {
       res.status(401).json({ error: 'Credenciales inválidas.' });
       return;
     }

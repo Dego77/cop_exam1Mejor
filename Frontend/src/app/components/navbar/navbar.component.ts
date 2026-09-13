@@ -990,7 +990,7 @@ export class NavbarComponent implements OnInit, OnDestroy {
       this.liveTimeString = '00h 00m 00s';
       return;
     }
-    const joinedAtStr = this.selectedUserObj.joinedAt;
+    const joinedAtStr = this.selectedUserObj.joinedAt || (this.selectedUserObj.isOnline ? new Date().toISOString() : null);
     if (!joinedAtStr || !this.selectedUserObj.isOnline) {
       this.liveTimeString = 'Sesión no activa';
       return;
