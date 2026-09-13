@@ -7,6 +7,7 @@ import {
   createConnector,
   updateConnector,
   deleteConnector,
+  purgeDiagramData,
 } from '../controllers/diagram.controller';
 import { authenticateToken } from '../middlewares/auth.middleware';
 
@@ -15,6 +16,7 @@ const router = Router();
 router.use(authenticateToken);
 
 router.get('/:projectId', getDiagramData);
+router.delete('/:projectId/purge', purgeDiagramData);
 router.post('/nodes', createNode);
 router.put('/nodes/:nodeId', updateNode);
 router.delete('/nodes/:nodeId', deleteNode);

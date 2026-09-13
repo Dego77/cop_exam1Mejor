@@ -133,8 +133,8 @@ export class AIAgentService {
         if (/herencia/i.test(cleanPrompt)) connType = 'Inheritance';
 
         // Extract multiplicities for source and target
-        let srcMult = '+1';
-        let tgtMult = '+*';
+        let srcMult = '';
+        let tgtMult = '';
 
         const srcMatch = cleanPrompt.match(new RegExp(`([0-9\\*\\+\\.-]+)\\s+(?:en|de|para)\\s+(?:clase\\s+)?${srcNode.name}`, 'i'));
         if (srcMatch && srcMatch[1]) {

@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xmi:XMI xmi:version="2.1" xmlns:uml="http://schema.omg.org/spec/UML/2.1" xmlns:xmi="http://schema.omg.org/spec/XMI/2.1">
+  <xmi:Documentation exporter="Enterprise Architect" exporterVersion="15.0" created="2026-09-12T02:55:11.176Z"/>
+  <uml:Model xmi:type="uml:Model" xmi:id="EAID_4D6F6465_6C5F_6163_7479_74729A8B7C6D" name="EA_Model">
+    <packagedElement xmi:type="uml:Package" xmi:id="EAID_5061636B_6167_655F_6163_747974729A8B" name="actytr">
+      
+        <packagedElement xmi:type="uml:Class" xmi:id="EAID_66313332_3361_3334_2D63_3434612D3435" name="Rol">
+          
+          
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_66313332_3361_3334_2D63_3434612D3435" name="id_rol" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#Int"/>
+            </ownedAttribute>
+          
+        </packagedElement>
+        <packagedElement xmi:type="uml:Class" xmi:id="EAID_34343639_3563_3236_2D39_3337312D3430" name="autoservicios">
+          
+          
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_34343639_3563_3236_2D39_3337312D3430" name="id" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#String"/>
+            </ownedAttribute>
+          
+        </packagedElement>
+        <packagedElement xmi:type="uml:Class" xmi:id="EAID_63656363_3830_3137_2D62_6631632D3464" name="Usuario">
+          
+          
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_63656363_3830_3137_2D62_6631632D3464" name="id_usuario" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#Int"/>
+            </ownedAttribute>
+          
+        </packagedElement>
+        <packagedElement xmi:type="uml:Class" xmi:id="EAID_62393866_6330_6636_2D32_3538352D3435" name="Auto">
+          
+            <generalization xmi:type="uml:Generalization" xmi:id="EAID_67656E5F_3536_3030_3337_63392D613337" general="EAID_63656363_3830_3137_2D62_6631632D3464"/>
+          
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_62393866_6330_6636_2D32_3538352D3435" name="id_auto" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#Int"/>
+            </ownedAttribute>
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_62393866_6330_6636_2D32_3538352D3435" name="modelo" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#String"/>
+            </ownedAttribute>
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_62393866_6330_6636_2D32_3538352D3435" name="marca" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#String"/>
+            </ownedAttribute>
+          
+        </packagedElement>
+      
+        <packagedElement xmi:type="uml:Association" xmi:id="EAID_62623462_3835_3764_2D62_6438652D3435" name="" memberEnd="EAID_62623462_3835_3764_2D62_6438652D3435_src EAID_62623462_3835_3764_2D62_6438652D3435_tgt">
+          <ownedEnd xmi:type="uml:Property" xmi:id="EAID_62623462_3835_3764_2D62_6438652D3435_src" visibility="public" association="EAID_62623462_3835_3764_2D62_6438652D3435">
+            <type xmi:idref="EAID_63656363_3830_3137_2D62_6631632D3464"/>
+            <lowerValue xmi:type="uml:LiteralInteger" xmi:id="EAID_62623462_3835_3764_2D62_6438652D3435_src_low" value="1"/>
+            <upperValue xmi:type="uml:LiteralInteger" xmi:id="EAID_62623462_3835_3764_2D62_6438652D3435_src_upp" value="1"/>
+          </ownedEnd>
+          <ownedEnd xmi:type="uml:Property" xmi:id="EAID_62623462_3835_3764_2D62_6438652D3435_tgt" visibility="public" association="EAID_62623462_3835_3764_2D62_6438652D3435">
+            <type xmi:idref="EAID_66313332_3361_3334_2D63_3434612D3435"/>
+            <lowerValue xmi:type="uml:LiteralInteger" xmi:id="EAID_62623462_3835_3764_2D62_6438652D3435_tgt_low" value="0"/>
+            <upperValue xmi:type="uml:LiteralUnlimitedNatural" xmi:id="EAID_62623462_3835_3764_2D62_6438652D3435_tgt_upp" value="*"/>
+          </ownedEnd>
+        </packagedElement>
+        <packagedElement xmi:type="uml:Association" xmi:id="EAID_34656262_3764_6637_2D33_6430392D3461" name="" memberEnd="EAID_34656262_3764_6637_2D33_6430392D3461_src EAID_34656262_3764_6637_2D33_6430392D3461_tgt">
+          <ownedEnd xmi:type="uml:Property" xmi:id="EAID_34656262_3764_6637_2D33_6430392D3461_src" visibility="public" association="EAID_34656262_3764_6637_2D33_6430392D3461">
+            <type xmi:idref="EAID_62393866_6330_6636_2D32_3538352D3435"/>
+            <lowerValue xmi:type="uml:LiteralInteger" xmi:id="EAID_34656262_3764_6637_2D33_6430392D3461_src_low" value="0"/>
+            <upperValue xmi:type="uml:LiteralUnlimitedNatural" xmi:id="EAID_34656262_3764_6637_2D33_6430392D3461_src_upp" value="*"/>
+          </ownedEnd>
+          <ownedEnd xmi:type="uml:Property" xmi:id="EAID_34656262_3764_6637_2D33_6430392D3461_tgt" visibility="public" association="EAID_34656262_3764_6637_2D33_6430392D3461">
+            <type xmi:idref="EAID_34343639_3563_3236_2D39_3337312D3430"/>
+            <lowerValue xmi:type="uml:LiteralInteger" xmi:id="EAID_34656262_3764_6637_2D33_6430392D3461_tgt_low" value="1"/>
+            <upperValue xmi:type="uml:LiteralInteger" xmi:id="EAID_34656262_3764_6637_2D33_6430392D3461_tgt_upp" value="1"/>
+          </ownedEnd>
+        </packagedElement>
+    </packagedElement>
+  </uml:Model>
+  <xmi:Extension extender="Enterprise Architect" extenderID="3.0">
+    <elements>
+      <element xmi:idref="EAID_5061636B_6167_655F_6163_747974729A8B" xmi:type="uml:Package" name="actytr" scope="public">
+        <properties isSpecification="false" sType="Package" ntype="0"/>
+        <project author="ClassForge" version="1.0" status="Proposed" created="2026-09-12T02:55:11.176Z" modified="2026-09-12T02:55:11.176Z"/>
+      </element>
+      
+        <element xmi:idref="EAID_66313332_3361_3334_2D63_3434612D3435" xmi:type="uml:Class" name="Rol" scope="public">
+          <model package="EAID_5061636B_6167_655F_6163_747974729A8B" tpos="0" ea_localid="10"/>
+          <properties stereotype="Class" isSpecification="false" sType="Class" ntype="0"/>
+          <extendedProperties package_name="Logical View"/>
+        </element>
+        <element xmi:idref="EAID_34343639_3563_3236_2D39_3337312D3430" xmi:type="uml:Class" name="autoservicios" scope="public">
+          <model package="EAID_5061636B_6167_655F_6163_747974729A8B" tpos="1" ea_localid="11"/>
+          <properties stereotype="Class" isSpecification="false" sType="Class" ntype="0"/>
+          <extendedProperties package_name="Logical View"/>
+        </element>
+        <element xmi:idref="EAID_63656363_3830_3137_2D62_6631632D3464" xmi:type="uml:Class" name="Usuario" scope="public">
+          <model package="EAID_5061636B_6167_655F_6163_747974729A8B" tpos="2" ea_localid="12"/>
+          <properties stereotype="wAttr" isSpecification="false" sType="Class" ntype="0"/>
+          <extendedProperties package_name="Logical View"/>
+        </element>
+        <element xmi:idref="EAID_62393866_6330_6636_2D32_3538352D3435" xmi:type="uml:Class" name="Auto" scope="public">
+          <model package="EAID_5061636B_6167_655F_6163_747974729A8B" tpos="3" ea_localid="13"/>
+          <properties stereotype="Entity" isSpecification="false" sType="Class" ntype="0"/>
+          <extendedProperties package_name="Logical View"/>
+        </element>
+    </elements>
+    <connectors>
+      
+        <connector xmi:idref="EAID_62623462_3835_3764_2D62_6438652D3435" name="">
+          <source xmi:idref="EAID_63656363_3830_3137_2D62_6631632D3464">
+            <model type="Class" name="Usuario" ea_localid="12"/>
+            <role visibility="Public"/>
+            <type multiplicity="1"/>
+          </source>
+          <target xmi:idref="EAID_66313332_3361_3334_2D63_3434612D3435">
+            <model type="Class" name="Rol" ea_localid="10"/>
+            <role visibility="Public"/>
+            <type multiplicity="*"/>
+          </target>
+          <properties ea_type="Association"  direction="Unspecified"/>
+          <appearance linemode="3" linecolor="-1" linewidth="0" seqno="0" headstyle="0" linestyle="0"/>
+        </connector>
+        <connector xmi:idref="EAID_35363030_3337_6339_2D61_3337382D3436" name="">
+          <source xmi:idref="EAID_62393866_6330_6636_2D32_3538352D3435">
+            <model type="Class" name="Auto" ea_localid="13"/>
+            <role visibility="Public"/>
+            <type multiplicity="1"/>
+          </source>
+          <target xmi:idref="EAID_63656363_3830_3137_2D62_6631632D3464">
+            <model type="Class" name="Usuario" ea_localid="12"/>
+            <role visibility="Public"/>
+            <type multiplicity="*"/>
+          </target>
+          <properties ea_type="Generalization"  direction="Source -> Destination"/>
+          <appearance linemode="3" linecolor="-1" linewidth="0" seqno="0" headstyle="0" linestyle="0"/>
+        </connector>
+        <connector xmi:idref="EAID_34656262_3764_6637_2D33_6430392D3461" name="">
+          <source xmi:idref="EAID_62393866_6330_6636_2D32_3538352D3435">
+            <model type="Class" name="Auto" ea_localid="13"/>
+            <role visibility="Public"/>
+            <type multiplicity="*"/>
+          </source>
+          <target xmi:idref="EAID_34343639_3563_3236_2D39_3337312D3430">
+            <model type="Class" name="autoservicios" ea_localid="11"/>
+            <role visibility="Public"/>
+            <type multiplicity="1"/>
+          </target>
+          <properties ea_type="Association"  direction="Unspecified"/>
+          <appearance linemode="3" linecolor="-1" linewidth="0" seqno="0" headstyle="0" linestyle="0"/>
+        </connector>
+    </connectors>
+    <diagrams>
+      <diagram xmi:id="EAID_44696167_7261_6D5F_6163_747974729A8B" name="actytr" type="Logical">
+        <model package="EAID_5061636B_6167_655F_6163_747974729A8B" localID="1" type="Logical"/>
+        <properties name="actytr" type="Logical"/>
+        <project author="ClassForge" version="1.0" created="2026-09-12T02:55:11.176Z" modified="2026-09-12T02:55:11.176Z"/>
+        <elements>
+          
+          <element geometry="Left=802;Top=230;Right=1022;Bottom=380;" subject="EAID_66313332_3361_3334_2D63_3434612D3435" seqno="1" style="DUG=0;"/>
+          <element geometry="Left=1013;Top=713;Right=1233;Bottom=863;" subject="EAID_34343639_3563_3236_2D39_3337312D3430" seqno="2" style="DUG=0;"/>
+          <element geometry="Left=228;Top=124;Right=448;Bottom=274;" subject="EAID_63656363_3830_3137_2D62_6631632D3464" seqno="3" style="DUG=0;"/>
+          <element geometry="Left=262;Top=725;Right=482;Bottom=875;" subject="EAID_62393866_6330_6636_2D32_3538352D3435" seqno="4" style="DUG=0;"/>
+          <element geometry="SX=0;SY=0;EX=0;EY=0;Path=;" subject="EAID_62623462_3835_3764_2D62_6438652D3435" style="LEStyle=3;BStyle=0;"/>
+          <element geometry="SX=0;SY=0;EX=0;EY=0;Path=;" subject="EAID_35363030_3337_6339_2D61_3337382D3436" style="LEStyle=3;BStyle=0;"/>
+          <element geometry="SX=0;SY=0;EX=0;EY=0;Path=;" subject="EAID_34656262_3764_6637_2D33_6430392D3461" style="LEStyle=3;BStyle=0;"/>
+        </elements>
+      </diagram>
+    </diagrams>
+  </xmi:Extension>
+</xmi:XMI>

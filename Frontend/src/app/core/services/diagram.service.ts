@@ -247,6 +247,15 @@ export class DiagramService {
     } catch (e) {}
   }
 
+  clearLocalSnapshot(projectId: string): void {
+    if (!projectId) return;
+    try {
+      const uId = this.auth.currentUser?.id || this.auth.currentUser?.email || 'anon';
+      localStorage.removeItem(`classforge_diagram_${uId}_${projectId}`);
+      localStorage.removeItem(`classforge_diagram_snapshot_${projectId}`);
+    } catch (e) {}
+  }
+
   getDiagramLocalSnapshot(projectId: string): { nodes: UMLNode[]; connectors: UMLConnector[] } | null {
     if (!projectId) return null;
     try {
@@ -463,7 +472,6 @@ export class DiagramService {
 
     const isUUID = (str?: string): boolean => !!str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 
-    // Persist to PostgreSQL if it's a client-side generated node or EAID
     if (node.id && !isUUID(node.id)) {
       if (this.currentDiagramId) {
         persistNode(this.currentDiagramId);
@@ -476,6 +484,32 @@ export class DiagramService {
         });
       }
     }
+  }
+
+  purgeDiagram(projectId: string): Observable<boolean> {
+    return new Observable(observer => {
+      if (!projectId) {
+        this.nodesSubject.next([]);
+        this.connectorsSubject.next([]);
+        observer.next(true);
+        observer.complete();
+        return;
+      }
+      this.http.delete(`${this.apiUrl}/${projectId}/purge`, { headers: this.headers }).subscribe({
+        next: () => {
+          this.nodesSubject.next([]);
+          this.connectorsSubject.next([]);
+          observer.next(true);
+          observer.complete();
+        },
+        error: () => {
+          this.nodesSubject.next([]);
+          this.connectorsSubject.next([]);
+          observer.next(true);
+          observer.complete();
+        }
+      });
+    });
   }
 
   saveCurrentDiagram(explicitProjectId?: string, explicitDiagramId?: string, explicitNodes?: UMLNode[], explicitConnectors?: UMLConnector[]): Observable<boolean> {
@@ -557,24 +591,26 @@ export class DiagramService {
           const updatedConnectors: UMLConnector[] = [];
 
           connectors.forEach(c => {
-            const resolvedSourceId = tempToRealIdMap.get(c.sourceNodeId) || c.sourceNodeId;
-            const resolvedTargetId = tempToRealIdMap.get(c.targetNodeId) || c.targetNodeId;
+            const resolvedSourceId = tempToRealIdMap.get(c.sourceNodeId) || (c.sourceNodeId ? tempToRealIdMap.get(c.sourceNodeId.trim().toLowerCase()) : undefined) || c.sourceNodeId;
+            const resolvedTargetId = tempToRealIdMap.get(c.targetNodeId) || (c.targetNodeId ? tempToRealIdMap.get(c.targetNodeId.trim().toLowerCase()) : undefined) || c.targetNodeId;
+            const resolvedAssocId = c.associationClassNodeId ? (tempToRealIdMap.get(c.associationClassNodeId) || tempToRealIdMap.get(c.associationClassNodeId.trim().toLowerCase()) || c.associationClassNodeId) : undefined;
             const isTempConn = !isUUID(c.id);
-
             if (isTempConn) {
               const connPayload = {
                 diagramId,
                 sourceNodeId: resolvedSourceId,
                 targetNodeId: resolvedTargetId,
                 type: c.type || 'Association',
-                sourceMultiplicity: c.sourceMultiplicity || '1',
-                targetMultiplicity: c.targetMultiplicity || '*',
-                label: c.label || ''
+                sourceMultiplicity: (c.sourceMultiplicity !== undefined && c.sourceMultiplicity !== null) ? c.sourceMultiplicity : '',
+                targetMultiplicity: (c.targetMultiplicity !== undefined && c.targetMultiplicity !== null) ? c.targetMultiplicity : '',
+                label: c.label || '',
+                associationClassNodeId: resolvedAssocId
               };
 
               this.http.post<UMLConnector>(`${this.apiUrl}/connectors`, connPayload, { headers: this.headers }).subscribe({
                 next: (savedConn) => {
-                  updatedConnectors.push(savedConn);
+                  const finalConn = savedConn ? { ...savedConn, associationClassNodeId: savedConn.associationClassNodeId || resolvedAssocId } : savedConn;
+                  updatedConnectors.push(finalConn);
                   processedConnectors++;
                   if (processedConnectors >= totalConnectors) {
                     if (targetProjectId === this.currentProjectId) {
@@ -609,11 +645,13 @@ export class DiagramService {
                 type: c.type || 'Association',
                 sourceMultiplicity: c.sourceMultiplicity !== undefined ? c.sourceMultiplicity : '',
                 targetMultiplicity: c.targetMultiplicity !== undefined ? c.targetMultiplicity : '',
-                label: c.label || ''
+                label: c.label || '',
+                associationClassNodeId: resolvedAssocId
               };
               this.http.put<UMLConnector>(`${this.apiUrl}/connectors/${c.id}`, connPayload, { headers: this.headers }).subscribe({
                 next: (savedConn) => {
-                  updatedConnectors.push(savedConn || { ...c, sourceNodeId: resolvedSourceId, targetNodeId: resolvedTargetId });
+                  const finalConn = savedConn ? { ...savedConn, associationClassNodeId: savedConn.associationClassNodeId || resolvedAssocId } : { ...c, sourceNodeId: resolvedSourceId, targetNodeId: resolvedTargetId, associationClassNodeId: resolvedAssocId };
+                  updatedConnectors.push(finalConn);
                   processedConnectors++;
                   if (processedConnectors >= totalConnectors) {
                     if (targetProjectId === this.currentProjectId) {
@@ -668,6 +706,10 @@ export class DiagramService {
             this.http.post<UMLNode>(`${this.apiUrl}/nodes`, payload, { headers: this.headers }).subscribe({
               next: (savedNode) => {
                 if (n.id) tempToRealIdMap.set(n.id, savedNode.id);
+                if (n.name) {
+                  tempToRealIdMap.set(n.name, savedNode.id);
+                  tempToRealIdMap.set(n.name.trim().toLowerCase(), savedNode.id);
+                }
                 updatedNodes.push(savedNode);
                 processedNodes++;
                 if (processedNodes >= totalNodes) finishNodesPhase();

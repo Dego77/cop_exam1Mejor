@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xmi:XMI xmi:version="2.1" xmlns:uml="http://schema.omg.org/spec/UML/2.1" xmlns:xmi="http://schema.omg.org/spec/XMI/2.1">
+  <xmi:Documentation exporter="Enterprise Architect" exporterVersion="15.0" created="2026-09-12T03:20:57.909Z"/>
+  <uml:Model xmi:type="uml:Model" xmi:id="EAID_4D6F6465_6C5F_796F_7465_72659A8B7C6D" name="EA_Model">
+    <packagedElement xmi:type="uml:Package" xmi:id="EAID_5061636B_6167_655F_796F_746572659A8B" name="yotere">
+      
+        <packagedElement xmi:type="uml:Class" xmi:id="EAID_64346661_6661_6638_2D31_3861302D3437" name="rol">
+          
+          
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_64346661_6661_6638_2D31_3861302D3437" name="id_rol" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#Int"/>
+            </ownedAttribute>
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_64346661_6661_6638_2D31_3861302D3437" name="nombre" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#String"/>
+            </ownedAttribute>
+          
+        </packagedElement>
+        <packagedElement xmi:type="uml:Class" xmi:id="EAID_32366362_6338_3935_2D31_3238612D3436" name="auto">
+          
+            <generalization xmi:type="uml:Generalization" xmi:id="EAID_67656E5F_3337_3832_3931_61652D343463" general="EAID_36316266_3331_3063_2D38_3234392D3435"/>
+          
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_32366362_6338_3935_2D31_3238612D3436" name="id_auto" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#Int"/>
+            </ownedAttribute>
+          
+        </packagedElement>
+        <packagedElement xmi:type="uml:Class" xmi:id="EAID_36316266_3331_3063_2D38_3234392D3435" name="Usuario">
+          
+          
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_36316266_3331_3063_2D38_3234392D3435" name="id" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#Int"/>
+            </ownedAttribute>
+          
+        </packagedElement>
+        <packagedElement xmi:type="uml:Class" xmi:id="EAID_66383632_6238_3533_2D39_3432662D3436" name="Ventas">
+          
+          
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_66383632_6238_3533_2D39_3432662D3436" name="id_ventas" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#Int"/>
+            </ownedAttribute>
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_66383632_6238_3533_2D39_3432662D3436" name="fecha" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#Date"/>
+            </ownedAttribute>
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_66383632_6238_3533_2D39_3432662D3436" name="pagos" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#String"/>
+            </ownedAttribute>
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_66383632_6238_3533_2D39_3432662D3436" name="monto" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#Double"/>
+            </ownedAttribute>
+            <ownedAttribute xmi:type="uml:Property" xmi:id="EAID_66383632_6238_3533_2D39_3432662D3436" name="pago" visibility="public">
+              <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#String"/>
+            </ownedAttribute>
+          
+        </packagedElement>
+      
+        <packagedElement xmi:type="uml:Association" xmi:id="EAID_33343361_6331_3334_2D62_3263342D3465" name="" memberEnd="EAID_33343361_6331_3334_2D62_3263342D3465_src EAID_33343361_6331_3334_2D62_3263342D3465_tgt">
+          <ownedEnd xmi:type="uml:Property" xmi:id="EAID_33343361_6331_3334_2D62_3263342D3465_src" visibility="public" association="EAID_33343361_6331_3334_2D62_3263342D3465">
+            <type xmi:idref="EAID_36316266_3331_3063_2D38_3234392D3435"/>
+            <lowerValue xmi:type="uml:LiteralInteger" xmi:id="EAID_33343361_6331_3334_2D62_3263342D3465_src_low" value="1"/>
+            <upperValue xmi:type="uml:LiteralInteger" xmi:id="EAID_33343361_6331_3334_2D62_3263342D3465_src_upp" value="1"/>
+          </ownedEnd>
+          <ownedEnd xmi:type="uml:Property" xmi:id="EAID_33343361_6331_3334_2D62_3263342D3465_tgt" visibility="public" association="EAID_33343361_6331_3334_2D62_3263342D3465">
+            <type xmi:idref="EAID_64346661_6661_6638_2D31_3861302D3437"/>
+            <lowerValue xmi:type="uml:LiteralInteger" xmi:id="EAID_33343361_6331_3334_2D62_3263342D3465_tgt_low" value="0"/>
+            <upperValue xmi:type="uml:LiteralUnlimitedNatural" xmi:id="EAID_33343361_6331_3334_2D62_3263342D3465_tgt_upp" value="*"/>
+          </ownedEnd>
+        </packagedElement>
+        <packagedElement xmi:type="uml:Association" xmi:id="EAID_34343063_6330_6432_2D64_6532622D3432" name="" memberEnd="EAID_34343063_6330_6432_2D64_6532622D3432_src EAID_34343063_6330_6432_2D64_6532622D3432_tgt">
+          <ownedEnd xmi:type="uml:Property" xmi:id="EAID_34343063_6330_6432_2D64_6532622D3432_src" visibility="public" association="EAID_34343063_6330_6432_2D64_6532622D3432">
+            <type xmi:idref="EAID_36316266_3331_3063_2D38_3234392D3435"/>
+            <lowerValue xmi:type="uml:LiteralInteger" xmi:id="EAID_34343063_6330_6432_2D64_6532622D3432_src_low" value="1"/>
+            <upperValue xmi:type="uml:LiteralInteger" xmi:id="EAID_34343063_6330_6432_2D64_6532622D3432_src_upp" value="1"/>
+          </ownedEnd>
+          <ownedEnd xmi:type="uml:Property" xmi:id="EAID_34343063_6330_6432_2D64_6532622D3432_tgt" visibility="public" association="EAID_34343063_6330_6432_2D64_6532622D3432">
+            <type xmi:idref="EAID_66383632_6238_3533_2D39_3432662D3436"/>
+            <lowerValue xmi:type="uml:LiteralInteger" xmi:id="EAID_34343063_6330_6432_2D64_6532622D3432_tgt_low" value="1"/>
+            <upperValue xmi:type="uml:LiteralInteger" xmi:id="EAID_34343063_6330_6432_2D64_6532622D3432_tgt_upp" value="1"/>
+          </ownedEnd>
+        </packagedElement>
+    </packagedElement>
+  </uml:Model>
+  <xmi:Extension extender="Enterprise Architect" extenderID="3.0">
+    <elements>
+      <element xmi:idref="EAID_5061636B_6167_655F_796F_746572659A8B" xmi:type="uml:Package" name="yotere" scope="public">
+        <properties isSpecification="false" sType="Package" ntype="0"/>
+        <project author="ClassForge" version="1.0" status="Proposed" created="2026-09-12T03:20:57.909Z" modified="2026-09-12T03:20:57.909Z"/>
+      </element>
+      
+        <element xmi:idref="EAID_64346661_6661_6638_2D31_3861302D3437" xmi:type="uml:Class" name="rol" scope="public">
+          <model package="EAID_5061636B_6167_655F_796F_746572659A8B" tpos="0" ea_localid="10"/>
+          <properties stereotype="Class" isSpecification="false" sType="Class" ntype="0"/>
+          <extendedProperties package_name="Logical View"/>
+        </element>
+        <element xmi:idref="EAID_32366362_6338_3935_2D31_3238612D3436" xmi:type="uml:Class" name="auto" scope="public">
+          <model package="EAID_5061636B_6167_655F_796F_746572659A8B" tpos="1" ea_localid="11"/>
+          <properties stereotype="Class" isSpecification="false" sType="Class" ntype="0"/>
+          <extendedProperties package_name="Logical View"/>
+        </element>
+        <element xmi:idref="EAID_36316266_3331_3063_2D38_3234392D3435" xmi:type="uml:Class" name="Usuario" scope="public">
+          <model package="EAID_5061636B_6167_655F_796F_746572659A8B" tpos="2" ea_localid="12"/>
+          <properties stereotype="Class" isSpecification="false" sType="Class" ntype="0"/>
+          <extendedProperties package_name="Logical View"/>
+        </element>
+        <element xmi:idref="EAID_66383632_6238_3533_2D39_3432662D3436" xmi:type="uml:Class" name="Ventas" scope="public">
+          <model package="EAID_5061636B_6167_655F_796F_746572659A8B" tpos="3" ea_localid="13"/>
+          <properties stereotype="Entity" isSpecification="false" sType="Class" ntype="0"/>
+          <extendedProperties package_name="Logical View"/>
+        </element>
+    </elements>
+    <connectors>
+      
+        <connector xmi:idref="EAID_33373832_3931_6165_2D34_3463352D3462" name="">
+          <source xmi:idref="EAID_32366362_6338_3935_2D31_3238612D3436">
+            <model type="Class" name="auto" ea_localid="11"/>
+            <role visibility="Public"/>
+            <type multiplicity="1"/>
+          </source>
+          <target xmi:idref="EAID_36316266_3331_3063_2D38_3234392D3435">
+            <model type="Class" name="Usuario" ea_localid="12"/>
+            <role visibility="Public"/>
+            <type multiplicity="*"/>
+          </target>
+          <properties ea_type="Generalization"  direction="Source -> Destination"/>
+          <appearance linemode="3" linecolor="-1" linewidth="0" seqno="0" headstyle="0" linestyle="0"/>
+        </connector>
+        <connector xmi:idref="EAID_33343361_6331_3334_2D62_3263342D3465" name="">
+          <source xmi:idref="EAID_36316266_3331_3063_2D38_3234392D3435">
+            <model type="Class" name="Usuario" ea_localid="12"/>
+            <role visibility="Public"/>
+            <type multiplicity="1"/>
+          </source>
+          <target xmi:idref="EAID_64346661_6661_6638_2D31_3861302D3437">
+            <model type="Class" name="rol" ea_localid="10"/>
+            <role visibility="Public"/>
+            <type multiplicity="*"/>
+          </target>
+          <properties ea_type="Association"  direction="Unspecified"/>
+          <appearance linemode="3" linecolor="-1" linewidth="0" seqno="0" headstyle="0" linestyle="0"/>
+        </connector>
+        <connector xmi:idref="EAID_34343063_6330_6432_2D64_6532622D3432" name="">
+          <source xmi:idref="EAID_36316266_3331_3063_2D38_3234392D3435">
+            <model type="Class" name="Usuario" ea_localid="12"/>
+            <role visibility="Public"/>
+            <type multiplicity="1"/>
+          </source>
+          <target xmi:idref="EAID_66383632_6238_3533_2D39_3432662D3436">
+            <model type="Class" name="Ventas" ea_localid="13"/>
+            <role visibility="Public"/>
+            <type multiplicity="1"/>
+          </target>
+          <properties ea_type="Association"  direction="Unspecified"/>
+          <appearance linemode="3" linecolor="-1" linewidth="0" seqno="0" headstyle="0" linestyle="0"/>
+        </connector>
+    </connectors>
+    <diagrams>
+      <diagram xmi:id="EAID_44696167_7261_6D5F_796F_746572659A8B" name="yotere" type="Logical">
+        <model package="EAID_5061636B_6167_655F_796F_746572659A8B" localID="1" type="Logical"/>
+        <properties name="yotere" type="Logical"/>
+        <project author="ClassForge" version="1.0" created="2026-09-12T03:20:57.909Z" modified="2026-09-12T03:20:57.909Z"/>
+        <elements>
+          
+          <element geometry="Left=857;Top=172;Right=1077;Bottom=322;" subject="EAID_64346661_6661_6638_2D31_3861302D3437" seqno="1" style="DUG=0;"/>
+          <element geometry="Left=487;Top=725;Right=707;Bottom=875;" subject="EAID_32366362_6338_3935_2D31_3238612D3436" seqno="2" style="DUG=0;"/>
+          <element geometry="Left=246;Top=156;Right=466;Bottom=306;" subject="EAID_36316266_3331_3063_2D38_3234392D3435" seqno="3" style="DUG=0;"/>
+          <element geometry="Left=1022;Top=547;Right=1242;Bottom=697;" subject="EAID_66383632_6238_3533_2D39_3432662D3436" seqno="4" style="DUG=0;"/>
+          <element geometry="SX=0;SY=0;EX=0;EY=0;Path=;" subject="EAID_33373832_3931_6165_2D34_3463352D3462" style="LEStyle=3;BStyle=0;"/>
+          <element geometry="SX=0;SY=0;EX=0;EY=0;Path=;" subject="EAID_33343361_6331_3334_2D62_3263342D3465" style="LEStyle=3;BStyle=0;"/>
+          <element geometry="SX=0;SY=0;EX=0;EY=0;Path=;" subject="EAID_34343063_6330_6432_2D64_6532622D3432" style="LEStyle=3;BStyle=0;"/>
+        </elements>
+      </diagram>
+    </diagrams>
+  </xmi:Extension>
+</xmi:XMI>

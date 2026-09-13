@@ -38,7 +38,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
           </marker>
           <!-- Composition Solid Diamond -->
           <marker id="composition" viewBox="0 0 16 16" refX="15" refY="8" markerWidth="14" markerHeight="14" orient="auto">
-            <path d="M 1 8 L 8 1 L 15 8 L 8 15 Z" fill="#00d4ff" stroke="#00d4ff" stroke-width="2" stroke-linejoin="miter" />
+            <path d="M 1 8 L 8 1 L 15 8 L 8 15 Z" fill="#000000" stroke="#00d4ff" stroke-width="2" stroke-linejoin="miter" />
           </marker>
           <!-- Aggregation Hollow White Diamond (Image 2 style) -->
           <marker id="aggregation" viewBox="0 0 16 16" refX="15" refY="8" markerWidth="14" markerHeight="14" orient="auto">
@@ -80,15 +80,15 @@ import { MinimapComponent } from '../minimap/minimap.component';
               (click)="onConnectorClick($event, conn)"
             />
 
-            <!-- Direct SVG Composition Solid Cyan Diamond Shape -->
+            <!-- Direct SVG Composition Solid Black Diamond Shape -->
             <polygon 
               *ngIf="conn.type === 'Composition'"
               [attr.points]="getDiamondPoints(conn)" 
-              fill="#00d4ff" 
+              fill="#000000" 
               stroke="#00d4ff" 
               stroke-width="2.5"
               stroke-linejoin="miter"
-              style="cursor: pointer; pointer-events: all; filter: drop-shadow(0 0 6px rgba(0,212,255,0.8));"
+              style="cursor: pointer; pointer-events: all;"
               (click)="onConnectorClick($event, conn)"
             />
 
@@ -105,7 +105,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
             />
 
             <!-- Source Multiplicity (Near Source Class) -->
-            <g *ngIf="conn.sourceMultiplicity !== ''">
+            <g *ngIf="shouldShowSourceMultiplicity(conn)">
               <!-- Enterprise Architect Dashed Guide Line (ONLY WHEN SELECTED) -->
               <line 
                 *ngIf="isSelectedMultiplicity(conn, 'source')"
@@ -130,7 +130,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
                 (dblclick)="onConnectorClick($event, conn)"
                 title="Haz clic y arrastra para mover la multiplicidad"
               >
-                {{ conn.sourceMultiplicity !== undefined ? conn.sourceMultiplicity : '1' }}
+                {{ conn.sourceMultiplicity || '' }}
               </text>
 
               <!-- Enterprise Architect 4 Corner Selection Handle Box -->
@@ -143,7 +143,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
             </g>
 
             <!-- Target Multiplicity (Near Target Class) -->
-            <g *ngIf="conn.targetMultiplicity !== ''">
+            <g *ngIf="shouldShowTargetMultiplicity(conn)">
               <!-- Enterprise Architect Dashed Guide Line (ONLY WHEN SELECTED) -->
               <line 
                 *ngIf="isSelectedMultiplicity(conn, 'target')"
@@ -168,7 +168,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
                 (dblclick)="onConnectorClick($event, conn)"
                 title="Haz clic y arrastra para mover la multiplicidad"
               >
-                {{ conn.targetMultiplicity !== undefined ? conn.targetMultiplicity : '*' }}
+                {{ conn.targetMultiplicity || '' }}
               </text>
 
               <!-- Enterprise Architect 4 Corner Selection Handle Box -->
@@ -226,6 +226,80 @@ import { MinimapComponent } from '../minimap/minimap.component';
               (click)="onConnectorClick($event, conn)"
               (mousedown)="startDragLoopBox($event, conn)"
             />
+
+            <!-- Reflexive Loop Target Multiplicity -->
+            <g *ngIf="conn.targetMultiplicity">
+              <!-- Enterprise Architect Dashed Guide Line (ONLY WHEN SELECTED) -->
+              <line 
+                *ngIf="isSelectedMultiplicity(conn, 'target')"
+                [attr.x1]="getReflexiveBox(conn).x + getReflexiveBox(conn).width + 8"
+                [attr.y1]="getReflexiveBox(conn).y + 14"
+                [attr.x2]="getReflexiveTargetMultX(conn)"
+                [attr.y2]="getReflexiveTargetMultY(conn)"
+                stroke="#00d4ff"
+                stroke-width="1.5"
+                stroke-dasharray="3 3"
+                style="pointer-events: none; filter: drop-shadow(0 0 4px rgba(0, 212, 255, 0.8));"
+              />
+
+              <text
+                [attr.x]="getReflexiveTargetMultX(conn)"
+                [attr.y]="getReflexiveTargetMultY(conn)"
+                class="connector-mult-text"
+                [class.selected-mult]="isSelectedMultiplicity(conn, 'target')"
+                (mousedown)="startDragMultiplicity($event, conn, 'target')"
+                (click)="$event.stopPropagation(); selectMultiplicity(conn, 'target')"
+                (dblclick)="onConnectorClick($event, conn)"
+                title="Haz clic y arrastra para mover la multiplicidad"
+              >
+                {{ conn.targetMultiplicity }}
+              </text>
+
+              <!-- Enterprise Architect 4 Corner Selection Handle Box -->
+              <g *ngIf="isSelectedMultiplicity(conn, 'target')">
+                <rect [attr.x]="getReflexiveTargetMultX(conn) - 12" [attr.y]="getReflexiveTargetMultY(conn) - 14" width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
+                <rect [attr.x]="getReflexiveTargetMultX(conn) + 12" [attr.y]="getReflexiveTargetMultY(conn) - 14" width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
+                <rect [attr.x]="getReflexiveTargetMultX(conn) - 12" [attr.y]="getReflexiveTargetMultY(conn) + 6"  width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
+                <rect [attr.x]="getReflexiveTargetMultX(conn) + 12" [attr.y]="getReflexiveTargetMultY(conn) + 6"  width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
+              </g>
+            </g>
+
+            <!-- Reflexive Loop Source Multiplicity -->
+            <g *ngIf="conn.sourceMultiplicity">
+              <!-- Enterprise Architect Dashed Guide Line (ONLY WHEN SELECTED) -->
+              <line 
+                *ngIf="isSelectedMultiplicity(conn, 'source')"
+                [attr.x1]="getReflexiveBox(conn).x - 14"
+                [attr.y1]="getReflexiveBox(conn).y + getReflexiveBox(conn).height + 16"
+                [attr.x2]="getReflexiveSourceMultX(conn)"
+                [attr.y2]="getReflexiveSourceMultY(conn)"
+                stroke="#00d4ff"
+                stroke-width="1.5"
+                stroke-dasharray="3 3"
+                style="pointer-events: none; filter: drop-shadow(0 0 4px rgba(0, 212, 255, 0.8));"
+              />
+
+              <text
+                [attr.x]="getReflexiveSourceMultX(conn)"
+                [attr.y]="getReflexiveSourceMultY(conn)"
+                class="connector-mult-text"
+                [class.selected-mult]="isSelectedMultiplicity(conn, 'source')"
+                (mousedown)="startDragMultiplicity($event, conn, 'source')"
+                (click)="$event.stopPropagation(); selectMultiplicity(conn, 'source')"
+                (dblclick)="onConnectorClick($event, conn)"
+                title="Haz clic y arrastra para mover la multiplicidad"
+              >
+                {{ conn.sourceMultiplicity }}
+              </text>
+
+              <!-- Enterprise Architect 4 Corner Selection Handle Box -->
+              <g *ngIf="isSelectedMultiplicity(conn, 'source')">
+                <rect [attr.x]="getReflexiveSourceMultX(conn) - 12" [attr.y]="getReflexiveSourceMultY(conn) - 14" width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
+                <rect [attr.x]="getReflexiveSourceMultX(conn) + 12" [attr.y]="getReflexiveSourceMultY(conn) - 14" width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
+                <rect [attr.x]="getReflexiveSourceMultX(conn) - 12" [attr.y]="getReflexiveSourceMultY(conn) + 6"  width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
+                <rect [attr.x]="getReflexiveSourceMultX(conn) + 12" [attr.y]="getReflexiveSourceMultY(conn) + 6"  width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
+              </g>
+            </g>
 
             <!-- 4 Corner Interactive Handles when Selected/Editing -->
             <g *ngIf="selectedConnector?.id === conn.id || editingConnector?.id === conn.id">
@@ -1307,6 +1381,26 @@ export class CanvasComponent {
     return `M ${box.x} ${box.y} L ${box.x + box.width} ${box.y} L ${box.x + box.width} ${box.y + box.height} L ${box.x} ${box.y + box.height} Z`;
   }
 
+  getReflexiveTargetMultX(conn: UMLConnector): number {
+    const box = this.getReflexiveBox(conn);
+    return box.x + box.width + 8 + (conn.targetMultOffsetX || 0);
+  }
+
+  getReflexiveTargetMultY(conn: UMLConnector): number {
+    const box = this.getReflexiveBox(conn);
+    return box.y + 14 + (conn.targetMultOffsetY || 0);
+  }
+
+  getReflexiveSourceMultX(conn: UMLConnector): number {
+    const box = this.getReflexiveBox(conn);
+    return box.x - 14 + (conn.sourceMultOffsetX || 0);
+  }
+
+  getReflexiveSourceMultY(conn: UMLConnector): number {
+    const box = this.getReflexiveBox(conn);
+    return box.y + box.height + 16 + (conn.sourceMultOffsetY || 0);
+  }
+
   startDragLoopBox(event: MouseEvent, conn: UMLConnector): void {
     event.stopPropagation();
     this.selectedConnector = conn;
@@ -1672,11 +1766,19 @@ export class CanvasComponent {
     let tx = tcx;
     let ty = tcy;
 
+    let trimOffset = 0;
+    if (conn.type === 'Aggregation' || conn.type === 'Composition') {
+      trimOffset = 24;
+    } else if (conn.type === 'Inheritance' || conn.type === 'Implementation') {
+      trimOffset = 14;
+    }
+
     if (Math.abs(dx) >= Math.abs(dy)) {
       // Horizontal routing
       sx = dx >= 0 ? source.positionX + sourceW : source.positionX;
       sy = scy;
-      tx = dx >= 0 ? target.positionX : target.positionX + targetW;
+      const rawTx = dx >= 0 ? target.positionX : target.positionX + targetW;
+      tx = dx >= 0 ? rawTx - trimOffset : rawTx + trimOffset;
       ty = tcy;
       const c1x = sx + (tx - sx) / 2;
       return `M ${sx} ${sy} C ${c1x} ${sy}, ${c1x} ${ty}, ${tx} ${ty}`;
@@ -1684,11 +1786,28 @@ export class CanvasComponent {
       // Vertical routing
       sx = scx;
       sy = dy >= 0 ? source.positionY + sourceH : source.positionY;
+      const rawTy = dy >= 0 ? target.positionY : target.positionY + targetH;
       tx = tcx;
-      ty = dy >= 0 ? target.positionY : target.positionY + targetH;
+      ty = dy >= 0 ? rawTy - trimOffset : rawTy + trimOffset;
       const c1y = sy + (ty - sy) / 2;
       return `M ${sx} ${sy} C ${sx} ${c1y}, ${tx} ${c1y}, ${tx} ${ty}`;
     }
+  }
+
+  shouldShowSourceMultiplicity(conn: UMLConnector): boolean {
+    if (!conn) return false;
+    if (conn.type === 'Inheritance' || conn.type === 'Aggregation' || conn.type === 'Composition') {
+      return !!(conn.sourceMultiplicity && conn.sourceMultiplicity.trim() !== '');
+    }
+    return conn.sourceMultiplicity !== '' && conn.sourceMultiplicity !== undefined && conn.sourceMultiplicity !== null;
+  }
+
+  shouldShowTargetMultiplicity(conn: UMLConnector): boolean {
+    if (!conn) return false;
+    if (conn.type === 'Inheritance' || conn.type === 'Aggregation' || conn.type === 'Composition') {
+      return !!(conn.targetMultiplicity && conn.targetMultiplicity.trim() !== '');
+    }
+    return conn.targetMultiplicity !== '' && conn.targetMultiplicity !== undefined && conn.targetMultiplicity !== null;
   }
 
   isSelectedMultiplicity(conn: UMLConnector, type: 'source' | 'target'): boolean {
@@ -1795,7 +1914,7 @@ export class CanvasComponent {
     if (!conn.associationClassNodeId) return 0;
     const node = this.findNode(conn.associationClassNodeId);
     if (!node) return 0;
-    return node.positionY;
+    return node.positionY + (node.height || 160) / 2;
   }
 
   getSourceEndpoint(conn: UMLConnector): { x: number; y: number; angle: number } {

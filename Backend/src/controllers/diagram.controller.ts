@@ -30,14 +30,15 @@ export const getDiagramData = async (req: AuthRequest, res: Response): Promise<v
     }
 
     if (diagram && diagram.connectors && diagram.connectors.length > 0) {
-      const uniqueConns: typeof diagram.connectors = [];
+      const uniqueConns: any[] = [];
       const duplicateIds: string[] = [];
       const seen = new Set<string>();
 
       for (let i = diagram.connectors.length - 1; i >= 0; i--) {
-        const c = diagram.connectors[i];
-        const key1 = `${c.sourceNodeId}_${c.targetNodeId}_${c.type}`;
-        const key2 = `${c.targetNodeId}_${c.sourceNodeId}_${c.type}`;
+        const c: any = diagram.connectors[i];
+        const assocPart = c.associationClassNodeId ? `_assoc_${c.associationClassNodeId}` : '';
+        const key1 = `${c.sourceNodeId}_${c.targetNodeId}_${c.type}${assocPart}`;
+        const key2 = `${c.targetNodeId}_${c.sourceNodeId}_${c.type}${assocPart}`;
 
         if (seen.has(key1) || seen.has(key2)) {
           duplicateIds.push(c.id);
@@ -54,7 +55,7 @@ export const getDiagramData = async (req: AuthRequest, res: Response): Promise<v
         }).catch(() => {});
       }
 
-      diagram.connectors = uniqueConns;
+      (diagram as any).connectors = uniqueConns;
     }
 
     res.json(diagram);
@@ -143,7 +144,7 @@ export const deleteNode = async (req: AuthRequest, res: Response): Promise<void>
 
 export const createConnector = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { diagramId, sourceNodeId, targetNodeId, type, sourceMultiplicity, targetMultiplicity, label } = req.body;
+    const { diagramId, sourceNodeId, targetNodeId, type, sourceMultiplicity, targetMultiplicity, label, associationClassNodeId } = req.body;
 
     const connector = await prisma.connector.create({
       data: {
@@ -151,10 +152,11 @@ export const createConnector = async (req: AuthRequest, res: Response): Promise<
         sourceNodeId,
         targetNodeId,
         type: type || 'Association',
-        sourceMultiplicity: sourceMultiplicity || '1',
-        targetMultiplicity: targetMultiplicity || '0..*',
-        label: label || '',
-      },
+        sourceMultiplicity: (sourceMultiplicity !== undefined && sourceMultiplicity !== null) ? String(sourceMultiplicity) : '',
+        targetMultiplicity: (targetMultiplicity !== undefined && targetMultiplicity !== null) ? String(targetMultiplicity) : '',
+        label: (label !== undefined && label !== null) ? String(label) : '',
+        associationClassNodeId: associationClassNodeId ? String(associationClassNodeId) : null,
+      } as any,
     });
 
     await prisma.diagram.update({
@@ -200,7 +202,7 @@ export const deleteConnector = async (req: AuthRequest, res: Response): Promise<
 export const updateConnector = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const connectorId = req.params.connectorId as string;
-    const { sourceNodeId, targetNodeId, type, sourceMultiplicity, targetMultiplicity, label } = req.body;
+    const { sourceNodeId, targetNodeId, type, sourceMultiplicity, targetMultiplicity, label, associationClassNodeId } = req.body;
 
     const updatedConnector = await prisma.connector.update({
       where: { id: connectorId },
@@ -211,7 +213,8 @@ export const updateConnector = async (req: AuthRequest, res: Response): Promise<
         ...(sourceMultiplicity !== undefined && { sourceMultiplicity }),
         ...(targetMultiplicity !== undefined && { targetMultiplicity }),
         ...(label !== undefined && { label }),
-      },
+        ...(associationClassNodeId !== undefined && { associationClassNodeId }),
+      } as any,
     });
 
     if (updatedConnector && updatedConnector.diagramId) {
@@ -224,5 +227,23 @@ export const updateConnector = async (req: AuthRequest, res: Response): Promise<
     res.json(updatedConnector);
   } catch (error: any) {
     res.status(500).json({ error: 'Error al actualizar conector UML: ' + error.message });
+  }
+};
+
+export const purgeDiagramData = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const projectId = req.params.projectId as string;
+    const diagram = await prisma.diagram.findFirst({ where: { projectId } });
+    if (diagram) {
+      await prisma.connector.deleteMany({ where: { diagramId: diagram.id } });
+      await prisma.node.deleteMany({ where: { diagramId: diagram.id } });
+      await prisma.diagram.update({
+        where: { id: diagram.id },
+        data: { updatedAt: new Date() },
+      }).catch(() => {});
+    }
+    res.json({ message: 'Diagrama purgado exitosamente.' });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Error al purgar diagrama: ' + error.message });
   }
 };

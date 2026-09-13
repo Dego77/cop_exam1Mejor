@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xmi:XMI xmi:version="2.1" xmlns:uml="http://schema.omg.org/spec/UML/2.1" xmlns:xmi="http://schema.omg.org/spec/XMI/2.1">
+  <xmi:Documentation exporter="Enterprise Architect" exporterVersion="15.0" created="2026-09-10T03:52:56.389Z"/>
+  <uml:Model xmi:type="uml:Model" xmi:id="EA_Model_1789012376389" name="atr">
+    <packagedElement xmi:type="uml:Package" xmi:id="EA_Package_Main" name="Logical View">
+      
+      
+    </packagedElement>
+  </uml:Model>
+  <xmi:Extension extender="Enterprise Architect" extenderID="3.0">
+    <elements>
+      
+    </elements>
+    <diagrams>
+      <diagram xmi:id="EA_Diagram_1789012376389" name="atr" type="Logical">
+        <model package="EA_Package_Main" localID="1" type="Logical"/>
+        <properties name="atr" type="Logical"/>
+        <elements>
+          
+        </elements>
+      </diagram>
+    </diagrams>
+  </xmi:Extension>
+</xmi:XMI>

@@ -998,22 +998,12 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
         next: (res) => {
           this.isProcessing = false;
           if (res?.createdNodes && res.createdNodes.length > 0) {
-            res.createdNodes.forEach((n: any) => this.diagramService.addLocalNode(n));
-          }
-
-          if (res?.createdConnectors && res.createdConnectors.length > 0) {
-            const currentConns = this.diagramService.currentConnectors;
-            (this.diagramService as any).connectorsSubject.next([...currentConns, ...res.createdConnectors]);
-          } else {
-            const allNodes = this.diagramService.currentNodes;
-            if (allNodes && allNodes.length >= 2) {
-              const synthesized = this.diagramService.autoSynthesizeConnectors(allNodes);
-              if (synthesized.length > 0) {
-                const currentConns = this.diagramService.currentConnectors;
-                (this.diagramService as any).connectorsSubject.next([...currentConns, ...synthesized]);
-                synthesized.forEach(c => this.diagramService.addConnector(c).subscribe());
-              }
-            }
+            this.diagramService.clearLocalSnapshot(this.projectId);
+            (this.diagramService as any).nodesSubject.next(res.createdNodes);
+            (this.diagramService as any).connectorsSubject.next(res.createdConnectors || []);
+            this.diagramService.saveDiagramLocalSnapshot(this.projectId, res.createdNodes, res.createdConnectors || []);
+          } else if (res?.createdConnectors && res.createdConnectors.length > 0) {
+            (this.diagramService as any).connectorsSubject.next(res.createdConnectors);
           }
 
           const msg = res?.aiResponse?.message || 'Foto analizada: Clases y conexiones importadas al lienzo exitosamente.';

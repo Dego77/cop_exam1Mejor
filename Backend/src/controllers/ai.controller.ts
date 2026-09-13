@@ -189,11 +189,13 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
       const allDiagramNodes = await prisma.node.findMany({ where: { diagramId: diagram.id } });
       if (aiResponse.connectorsGenerated && aiResponse.connectorsGenerated.length > 0) {
         for (const conn of aiResponse.connectorsGenerated) {
-          const srcName = conn.sourceClassName || conn.sourceNodeName || conn.source;
-          const tgtName = conn.targetClassName || conn.targetNodeName || conn.target;
+          const srcName = conn.sourceClassName || (conn as any).sourceNodeName || (conn as any).source;
+          const tgtName = conn.targetClassName || (conn as any).targetNodeName || (conn as any).target;
+          const assocName = conn.associationClassName || (conn as any).associationClassNode || (conn as any).associationClass;
 
           const srcNode = allDiagramNodes.find(n => n.name.toLowerCase() === srcName?.toLowerCase());
           const tgtNode = allDiagramNodes.find(n => n.name.toLowerCase() === tgtName?.toLowerCase());
+          const assocNode = assocName ? allDiagramNodes.find(n => n.name.toLowerCase() === assocName?.toLowerCase()) : undefined;
 
           if (srcNode && tgtNode) {
             const newConn = await prisma.connector.create({
@@ -202,9 +204,10 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
                 sourceNodeId: srcNode.id,
                 targetNodeId: tgtNode.id,
                 type: conn.type || 'Association',
-                sourceMultiplicity: conn.sourceMultiplicity || '+1',
-                targetMultiplicity: conn.targetMultiplicity || '+*',
+                sourceMultiplicity: conn.sourceMultiplicity !== undefined ? conn.sourceMultiplicity : '',
+                targetMultiplicity: conn.targetMultiplicity !== undefined ? conn.targetMultiplicity : '',
                 label: conn.label || '',
+                associationClassNodeId: assocNode ? assocNode.id : undefined,
               },
             });
             createdConnectors.push({
@@ -215,6 +218,7 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
               sourceMultiplicity: newConn.sourceMultiplicity,
               targetMultiplicity: newConn.targetMultiplicity,
               label: newConn.label,
+              associationClassNodeId: assocNode ? assocNode.id : undefined,
             });
           }
         }
@@ -289,132 +293,138 @@ export const handlePhotoPrompt = async (req: AuthRequest, res: Response): Promis
     const detectedConnectors = aiResponse.connectorsGenerated || (aiResponse as any).connectors || (aiResponse as any).relationships || [];
 
     if (diagram && detectedClasses && detectedClasses.length > 0) {
-      let startX = 100;
+      // Purge previous nodes and connectors for a 100% clean import of the photo diagram
+      await prisma.connector.deleteMany({ where: { diagramId: diagram.id } }).catch(() => {});
+      await prisma.node.deleteMany({ where: { diagramId: diagram.id } }).catch(() => {});
+
+      let startX = 80;
       let startY = 80;
       let colIndex = 0;
-      const nodesMap = new Map<string, any>();
 
-      for (const cls of detectedClasses) {
-        const posX = startX + (colIndex % 3) * 320;
-        const posY = startY + Math.floor(colIndex / 3) * 260;
+      // Prepare node creation payloads
+      const nodeCreationPromises = detectedClasses.map((cls: any, idx: number) => {
+        const posX = (cls.positionX !== undefined && cls.positionX !== null && !isNaN(cls.positionX))
+          ? Number(cls.positionX)
+          : startX + (idx % 3) * 320;
+        const posY = (cls.positionY !== undefined && cls.positionY !== null && !isNaN(cls.positionY))
+          ? Number(cls.positionY)
+          : startY + Math.floor(idx / 3) * 260;
 
-        const node = await prisma.node.create({
+        const clsName = cls.name || cls.className || `Class_${idx + 1}`;
+
+        return prisma.node.create({
           data: {
             diagramId: diagram.id,
-            name: cls.name || cls.className || `Class_${colIndex + 1}`,
+            name: clsName,
             stereotype: cls.stereotype || 'Entity',
             attributes: cls.attributes || [],
             methods: cls.methods || [],
             positionX: posX,
             positionY: posY,
           },
-        });
+        }).then(node => ({ node, originalCls: cls }));
+      });
+
+      const nodeResults = await Promise.all(nodeCreationPromises);
+      const tempIdToNodeMap = new Map<string, any>();
+      const nameToNodesMap = new Map<string, any[]>();
+
+      for (const resItem of nodeResults) {
+        const node = resItem.node;
+        const cls = resItem.originalCls;
         createdNodes.push(node);
-        if (cls.name) nodesMap.set(cls.name.toLowerCase(), node);
-        colIndex++;
+
+        if (cls.tempId) tempIdToNodeMap.set(String(cls.tempId).toLowerCase(), node);
+        if (cls.id) tempIdToNodeMap.set(String(cls.id).toLowerCase(), node);
+
+        const lowerName = (node.name || '').trim().toLowerCase();
+        const list = nameToNodesMap.get(lowerName) || [];
+        list.push(node);
+        nameToNodesMap.set(lowerName, list);
       }
-      const allDiagramNodes = [...(diagram.nodes || []), ...createdNodes];
-      const findNodeInDiagram = (nameStr?: string) => {
-        if (!nameStr) return undefined;
-        const clean = nameStr.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-        return allDiagramNodes.find(n => {
-          const nClean = (n.name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-          return nClean === clean || nClean.includes(clean) || clean.includes(nClean);
-        });
+
+      const findNode = (tempIdRef?: string, classNameRef?: string): any | undefined => {
+        if (tempIdRef) {
+          const foundByTemp = tempIdToNodeMap.get(String(tempIdRef).toLowerCase());
+          if (foundByTemp) return foundByTemp;
+        }
+        if (classNameRef) {
+          const lowerName = classNameRef.trim().toLowerCase();
+          const matches = nameToNodesMap.get(lowerName);
+          if (matches && matches.length > 0) {
+            return matches.shift(); // Consume match for distinct instances if duplicate names exist
+          }
+        }
+        return undefined;
       };
 
-      // Create relationships/connectors if detected in the photo
+      // Create relationships/connectors detected in the photo concurrently
       if (detectedConnectors && detectedConnectors.length > 0) {
+        const connectorPayloads: any[] = [];
+
         for (const conn of detectedConnectors) {
+          const srcTemp = conn.sourceTempId || conn.sourceId;
+          const tgtTemp = conn.targetTempId || conn.targetId;
+          const assocTemp = conn.associationClassTempId || conn.associationClassId;
+
           const srcName = conn.sourceClassName || conn.sourceNodeName || conn.source || conn.sourceClass;
           const tgtName = conn.targetClassName || conn.targetNodeName || conn.target || conn.targetClass;
+          const assocName = conn.associationClassName || conn.associationClassNode || conn.associationClass;
 
-          const srcNode = findNodeInDiagram(srcName);
-          const tgtNode = findNodeInDiagram(tgtName);
+          const srcNode = findNode(srcTemp, srcName);
+          const tgtNode = findNode(tgtTemp, tgtName);
+          const assocNode = findNode(assocTemp, assocName);
 
           if (srcNode && tgtNode) {
-            const connector = await prisma.connector.create({
-              data: {
-                diagramId: diagram.id,
-                sourceNodeId: srcNode.id,
-                targetNodeId: tgtNode.id,
-                type: conn.type || 'Association',
-                sourceMultiplicity: conn.sourceMultiplicity || '1',
-                targetMultiplicity: conn.targetMultiplicity || '0..*',
-                label: conn.label || '',
-              },
-            });
-            createdConnectors.push(connector);
-          }
-        }
-      }
+            let type = conn.type || 'Association';
+            let finalSrcId = srcNode.id;
+            let finalTgtId = tgtNode.id;
+            let finalSrcMult = (conn.sourceMultiplicity !== undefined && conn.sourceMultiplicity !== null) ? String(conn.sourceMultiplicity) : '';
+            let finalTgtMult = (conn.targetMultiplicity !== undefined && conn.targetMultiplicity !== null) ? String(conn.targetMultiplicity) : '';
 
-      // Smart Auto-Synthesis: Infer relationships across all diagram nodes if connectors list is empty
-      if (createdConnectors.length === 0 && allDiagramNodes.length >= 2) {
-        const fallbackPairs: any[] = [];
+            // Composition & Aggregation Normalization: SVG renderer draws the diamond on targetNodeId.
+            // If Gemini output srcNode as the parent container (e.g. Cliente) and tgtNode as child (e.g. comprador/Vendedor),
+            // flip source and target so targetNodeId receives the diamond on Cliente's border.
+            if (type === 'Composition' || type === 'Aggregation') {
+              const srcLower = (srcNode.name || '').toLowerCase();
+              const tgtLower = (tgtNode.name || '').toLowerCase();
 
-        // 1. Foreign Key Attribute Matching
-        for (let i = 0; i < allDiagramNodes.length; i++) {
-          const srcNode = allDiagramNodes[i];
-          const attrs = (srcNode.attributes as any[]) || [];
-          for (const attr of attrs) {
-            const attrName = (attr.name || '').trim().toLowerCase();
-            if (attrName.length > 2 && (attrName.endsWith('id') || attrName.endsWith('_id'))) {
-              const targetNamePart = attrName.replace(/_?id$/i, '');
-              if (!targetNamePart) continue;
-
-              const targetNode = allDiagramNodes.find(n => {
-                if (n.id === srcNode.id) return false;
-                const nClean = (n.name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-                return nClean === targetNamePart || nClean.includes(targetNamePart) || targetNamePart.includes(nClean);
-              });
-
-              if (targetNode) {
-                const exists = fallbackPairs.some(p => (p.src === srcNode.id && p.tgt === targetNode.id) || (p.src === targetNode.id && p.tgt === srcNode.id));
-                if (!exists) {
-                  fallbackPairs.push({ src: srcNode.id, tgt: targetNode.id, type: 'Composition', srcM: '0..*', tgtM: '1' });
-                }
+              // If srcNode is parent container (like Cliente) and tgtNode is child (comprador, Vendedor), flip endpoints
+              if (srcLower === 'cliente' || srcLower.includes('cliente') || srcLower.includes('parent') || srcLower.includes('padre')) {
+                finalSrcId = tgtNode.id;
+                finalTgtId = srcNode.id;
+                const tempM = finalSrcMult;
+                finalSrcMult = finalTgtMult;
+                finalTgtMult = tempM;
               }
             }
-          }
-        }
 
-        // 2. Specific Domain Matching (Customer -> User, etc.)
-        const userNode = findNodeInDiagram('user');
-        const customerNode = findNodeInDiagram('customer');
-        if (customerNode && userNode && customerNode.id !== userNode.id) {
-          const exists = fallbackPairs.some(p => p.src === customerNode.id && p.tgt === userNode.id);
-          if (!exists) {
-            fallbackPairs.push({ src: customerNode.id, tgt: userNode.id, type: 'Inheritance', srcM: '', tgtM: '' });
-          }
-        }
-
-        // 3. Fallback: Sequential Chain for remaining nodes
-        if (fallbackPairs.length === 0 && allDiagramNodes.length >= 2) {
-          for (let i = 0; i < allDiagramNodes.length - 1; i++) {
-            fallbackPairs.push({
-              src: allDiagramNodes[i + 1].id,
-              tgt: allDiagramNodes[i].id,
-              type: i === 0 ? 'Inheritance' : 'Composition',
-              srcM: i === 0 ? '' : '0..*',
-              tgtM: i === 0 ? '' : '1'
+            connectorPayloads.push({
+              diagramId: diagram.id,
+              sourceNodeId: finalSrcId,
+              targetNodeId: finalTgtId,
+              type: type,
+              sourceMultiplicity: finalSrcMult,
+              targetMultiplicity: finalTgtMult,
+              label: conn.label || '',
+              associationClassNodeId: assocNode ? assocNode.id : undefined,
             });
           }
         }
 
-        for (const pair of fallbackPairs) {
-          const connector = await prisma.connector.create({
-            data: {
-              diagramId: diagram.id,
-              sourceNodeId: pair.src,
-              targetNodeId: pair.tgt,
-              type: pair.type,
-              sourceMultiplicity: pair.srcM,
-              targetMultiplicity: pair.tgtM,
-              label: ''
-            }
-          });
-          createdConnectors.push(connector);
+        if (connectorPayloads.length > 0) {
+          const connectorPromises = connectorPayloads.map(payload => prisma.connector.create({ data: payload }));
+          const savedConnectors = await Promise.all(connectorPromises);
+          createdConnectors = savedConnectors.map(connector => ({
+            id: connector.id,
+            sourceNodeId: connector.sourceNodeId,
+            targetNodeId: connector.targetNodeId,
+            type: connector.type,
+            sourceMultiplicity: connector.sourceMultiplicity,
+            targetMultiplicity: connector.targetMultiplicity,
+            label: connector.label,
+            associationClassNodeId: connector.associationClassNodeId || undefined,
+          }));
         }
       }
     }

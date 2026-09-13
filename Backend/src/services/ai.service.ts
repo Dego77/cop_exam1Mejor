@@ -8,7 +8,15 @@ export interface AIServiceResponse {
   classesToDelete?: string[];
   attributesToRemove?: { className: string; attributeName: string }[];
   methodsToRemove?: { className: string; methodName: string }[];
-  connectorsGenerated?: any[];
+  connectorsGenerated?: {
+    sourceClassName: string;
+    targetClassName: string;
+    type: 'Association' | 'Aggregation' | 'Composition' | 'Inheritance' | 'Implementation' | 'Dependency';
+    sourceMultiplicity?: string;
+    targetMultiplicity?: string;
+    label?: string;
+    associationClassName?: string;
+  }[];
 }
 
 export class AIAgentService {
@@ -30,8 +38,11 @@ When given a prompt (Text, Voice transcription, or Whiteboard photo image), resp
   "action": "CREATE_CLASSES" | "MODIFY_CLASSES" | "DELETE_CLASSES" | "GENERAL_RESPONSE",
   "classesGenerated": [
     {
+      "tempId": "cls_1",
       "name": "ClassName",
       "stereotype": "Entity | Interface | Abstract | Enum",
+      "positionX": 100,
+      "positionY": 100,
       "attributes": [
         { "name": "attributeName", "type": "String | Integer | Double | Date | Boolean | UUID", "visibility": "+" }
       ],
@@ -60,11 +71,16 @@ When given a prompt (Text, Voice transcription, or Whiteboard photo image), resp
   ],
   "connectorsGenerated": [
     {
+      "sourceTempId": "cls_1",
+      "targetTempId": "cls_2",
       "sourceClassName": "ClassNameA",
       "targetClassName": "ClassNameB",
       "type": "Association | Aggregation | Composition | Inheritance | Implementation | Dependency",
-      "sourceMultiplicity": "1",
-      "targetMultiplicity": "0..*"
+      "sourceMultiplicity": "+1",
+      "targetMultiplicity": "+*",
+      "label": "",
+      "associationClassTempId": "cls_3",
+      "associationClassName": "OptionalAssociationClassName"
     }
   ]
 }
@@ -91,13 +107,18 @@ CRITICAL RULES:
    - Ignore conversational fillers, stutters, hesitations (e.g. "eeh", "este", "o sea", "bueno", "mira", "sabes", "digo"). Extract ONLY the final core UML intention.
    - Preserve compound attribute names in snake_case: when user says "id rol", "id de rol" or "id_rol", output attribute name as "id_rol" (DO NOT truncate to "ID").
 
-5. RELATIONSHIP DIRECTION RULES:
-   - For Composition and Aggregation: "targetClassName" MUST be the container/owner class that holds the diamond symbol, and "sourceClassName" MUST be the contained/part class. (e.g. Shopping Cart -> Customer, Orders -> Customer, Order Details -> Orders).
-   - For Inheritance / Implementation: "sourceClassName" MUST be the child class and "targetClassName" MUST be the parent/superclass receiving the triangle arrow head. (e.g. Customer -> User).
+5. UML DIAGRAM VISION & IMAGE EXTRACTION RULES (CRITICAL):
+    - UNIQUE TEMP IDs FOR EVERY BOX: Assign a unique 'tempId' (e.g. "cls_1", "cls_2", "cls_3") to EACH class box detected in the image, even if two boxes have the same class name!
+    - SPATIAL POSITIONING: Estimate relative canvas coordinates (positionX: 50..1000, positionY: 50..800) for each box based on its physical placement in the photo. For instance, top-left box gets x=80, y=80; top-right box gets x=600, y=80; middle box gets x=350, y=300; bottom-left gets x=80, y=550; bottom-right gets x=600, y=550.
+    - CONNECTOR ENDPOINTS: Use 'sourceTempId' and 'targetTempId' pointing to the exact box 'tempId' where the line starts and ends. Also include 'sourceClassName' and 'targetClassName'.
+    - MULTIPLICITIES AT BOTH ENDPOINTS (MANDATORY): Inspect BOTH endpoints of EVERY line for written text containing symbols (e.g. '+*', '+1', '+0..*', '1..*', '1', '*'). You MUST populate BOTH 'sourceMultiplicity' and 'targetMultiplicity'. If text like '+*' appears near the top box border ('Usuario'), set 'sourceMultiplicity': '+*'; if text like '+1' appears near the bottom box border ('Cliente'), set 'targetMultiplicity': '+1'. NEVER skip or leave symbols empty if written on the image!
+    - EXHAUSTIVE DIAMOND SCAN (COMPOSITION & AGGREGATION): Perform a 360-degree scan around EVERY class box for solid black diamonds (Composition) or hollow white diamonds (Aggregation). If a class box (e.g. 'Cliente') connects to multiple children (e.g. 'comprador' AND 'Vendedor') with solid black diamonds on its border, EVERY SINGLE LINE MUST BE CATEGORIZED AS 'Composition'! THE CLASS BOX TOUCHING/HOLDING THE DIAMOND (e.g. 'Cliente') MUST ALWAYS BE SET AS 'targetTempId' / 'targetClassName'! The child class box (e.g. 'comprador', 'Vendedor') MUST BE SET AS 'sourceTempId' / 'sourceClassName'!
+    - ASSOCIATION CLASS: If a class box (e.g. 'Detalle_Compra' or 'Detalle_Rol') is connected by a dashed line to the middle of a main relationship line between two classes (e.g. 'Usuario' and 'Compra' or 'Usuario' and 'Rol'), set 'associationClassTempId' (or 'associationClassName') inside that main relationship connector in 'connectorsGenerated'! DO NOT create a separate direct connector for the association class box.
+    - INHERITANCE / IMPLEMENTATION: A solid or hollow triangle arrowhead pointing to a class box indicates 'Inheritance' (or 'Implementation'). Set 'sourceTempId' / 'sourceClassName' to the child class and 'targetTempId' / 'targetClassName' to the parent/superclass receiving the triangle arrow head.
 
-6. Delete ONLY what is requested by the user. Do not remove unrequested items.
-7. Plain JSON output only without markdown code block formatting like \`\`\`json.
-`;
+    6. Delete ONLY what is requested by the user. Do not remove unrequested items.
+    7. Plain JSON output only without markdown code block formatting like \`\`\`json.
+  `;
   }
 
   private static resolveModel(requestedModel?: string): string {
@@ -155,10 +176,10 @@ CRITICAL RULES:
     const imageBytes = fs.readFileSync(filePath);
     const base64Data = imageBytes.toString('base64');
     const cleanMimeType = (mimeType && mimeType.startsWith('image/')) ? mimeType : 'image/png';
-    const promptText = `${this.getSystemInstruction()}\nAnalyze this whiteboard/notebook image of a UML software class diagram. Extract ALL detected classes with exact class names, stereotypes (Entity, Interface, Abstract, Enum), visibility (- private, + public, # protected), attribute names, attribute data types, method names, return types.\nMANDATORY: You MUST detect and extract ALL connecting lines, arrows, and diamonds between classes into 'connectorsGenerated' specifying 'sourceClassName', 'targetClassName', and 'type' (Association | Aggregation | Composition | Inheritance | Implementation | Dependency).\nCRITICAL: Respond ONLY with a valid JSON object matching the requested schema. Do not output any markdown text or conversational greeting outside the JSON object.`;
+    const promptText = `${this.getSystemInstruction()}\nAnalyze this whiteboard/notebook image of a UML software class diagram. Extract ALL detected classes with exact class names, stereotypes (Entity, Interface, Abstract, Enum), visibility (- private, + public, # protected), attribute names, attribute data types, method names, return types, AND spatial positionX/positionY coordinates.\nMANDATORY: You MUST detect and extract ALL connecting lines, arrows, and diamonds between classes into 'connectorsGenerated' specifying 'sourceTempId', 'targetTempId', 'sourceClassName', 'targetClassName', and 'type' (Association | Aggregation | Composition | Inheritance | Implementation | Dependency).\nSPECIAL ATTENTION: Verify BOTH endpoints of every line for multiplicities (e.g. '+*', '+1') and ensure ANY class (like 'Cliente') touching solid black diamonds to children (like 'comprador', 'Vendedor') has 'type': 'Composition' with targetTempId set to that parent class.\nCRITICAL: Respond ONLY with a valid JSON object matching the requested schema. Do not output any markdown text or conversational greeting outside the JSON object.`;
 
     const primaryModel = this.resolveModel(model);
-    const modelsToTry = Array.from(new Set([primaryModel, 'gemini-3.6-flash', 'gemini-3.1-pro-preview']));
+    const modelsToTry = ['gemini-3.6-flash', primaryModel, 'gemini-3.1-pro-preview'].filter((v, i, a) => a.indexOf(v) === i);
 
     for (const modName of modelsToTry) {
       for (let attempt = 1; attempt <= 3; attempt++) {

@@ -249,7 +249,7 @@ export class EaExporterService {
             break;
         }
 
-        const isStructuralAssoc = conn.type === 'Association' || conn.type === 'Aggregation' || conn.type === 'Composition' || !conn.type;
+        const isStructuralAssoc = conn.type === 'Association' || !conn.type;
         const defaultSrcMult = isStructuralAssoc ? '1' : '';
         const defaultTgtMult = isStructuralAssoc ? '*' : '';
 
@@ -258,6 +258,9 @@ export class EaExporterService {
 
         const srcMult = this.buildMultiplicityXml(rawSrcMult, `${connEaId}_src`);
         const tgtMult = this.buildMultiplicityXml(rawTgtMult, `${connEaId}_tgt`);
+
+        const assocInfo = conn.associationClassNodeId ? nodeMap.get(conn.associationClassNodeId) : undefined;
+        const assocClassAttr = assocInfo ? `associationClass="${assocInfo.eaId}"` : (conn.associationClassNodeId ? `associationClass="${conn.associationClassNodeId}"` : '');
 
         // Standard UML 2.1 Association in packagedElement (memberEnd & type xmi:idref)
         if (conn.type !== 'Inheritance') {
@@ -289,7 +292,7 @@ export class EaExporterService {
             <role visibility="Public"/>
             <type multiplicity="${tgtMult.eaTypeMult}"/>
           </target>
-          <properties ea_type="${eaType}" ${subTypeAttr} direction="${conn.type === 'Inheritance' ? 'Source -> Destination' : 'Unspecified'}"/>
+          <properties ea_type="${eaType}" ${subTypeAttr} ${assocClassAttr} direction="${conn.type === 'Inheritance' ? 'Source -> Destination' : 'Unspecified'}"/>
           <appearance linemode="3" linecolor="-1" linewidth="0" seqno="0" headstyle="0" linestyle="0"/>
         </connector>`;
 

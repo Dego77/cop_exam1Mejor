@@ -275,10 +275,26 @@ export class EditorComponent implements OnInit, OnDestroy {
 
         const combined = Array.from(mergedMap.values());
 
-        if (combined.length > 0) {
-          this.projects = combined;
+        // Deduplicate projects by case-insensitive name, keeping the most recently updated project
+        const uniqueByName = new Map<string, Project>();
+        combined.forEach(p => {
+          const key = (p.name || '').trim().toLowerCase();
+          if (!key) return;
+          if (!uniqueByName.has(key) || new Date(p.updatedAt || 0) > new Date(uniqueByName.get(key)!.updatedAt || 0)) {
+            uniqueByName.set(key, p);
+          }
+        });
+        const deduplicated = Array.from(uniqueByName.values());
+
+        if (deduplicated.length > 0) {
+          this.projects = deduplicated;
           this.saveProjectsCache();
-          this.onSelectProject(combined[0]);
+          const currentStillExists = this.currentProject ? deduplicated.find(p => p.id === this.currentProject!.id || p.name.toLowerCase() === this.currentProject!.name.toLowerCase()) : null;
+          if (currentStillExists) {
+            this.currentProject = currentStillExists;
+          } else {
+            this.onSelectProject(deduplicated[0]);
+          }
         } else {
           // Clean state for brand new users without auto-creating demo projects
           this.projects = [];
@@ -577,17 +593,20 @@ export class EditorComponent implements OnInit, OnDestroy {
       error: () => {}
     });
 
-    this.diagramService.loadDiagram(p.id).subscribe({
-      next: () => {},
-      error: () => {
-        (this.diagramService as any).nodesSubject.next([]);
-        (this.diagramService as any).connectorsSubject.next([]);
+    return new Promise<void>((resolve) => {
+      this.diagramService.loadDiagram(p.id).subscribe({
+        next: () => { resolve(); },
+        error: () => {
+          (this.diagramService as any).nodesSubject.next([]);
+          (this.diagramService as any).connectorsSubject.next([]);
+          resolve();
+        }
+      });
+
+      if (this.auth.currentUser) {
+        this.wsService.joinProject(p.id, this.auth.currentUser);
       }
     });
-
-    if (this.auth.currentUser) {
-      this.wsService.joinProject(p.id, this.auth.currentUser);
-    }
   }
 
   onProjectInvited(): void {
@@ -831,7 +850,7 @@ export class EditorComponent implements OnInit, OnDestroy {
         const cleanName = projectName.toLowerCase().endsWith('.eap') ? projectName : `${projectName}.eap`;
         alert(`💾 Guardado exitoso:\n- Proyecto "${projectName}" en PostgreSQL DB actualizado.\n- Archivo físico "${cleanName}" actualizado directamente en tu equipo.`);
       },
-      error: async (err) => {
+      error: async (err: any) => {
         console.error('Error al guardar en base de datos:', err);
         await this.eaExporterService.saveDirectlyToActiveFile(projectName, this.nodes, this.connectors);
         alert(`💾 Archivo físico ${projectName}.eap actualizado.`);
@@ -889,25 +908,42 @@ export class EditorComponent implements OnInit, OnDestroy {
     const imported = this.eaImporterService.parseXMI(fileName, xmlContent);
     const projName = imported.projectName || fileName.replace(/\.(eap|xmi|xml|eapx)$/i, '');
 
+    // Deduplicate project list in UI dropdown
+    const seenNames = new Set<string>();
+    this.projects = this.projects.filter(p => {
+      const lower = p.name.toLowerCase();
+      if (seenNames.has(lower)) return false;
+      seenNames.add(lower);
+      return true;
+    });
+    this.saveProjectsCache();
+
     // Check if a project with this exact name already exists in user's projects list
     const existing = this.projects.find(p => p.name.toLowerCase() === projName.toLowerCase());
 
     const handleImportNodes = async (proj: Project) => {
+      if (proj && proj.id) {
+        this.diagramService.clearLocalSnapshot(proj.id);
+        try {
+          await this.diagramService.purgeDiagram(proj.id).toPromise();
+        } catch (e) {}
+      }
+
       await this.onSelectProject(proj);
+
       const nodesToImport = imported.nodes || [];
       const connectorsToImport = imported.connectors || [];
 
       if (nodesToImport.length > 0 || connectorsToImport.length > 0) {
         (this.diagramService as any).nodesSubject.next(nodesToImport);
         (this.diagramService as any).connectorsSubject.next(connectorsToImport);
+        this.diagramService.saveDiagramLocalSnapshot(proj.id, nodesToImport, connectorsToImport);
 
         // Auto-save imported nodes and connectors to PostgreSQL with UUID mapping
-        setTimeout(() => {
-          this.diagramService.saveCurrentDiagram().subscribe({
-            next: () => console.log('Diagrama de archivo importado guardado exitosamente.'),
-            error: (err) => console.error('Error al guardar diagrama importado:', err)
-          });
-        }, 300);
+        this.diagramService.saveCurrentDiagram().subscribe({
+          next: () => console.log('Diagrama de archivo importado guardado exitosamente.'),
+          error: (err: any) => console.error('Error al guardar diagrama importado:', err)
+        });
       }
     };
 
@@ -934,8 +970,10 @@ export class EditorComponent implements OnInit, OnDestroy {
           this.projects.push(fallbackProj);
           this.saveProjectsCache();
           this.currentProject = fallbackProj;
+          this.diagramService.clearLocalSnapshot(fallbackProj.id);
           (this.diagramService as any).nodesSubject.next(imported.nodes || []);
           (this.diagramService as any).connectorsSubject.next(imported.connectors || []);
+          this.diagramService.saveDiagramLocalSnapshot(fallbackProj.id, imported.nodes || [], imported.connectors || []);
         }
       });
     }
