@@ -14,11 +14,12 @@ import { ProjectService, Project } from '../../core/services/project.service';
       <div class="navbar-left">
         <div class="brand">
           <div class="brand-logo">
-            <span class="logo-icon">❖</span>
+            <img src="/assets/images/Logores.png" (error)="onLogoError($event)" alt="ClassForge Logo" class="brand-logo-img" />
           </div>
           <span class="brand-name">ClassForge</span>
           <span class="badge badge-cyan">UML v2.5</span>
         </div>
+
 
         <div class="project-selector-wrapper">
           <button class="btn btn-ghost project-btn" (click)="toggleProjectMenu()">
@@ -328,7 +329,14 @@ import { ProjectService, Project } from '../../core/services/project.service';
       color: #000;
       font-weight: bold;
       box-shadow: 0 0 12px var(--cyan-glow);
+      overflow: hidden;
     }
+    .brand-logo-img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
     .brand-name {
       font-weight: 700;
       font-size: 15px;
@@ -913,7 +921,22 @@ export class NavbarComponent implements OnInit, OnDestroy {
   @Output() projectInvited = new EventEmitter<void>();
 
 
+  onLogoError(event: any): void {
+    const img = event.target as HTMLImageElement;
+    if (img.src.endsWith('Logores.png')) {
+      img.src = '/assets/images/logo.png';
+    } else if (img.src.endsWith('logo.png')) {
+      img.src = '/assets/images/logo.avif';
+    } else if (img.src.endsWith('logo.avif')) {
+      img.style.display = 'none';
+      if (img.parentElement) {
+        img.parentElement.innerHTML = '<span class="logo-icon">❖</span>';
+      }
+    }
+  }
+
   showProjectMenu = false;
+
   showUserMenu = false;
   showNewModal = false;
   showInviteModal = false;

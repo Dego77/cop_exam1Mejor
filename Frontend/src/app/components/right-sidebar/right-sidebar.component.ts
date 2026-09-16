@@ -27,18 +27,19 @@ import { AuthService } from '../../core/services/auth.service';
         <button 
           class="tab-btn" 
           [class.active]="activeTab === 'AI'"
-          (click)="activeTab = 'AI'"
+          (click)="selectTab('AI')"
         >
           <span>Agente IA</span>
         </button>
         <button 
           class="tab-btn" 
           [class.active]="activeTab === 'CODE'"
-          (click)="activeTab = 'CODE'"
+          (click)="selectTab('CODE')"
         >
           <span>Code & Sync</span>
         </button>
       </div>
+
 
       <!-- TAB 1: AI AGENT MULTIMODAL -->
       <div class="tab-content" *ngIf="activeTab === 'AI'">
@@ -220,9 +221,35 @@ import { AuthService } from '../../core/services/auth.service';
 
       </div>
 
-      <!-- TAB 2: CODE & SYNC (Limpio para nuevas herramientas) -->
+      <!-- TAB 2: CODE & SYNC (Visor de JSON Canónico) -->
       <div class="tab-content" *ngIf="activeTab === 'CODE'">
+        <div class="code-viewer-card glass-panel">
+          <div class="code-viewer-header">
+            <div class="code-title-wrap">
+              <span class="code-icon">⚡</span>
+              <span class="code-title">Esquema JSON Canónico</span>
+            </div>
+            <span class="status-badge-cyan">PostgreSQL / JSON</span>
+          </div>
+
+          <div class="code-box">
+            <pre class="json-code"><code>{{ jsonCodeString || 'Cargando esquema JSON del lienzo...' }}</code></pre>
+          </div>
+
+          <div class="code-actions">
+            <button class="btn btn-ghost btn-xs" (click)="copyJsonToClipboard()">
+              <span>📋 {{ isCopied ? '¡Copiado!' : 'Copiar' }}</span>
+            </button>
+            <button class="btn btn-ghost btn-xs" (click)="refreshCanonicalJson()">
+              <span>🔄 Actualizar</span>
+            </button>
+            <button class="btn btn-primary btn-xs" (click)="downloadJsonFile()">
+              <span>💾 Descargar</span>
+            </button>
+          </div>
+        </div>
       </div>
+
 
       <!-- Bottom Logout Button Section -->
       <div class="sidebar-footer">
@@ -653,6 +680,65 @@ import { AuthService } from '../../core/services/auth.service';
       background: var(--cyan);
       box-shadow: 0 0 10px rgba(0, 212, 255, 0.8);
     }
+    .code-viewer-card {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      gap: 10px;
+      padding: 12px;
+      background: var(--bg-card);
+      border: 1px solid rgba(0, 212, 255, 0.3);
+      border-radius: var(--radius-md);
+      box-sizing: border-box;
+    }
+    .code-viewer-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .code-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--cyan);
+    }
+    .status-badge-cyan {
+      background: rgba(0, 212, 255, 0.15);
+      color: var(--cyan);
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 99px;
+      border: 1px solid rgba(0, 212, 255, 0.3);
+    }
+    .code-box {
+      flex: 1;
+      background: #050811;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px;
+      overflow: auto;
+      max-height: calc(100vh - 240px);
+    }
+    .json-code {
+      margin: 0;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 13.5px;
+      font-weight: 500;
+      color: #34d399;
+      white-space: pre-wrap;
+      word-break: break-all;
+      line-height: 1.5;
+    }
+
+    .code-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
     .scanned-photo-card {
       margin-top: 12px;
       padding: 12px;
@@ -837,7 +923,60 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
   generatedSQL = '';
   sqlOpts = { fk: true, indexes: true, migrations: false, seed: false };
 
+  jsonCodeString = '';
+  isCopied = false;
+
+  selectTab(tab: 'AI' | 'CODE'): void {
+    this.activeTab = tab;
+    if (tab === 'CODE') {
+      this.refreshCanonicalJson();
+    }
+  }
+
+  refreshCanonicalJson(): void {
+    const nodes = this.diagramService.currentNodes;
+    const connectors = this.diagramService.currentConnectors;
+
+    this.projectService.exportCanonicalJson(this.projectId, nodes, connectors).subscribe({
+      next: (res) => {
+        this.jsonCodeString = JSON.stringify(res, null, 2);
+      },
+      error: () => {
+        const simpleSchema = {
+          projectName: 'DiagramaUML',
+          database: 'PostgreSQL',
+          entities: (nodes || []).map(n => ({
+            className: n.name,
+            attributes: n.attributes || [],
+            relationships: (connectors || []).filter(c => c.sourceNodeId === n.id)
+          }))
+        };
+        this.jsonCodeString = JSON.stringify(simpleSchema, null, 2);
+      }
+    });
+  }
+
+  copyJsonToClipboard(): void {
+    if (!this.jsonCodeString) return;
+    navigator.clipboard.writeText(this.jsonCodeString).then(() => {
+      this.isCopied = true;
+      setTimeout(() => this.isCopied = false, 2000);
+    });
+  }
+
+  downloadJsonFile(): void {
+    if (!this.jsonCodeString) return;
+    const blob = new Blob([this.jsonCodeString], { type: 'application/json' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `schema_${Date.now()}.json`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  }
+
   constructor(
+
     private aiService: AIAgentService, 
     private projectService: ProjectService,
     private diagramService: DiagramService,

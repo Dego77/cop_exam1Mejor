@@ -12,7 +12,10 @@ interface VideoTutorial {
   duration: string;
   description: string;
   icon: string;
+  videoUrl?: string;
+  isAvailable?: boolean;
 }
+
 
 @Component({
   selector: 'app-help',
@@ -43,7 +46,7 @@ interface VideoTutorial {
         <div class="left-section">
           <div class="section-header">
             <div class="section-title-wrap">
-              <span class="section-icon">📹</span>
+              <span class="section-icon"></span>
               <h2>Video Tutoriales & Guías del Sistema</h2>
             </div>
             <p class="section-subtitle">
@@ -64,11 +67,17 @@ interface VideoTutorial {
 
           <!-- TUTORIAL CARDS GRID -->
           <div class="tutorials-grid">
-            <div *ngFor="let video of filteredVideos" class="tutorial-card">
-              <div class="thumbnail-placeholder">
-                <span class="play-icon">▶</span>
+            <div 
+              *ngFor="let video of filteredVideos" 
+              class="tutorial-card"
+              [class.playable]="video.isAvailable"
+              (click)="openVideoModal(video)"
+            >
+              <div class="thumbnail-placeholder" [class.available-thumb]="video.isAvailable">
+                <span class="play-icon" [class.active-play]="video.isAvailable">▶</span>
                 <span class="duration-badge">{{ video.duration }}</span>
-                <span class="coming-soon-badge">Próximamente</span>
+                <span class="coming-soon-badge" *ngIf="!video.isAvailable">Próximamente</span>
+                <span class="available-badge" *ngIf="video.isAvailable">🟢 Ver Video</span>
               </div>
               <div class="card-content">
                 <div class="card-tag">{{ video.category }}</div>
@@ -78,6 +87,7 @@ interface VideoTutorial {
             </div>
           </div>
         </div>
+
 
         <!-- RIGHT COLUMN: AI SUPPORT CHATBOT -->
         <div class="right-section">
@@ -184,7 +194,36 @@ interface VideoTutorial {
         </div>
 
       </div>
+
+      <!-- MODAL REPRODUCTOR DE VIDEO TUTORIAL -->
+      <div class="video-modal-backdrop" *ngIf="activeVideo" (click)="closeVideoModal()">
+        <div class="modal-card glass-panel video-modal-card" (click)="$event.stopPropagation()">
+          <div class="ea-modal-header">
+            <span>📹 {{ activeVideo.title }}</span>
+            <button class="icon-btn text-muted" (click)="closeVideoModal()" style="border:none;background:none;cursor:pointer;font-size:16px;">✕</button>
+          </div>
+
+          <div class="video-player-box">
+            <video 
+              [src]="activeVideo.videoUrl" 
+              controls 
+              autoplay 
+              class="html5-video-player">
+              Tu navegador no soporta la reproducción de video HTML5.
+            </video>
+          </div>
+
+          <div class="video-modal-footer">
+            <div class="video-modal-info">
+              <span class="badge-cat">{{ activeVideo.category }}</span>
+              <p class="video-modal-desc">{{ activeVideo.description }}</p>
+            </div>
+            <button class="btn btn-ghost" (click)="closeVideoModal()">Cerrar</button>
+          </div>
+        </div>
+      </div>
     </div>
+
   `,
   styles: [`
     .help-container {
@@ -731,42 +770,52 @@ export class HelpComponent implements OnInit, OnDestroy {
   public videos: VideoTutorial[] = [
     {
       id: '1',
-      title: '🚀 Primeros Pasos en ClassForge',
+      title: 'Primeros Pasos & Iniciar Sesión',
       category: 'Primeros Pasos',
-      duration: '03:45',
-      description: 'Aprende a crear tu espacio de trabajo, navegar por la interfaz y configurar proyectos.',
-      icon: '▶'
+      duration: '00:18',
+      description: 'Aprende a crear tu espacio de trabajo, navegar por la interfaz e iniciar sesión.',
+      icon: '▶',
+      videoUrl: '/assets/videos/Iniciar%20sesion.mp4',
+      isAvailable: true
     },
     {
       id: '2',
-      title: '📐 Modelado UML: Clases y Relaciones',
+      title: 'Modelado UML: Clases y Relaciones',
       category: 'Diagramas UML',
       duration: '05:20',
       description: 'Guía paso a paso para crear clases, atributos, métodos y conectores de herencia o composición.',
-      icon: '▶'
+      icon: '▶',
+      isAvailable: false
     },
     {
       id: '3',
-      title: '💾 Generar Código SQL DDL & XMI',
+      title: 'Generar Código SQL DDL & XMI',
       category: 'Exportar SQL/XMI',
       duration: '04:10',
       description: 'Convierte tus diagramas de clases en scripts de base de datos relacional PostgreSQL con un clic.',
-      icon: '▶'
+      icon: '▶',
+      isAvailable: false
     },
     {
       id: '4',
-      title: '👥 Colaboración y Sesiones en Vivo',
+      title: 'Colaboración y Sesiones en Vivo',
       category: 'Colaboración',
-      duration: '02:50',
+      duration: '00:22',
       description: 'Cómo invitar a otros desarrolladores y sincronizar cambios en tiempo real mediante WebSockets.',
-      icon: '▶'
+      icon: '▶',
+      videoUrl: '/assets/videos/InvitarColaborador.mp4',
+      isAvailable: true
     }
   ];
+
+
+  activeVideo: VideoTutorial | null = null;
+
 
   constructor(
     private router: Router,
     private supportService: SupportAgentService
-  ) {}
+  ) { }
 
   ngOnInit(): void {
     this.sub = this.supportService.chatHistory$.subscribe(history => {
@@ -821,4 +870,15 @@ export class HelpComponent implements OnInit, OnDestroy {
     this.supportService.setHighlight(selector);
     this.router.navigate(['/editor']);
   }
+
+  openVideoModal(video: VideoTutorial): void {
+    if (video.isAvailable && video.videoUrl) {
+      this.activeVideo = video;
+    }
+  }
+
+  closeVideoModal(): void {
+    this.activeVideo = null;
+  }
 }
+
