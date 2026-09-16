@@ -83,4 +83,27 @@ export class ProjectService {
       { headers: this.headers }
     );
   }
+
+  exportCanonicalJson(projectId: string, nodes?: any[], connectors?: any[], projectName?: string): Observable<any> {
+    return this.http.post<any>(
+      `http://localhost:3000/api/architect/export-json`,
+      { projectId, nodes, connectors, projectName },
+      { headers: this.headers }
+    );
+  }
+
+  downloadSpringBootZip(projectId: string, nodes?: any[], connectors?: any[], projectName?: string): Observable<Blob> {
+    return this.http.post(
+      `http://localhost:3000/api/architect/generate-springboot`,
+      { projectId, nodes, connectors, projectName },
+      {
+        headers: new HttpHeaders({
+          Authorization: `Bearer ${this.auth.token}`,
+          'Content-Type': 'application/json'
+        }),
+        responseType: 'blob'
+      }
+    );
+  }
 }
+

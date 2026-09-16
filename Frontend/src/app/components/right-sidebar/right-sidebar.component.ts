@@ -192,7 +192,32 @@ import { AuthService } from '../../core/services/auth.service';
               </div>
             </div>
           </div>
+
+          <!-- SECCIÓN PERSISTENTE: Foto del Pizarrón Procesada por la IA -->
+          <div class="scanned-photo-card glass-panel" *ngIf="lastUploadedPhotoUrl">
+            <div class="scanned-header">
+              <span class="scanned-title">🖼️ Pizarrón Procesado por IA</span>
+              <span class="status-badge-green">🟢 Activo en Lienzo</span>
+            </div>
+
+            <div class="scanned-img-box" (click)="showFullImageModal = true">
+              <img [src]="lastUploadedPhotoUrl" class="scanned-img" title="Haz clic para ampliar" />
+              <div class="img-hover-overlay">
+                <span>🔍 Ampliar Imagen</span>
+              </div>
+            </div>
+
+            <div class="scanned-footer">
+              <button class="btn btn-ghost btn-xs" (click)="showFullImageModal = true">
+                <span>🔍 Ver en Grande</span>
+              </button>
+              <button class="btn btn-ghost btn-xs text-danger" (click)="lastUploadedPhotoUrl = null">
+                <span>🗑️ Quitar</span>
+              </button>
+            </div>
+          </div>
         </div>
+
       </div>
 
       <!-- TAB 2: CODE & SYNC (Limpio para nuevas herramientas) -->
@@ -205,7 +230,24 @@ import { AuthService } from '../../core/services/auth.service';
           <span>🚪 Cerrar Sesión</span>
         </button>
       </div>
+
+      <!-- Modal para Ver Imagen Completa del Pizarrón -->
+      <div class="modal-backdrop" *ngIf="showFullImageModal" (click)="showFullImageModal = false">
+        <div class="modal-card glass-panel full-img-modal-card" (click)="$event.stopPropagation()">
+          <div class="ea-modal-header">
+            <span>🖼️ Foto del Pizarrón Escaneado por la IA</span>
+            <button class="icon-btn text-muted" (click)="showFullImageModal = false" style="border:none;background:none;cursor:pointer;font-size:16px;">✕</button>
+          </div>
+          <div class="full-img-body">
+            <img [src]="lastUploadedPhotoUrl" class="full-size-img" />
+          </div>
+          <div class="ea-modal-footer">
+            <button class="btn btn-ghost" (click)="showFullImageModal = false">Cerrar</button>
+          </div>
+        </div>
+      </div>
     </aside>
+
   `,
   styles: [`
     :host {
@@ -611,6 +653,100 @@ import { AuthService } from '../../core/services/auth.service';
       background: var(--cyan);
       box-shadow: 0 0 10px rgba(0, 212, 255, 0.8);
     }
+    .scanned-photo-card {
+      margin-top: 12px;
+      padding: 12px;
+      background: var(--bg-card);
+      border: 1px solid rgba(0, 212, 255, 0.4);
+      border-radius: var(--radius-md);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .scanned-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .scanned-title {
+      color: var(--cyan);
+    }
+    .status-badge-green {
+      background: rgba(16, 185, 129, 0.2);
+      color: #10b981;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 99px;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+    .scanned-img-box {
+      width: 100%;
+      max-height: 180px;
+      position: relative;
+      overflow: hidden;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: #000;
+      cursor: pointer;
+    }
+    .scanned-img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    .img-hover-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      color: var(--cyan);
+      font-weight: 700;
+      font-size: 12px;
+    }
+    .scanned-img-box:hover .img-hover-overlay {
+      opacity: 1;
+    }
+    .scanned-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .btn-xs {
+      padding: 3px 8px;
+      font-size: 11px;
+    }
+    .full-img-modal-card {
+      width: 85vw;
+      max-width: 900px;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      gap: 12px;
+    }
+    .full-img-body {
+      flex: 1;
+      overflow: auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+      border-radius: var(--radius-sm);
+      max-height: 70vh;
+      padding: 8px;
+    }
+    .full-size-img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+
   `]
 })
 export class RightSidebarComponent implements OnInit, OnDestroy {
@@ -667,7 +803,10 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
 
   selectedFile: File | null = null;
   photoPreview: string | null = null;
+  lastUploadedPhotoUrl: string | null = null;
+  showFullImageModal = false;
   isDraggingPhoto = false;
+
 
   availableAgents = [
     { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', provider: 'Google GenAI (Predeterminado)' },
@@ -1014,8 +1153,10 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
             timestamp: new Date()
           });
           this.speakText(msg);
+          this.lastUploadedPhotoUrl = this.photoPreview;
           this.photoPreview = null;
           this.selectedFile = null;
+
           this.diagramUpdated.emit();
           if (this.projectId) {
             this.wsService.emitDiagramReloaded(this.projectId);

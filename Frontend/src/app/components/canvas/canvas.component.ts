@@ -194,7 +194,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
 
             <!-- Association Class Dashed Connecting Line -->
             <line 
-              *ngIf="conn.associationClassNodeId"
+              *ngIf="getAssocClassNode(conn)"
               [attr.x1]="getConnectorMidX(conn)" 
               [attr.y1]="getConnectorMidY(conn)" 
               [attr.x2]="getAssocClassTopX(conn)" 
@@ -204,6 +204,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
               stroke-dasharray="5 5" 
               style="filter: drop-shadow(0 0 6px rgba(0,212,255,0.8));"
             />
+
           </ng-container>
 
           <!-- Reflexive / Self Association Loop Connectors -->
@@ -1903,19 +1904,52 @@ export class CanvasComponent {
     return (sep.y + tep.y) / 2;
   }
 
+  getAssocClassNode(conn: UMLConnector): UMLNode | undefined {
+    if (!conn) return undefined;
+
+    // 1. Direct ID resolution
+    if (conn.associationClassNodeId) {
+      const node = this.findNode(conn.associationClassNodeId);
+      if (node) return node;
+    }
+
+    // 2. Stereotype and Name resolution (AI, EA Import, DB reloaded)
+    if (conn.type === 'AssociationClass' || conn.associationClassNodeId) {
+      const source = this.findNode(conn.sourceNodeId);
+      const target = this.findNode(conn.targetNodeId);
+
+      if (source && target) {
+        const name1 = `${source.name}_${target.name}`.toLowerCase();
+        const name2 = `${target.name}_${source.name}`.toLowerCase();
+
+        const match = this.nodes?.find(n => 
+          n.stereotype === 'AssociationClass' && 
+          (n.name?.toLowerCase() === name1 || n.name?.toLowerCase() === name2)
+        );
+
+        if (match) return match;
+      }
+
+      // Fallback: any AssociationClass node on canvas
+      const anyAssoc = this.nodes?.find(n => n.stereotype === 'AssociationClass');
+      if (anyAssoc) return anyAssoc;
+    }
+
+    return undefined;
+  }
+
   getAssocClassTopX(conn: UMLConnector): number {
-    if (!conn.associationClassNodeId) return 0;
-    const node = this.findNode(conn.associationClassNodeId);
-    if (!node) return 0;
+    const node = this.getAssocClassNode(conn);
+    if (!node) return this.getConnectorMidX(conn);
     return node.positionX + (node.width || 230) / 2;
   }
 
   getAssocClassTopY(conn: UMLConnector): number {
-    if (!conn.associationClassNodeId) return 0;
-    const node = this.findNode(conn.associationClassNodeId);
-    if (!node) return 0;
+    const node = this.getAssocClassNode(conn);
+    if (!node) return this.getConnectorMidY(conn);
     return node.positionY + (node.height || 160) / 2;
   }
+
 
   getSourceEndpoint(conn: UMLConnector): { x: number; y: number; angle: number } {
     const source = this.findNode(conn.sourceNodeId);

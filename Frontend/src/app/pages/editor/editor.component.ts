@@ -39,8 +39,11 @@ import { Subscription } from 'rxjs';
         (saveProjectEvent)="onSaveProject()"
         (exportXMI)="onExportXMI()"
         (exportSQL)="onExportSQL()"
+        (exportJSON)="onExportJSON()"
+        (exportBackend)="onExportBackend()"
         (projectInvited)="onProjectInvited()"
       ></app-navbar>
+
 
       <!-- Main Workspace (3 columns) -->
       <div class="workspace-container">
@@ -845,6 +848,48 @@ export class EditorComponent implements OnInit, OnDestroy {
       }
     });
   }
+
+  onExportJSON(): void {
+    const projectId = this.currentProject?.id || '';
+    const projectName = this.currentProject?.name || 'diagrama_esquema';
+
+    this.projectService.exportCanonicalJson(projectId, this.nodes, this.connectors, projectName).subscribe({
+      next: (jsonRes) => {
+        const str = JSON.stringify(jsonRes, null, 2);
+        const blob = new Blob([str], { type: 'application/json' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${projectName.toLowerCase()}_schema.json`;
+        a.click();
+      },
+      error: (err) => {
+        console.error('Error exportando JSON:', err);
+        alert('Error al generar el esquema JSON del diagrama.');
+      }
+    });
+  }
+
+  onExportBackend(): void {
+    const projectId = this.currentProject?.id || '';
+    const projectName = this.currentProject?.name || 'ExamenBackend';
+
+    this.projectService.downloadSpringBootZip(projectId, this.nodes, this.connectors, projectName).subscribe({
+      next: (blob: Blob) => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${projectName.toLowerCase()}_springboot.zip`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+      },
+      error: (err) => {
+        console.error('Error generando Backend Spring Boot:', err);
+        alert('Error al empaquetar el proyecto Spring Boot en ZIP.');
+      }
+    });
+  }
+
 
   onAIDiagramUpdated(): void {
     // Canvas nodes and connectors are reactively updated by AIAgentService and DiagramService

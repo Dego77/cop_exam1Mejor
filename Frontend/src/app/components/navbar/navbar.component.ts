@@ -39,6 +39,15 @@ import { ProjectService, Project } from '../../core/services/project.service';
           <span>❓ Ayuda</span>
         </button>
 
+        <button class="btn json-btn" (click)="exportJSON.emit()" title="Generar esquema JSON del diagrama">
+          <span>⚡ Generar JSON</span>
+        </button>
+
+        <button class="btn spring-btn" (click)="exportBackend.emit()" title="Generar y descargar Backend Spring Boot (.ZIP)">
+          <span>🚀 Generar Backend</span>
+        </button>
+
+
           <div class="dropdown-menu" *ngIf="showProjectMenu">
             <div class="dropdown-header">MIS PROYECTOS</div>
             <div class="projects-list-container">
@@ -398,6 +407,51 @@ import { ProjectService, Project } from '../../core/services/project.service';
       transform: translateY(-1px);
       box-shadow: 0 4px 12px rgba(139, 92, 246, 0.5);
     }
+    .json-btn {
+      background: rgba(16, 185, 129, 0.25) !important;
+      color: #34d399 !important;
+      font-weight: 700 !important;
+      border: 1px solid rgba(16, 185, 129, 0.5) !important;
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+      margin-left: 4px;
+    }
+    .json-btn:hover {
+      background: rgba(16, 185, 129, 0.45) !important;
+      border-color: #34d399 !important;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.5);
+    }
+    .spring-btn {
+      background: rgba(239, 68, 68, 0.25) !important;
+      color: #f87171 !important;
+      font-weight: 700 !important;
+      border: 1px solid rgba(239, 68, 68, 0.5) !important;
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      box-shadow: 0 2px 8px rgba(239, 68, 68, 0.25);
+      margin-left: 4px;
+    }
+    .spring-btn:hover {
+      background: rgba(239, 68, 68, 0.45) !important;
+      border-color: #f87171 !important;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.5);
+    }
+
     .project-title {
       font-weight: 600;
       max-width: 180px;
@@ -854,7 +908,10 @@ export class NavbarComponent implements OnInit, OnDestroy {
   @Output() saveProjectEvent = new EventEmitter<void>();
   @Output() exportXMI = new EventEmitter<void>();
   @Output() exportSQL = new EventEmitter<void>();
+  @Output() exportJSON = new EventEmitter<void>();
+  @Output() exportBackend = new EventEmitter<void>();
   @Output() projectInvited = new EventEmitter<void>();
+
 
   showProjectMenu = false;
   showUserMenu = false;
