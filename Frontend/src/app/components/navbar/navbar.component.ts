@@ -28,25 +28,78 @@ import { ProjectService, Project } from '../../core/services/project.service';
             <span class="arrow-down">▼</span>
           </button>
 
-        <button class="btn open-file-btn" (click)="openFileEvent.emit()" title="Abrir proyecto Enterprise Architect (*.eap)">
-          <span>📂 Open File</span>
-        </button>
+        <!-- Toolbar cápsula de cristal unificada (Estilo IDE Pro / Imagen 2) -->
+        <div class="action-pill-bar">
+          <button 
+            class="pill-btn" 
+            [class.active-cyan]="activeAction === 'open'"
+            (click)="selectAction('open', 'open')" 
+            title="Abrir proyecto Enterprise Architect (*.eap)"
+          >
+            <svg class="pill-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span class="pill-label">Abrir</span>
+          </button>
 
-        <button class="btn save-file-btn" (click)="saveProjectEvent.emit()" title="Guardar cambios del diagrama en la base de datos">
-          <span>💾 Guardar</span>
-        </button>
+          <button 
+            class="pill-btn" 
+            [class.active-cyan]="activeAction === 'save'"
+            (click)="selectAction('save', 'save')" 
+            title="Guardar cambios del diagrama en la base de datos"
+          >
+            <svg class="pill-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+              <polyline points="17 21 17 13 7 13 7 21"></polyline>
+              <polyline points="7 3 7 8 15 8"></polyline>
+            </svg>
+            <span class="pill-label">Guardar</span>
+          </button>
 
-        <button class="btn help-btn" (click)="openHelpView()" title="Ir a la interfaz de Ayuda">
-          <span>❓ Ayuda</span>
-        </button>
+          <div class="pill-divider"></div>
 
-        <button class="btn json-btn" (click)="exportJSON.emit()" title="Generar esquema JSON del diagrama">
-          <span>⚡ Generar JSON</span>
-        </button>
+          <button 
+            class="pill-btn" 
+            [class.active-cyan]="activeAction === 'json'"
+            (click)="selectAction('json', 'json')" 
+            title="Generar esquema JSON del diagrama"
+          >
+            <svg class="pill-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1"></path>
+              <path d="M16 3h1a2 2 0 0 1 2 2v5a2 2 0 0 0 2 2 2 2 0 0 0-2 2v5a2 2 0 0 1-2 2h-1"></path>
+            </svg>
+            <span class="pill-label">Exportar JSON</span>
+          </button>
 
-        <button class="btn spring-btn" (click)="exportBackend.emit()" title="Generar y descargar Backend Spring Boot (.ZIP)">
-          <span>🚀 Generar Backend</span>
-        </button>
+          <button 
+            class="pill-btn" 
+            [class.active-cyan]="activeAction === 'backend'"
+            (click)="selectAction('backend', 'backend')" 
+            title="Generar y descargar Backend Spring Boot (.ZIP)"
+          >
+            <svg class="pill-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+            </svg>
+            <span class="pill-label">Generar backend</span>
+          </button>
+
+          <div class="pill-divider"></div>
+
+          <button 
+            class="pill-btn icon-only" 
+            [class.active-cyan]="activeAction === 'help'"
+            (click)="selectAction('help', 'help')" 
+            title="Ir a la interfaz de Ayuda"
+          >
+            <svg class="pill-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+              <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+          </button>
+        </div>
 
 
           <div class="dropdown-menu" *ngIf="showProjectMenu">
@@ -225,7 +278,7 @@ import { ProjectService, Project } from '../../core/services/project.service';
             <div class="dropdown-header">{{ currentUser?.email }}</div>
             <div class="dropdown-divider"></div>
             <button class="dropdown-item text-danger" (click)="logout()">
-              <span>🚪 Cerrar Sesión</span>
+              <span>Cerrar Sesión</span>
             </button>
           </div>
         </div>
@@ -351,113 +404,78 @@ import { ProjectService, Project } from '../../core/services/project.service';
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
     }
-    .open-file-btn {
-      background: #f59e0b !important;
-      color: #0f172a !important;
-      font-weight: 700 !important;
-      border: 1px solid #d97706 !important;
+    /* Toolbar Cápsula de Cristal Unificada (Imagen 1) */
+    .action-pill-bar {
+      display: inline-flex;
+      align-items: center;
+      background: rgba(10, 14, 26, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 3px 6px;
+      margin-left: 12px;
+      gap: 2px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(12px);
+    }
+
+    .pill-btn {
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #94a3b8;
+      font-size: 12px;
+      font-weight: 500;
       padding: 6px 12px;
-      border-radius: var(--radius-sm);
+      border-radius: 8px;
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      font-size: 12px;
       cursor: pointer;
-      transition: all 0.15s ease;
-      box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
-      margin-left: 8px;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      user-select: none;
     }
-    .open-file-btn:hover {
-      background: #fbbf24 !important;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+
+    .pill-svg {
+      width: 15px;
+      height: 15px;
+      stroke: currentColor;
+      flex-shrink: 0;
+      transition: stroke 0.2s ease, transform 0.15s ease;
     }
-    .save-file-btn {
-      background: #10b981 !important;
-      color: #0f172a !important;
+
+    .pill-btn:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: #f1f5f9;
+    }
+
+    .pill-btn:hover .pill-svg {
+      stroke: #f1f5f9;
+    }
+
+    /* Selección Dinámica Cyan Pill (Imagen 2) */
+    .pill-btn.active-cyan,
+    .pill-btn.active-cyan:hover {
+      background: linear-gradient(135deg, #22d3ee 0%, #06b6d4 100%) !important;
+      color: #04202a !important;
       font-weight: 700 !important;
-      border: 1px solid #059669 !important;
-      padding: 6px 12px;
-      border-radius: var(--radius-sm);
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
-      margin-left: 4px;
+      box-shadow: 0 0 16px rgba(34, 211, 238, 0.4), 0 2px 8px rgba(6, 182, 212, 0.3) !important;
     }
-    .save-file-btn:hover {
-      background: #34d399 !important;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+
+    .pill-btn.active-cyan .pill-svg,
+    .pill-btn.active-cyan:hover .pill-svg {
+      stroke: #04202a !important;
     }
-    .help-btn {
-      background: rgba(139, 92, 246, 0.25) !important;
-      color: #a78bfa !important;
-      font-weight: 700 !important;
-      border: 1px solid rgba(139, 92, 246, 0.5) !important;
-      padding: 6px 12px;
-      border-radius: var(--radius-sm);
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      box-shadow: 0 2px 8px rgba(139, 92, 246, 0.25);
-      margin-left: 4px;
+
+    .pill-btn.icon-only {
+      padding: 6px 8px;
+      border-radius: 50%;
     }
-    .help-btn:hover {
-      background: rgba(139, 92, 246, 0.45) !important;
-      border-color: #a78bfa !important;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(139, 92, 246, 0.5);
-    }
-    .json-btn {
-      background: rgba(16, 185, 129, 0.25) !important;
-      color: #34d399 !important;
-      font-weight: 700 !important;
-      border: 1px solid rgba(16, 185, 129, 0.5) !important;
-      padding: 6px 12px;
-      border-radius: var(--radius-sm);
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
-      margin-left: 4px;
-    }
-    .json-btn:hover {
-      background: rgba(16, 185, 129, 0.45) !important;
-      border-color: #34d399 !important;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.5);
-    }
-    .spring-btn {
-      background: rgba(239, 68, 68, 0.25) !important;
-      color: #f87171 !important;
-      font-weight: 700 !important;
-      border: 1px solid rgba(239, 68, 68, 0.5) !important;
-      padding: 6px 12px;
-      border-radius: var(--radius-sm);
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      box-shadow: 0 2px 8px rgba(239, 68, 68, 0.25);
-      margin-left: 4px;
-    }
-    .spring-btn:hover {
-      background: rgba(239, 68, 68, 0.45) !important;
-      border-color: #f87171 !important;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.5);
+
+    .pill-divider {
+      width: 1px;
+      height: 16px;
+      background: rgba(255, 255, 255, 0.08);
+      margin: 0 3px;
     }
 
     .project-title {
@@ -920,6 +938,17 @@ export class NavbarComponent implements OnInit, OnDestroy {
   @Output() exportBackend = new EventEmitter<void>();
   @Output() projectInvited = new EventEmitter<void>();
 
+
+  activeAction: string = 'backend';
+
+  selectAction(action: string, trigger?: string): void {
+    this.activeAction = action;
+    if (trigger === 'open') this.openFileEvent.emit();
+    else if (trigger === 'save') this.saveProjectEvent.emit();
+    else if (trigger === 'json') this.exportJSON.emit();
+    else if (trigger === 'backend') this.exportBackend.emit();
+    else if (trigger === 'help') this.openHelpView();
+  }
 
   onLogoError(event: any): void {
     const img = event.target as HTMLImageElement;

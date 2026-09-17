@@ -254,7 +254,7 @@ import { AuthService } from '../../core/services/auth.service';
       <!-- Bottom Logout Button Section -->
       <div class="sidebar-footer">
         <button class="btn logout-btn" (click)="logout()">
-          <span>🚪 Cerrar Sesión</span>
+          <span>Cerrar Sesión</span>
         </button>
       </div>
 
@@ -331,11 +331,14 @@ import { AuthService } from '../../core/services/auth.service';
       display: flex;
       flex-direction: column;
       gap: 8px;
-      height: 100%;
+      min-height: 0;
       width: 100%;
+      overflow: hidden;
     }
     .chat-messages {
       flex: 1;
+      min-height: 0;
+      max-height: calc(100vh - 320px);
       background: var(--bg-darkest);
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
@@ -345,7 +348,13 @@ import { AuthService } from '../../core/services/auth.service';
       flex-direction: column;
       gap: 10px;
       width: 100%;
-      min-height: 250px;
+    }
+    .chat-messages::-webkit-scrollbar { width: 4px; }
+    .chat-messages::-webkit-scrollbar-track { background: transparent; }
+    .chat-messages::-webkit-scrollbar-thumb {
+      background: var(--cyan);
+      border-radius: 99px;
+      opacity: 0.5;
     }
     .chat-welcome {
       text-align: center;

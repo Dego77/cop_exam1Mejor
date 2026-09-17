@@ -161,7 +161,7 @@ CRITICAL RULES:
     } catch (error: any) {
       console.error('AI Text Error:', error?.message || error);
       return {
-        message: 'Instrucción procesada y diagrama actualizado en el proyecto activo.',
+        message: 'No se pudo conectar con el servicio de IA. Verifica la clave API y vuelve a intentarlo.',
         action: 'GENERAL_RESPONSE',
       };
     }

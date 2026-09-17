@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -300,6 +300,7 @@ interface VideoTutorial {
     /* BODY GRID */
     .help-body {
       flex: 1;
+      min-height: 0;
       display: grid;
       grid-template-columns: 1fr 440px;
       gap: 20px;
@@ -457,6 +458,7 @@ interface VideoTutorial {
     /* RIGHT SECTION: CHATBOT */
     .right-section {
       height: 100%;
+      min-height: 0;
     }
     .chat-card {
       height: 100%;
@@ -560,12 +562,16 @@ interface VideoTutorial {
     /* CHAT MESSAGES */
     .chat-messages {
       flex: 1;
+      min-height: 0;
       padding: 16px;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
       gap: 14px;
     }
+    .chat-messages::-webkit-scrollbar { width: 5px; }
+    .chat-messages::-webkit-scrollbar-track { background: transparent; }
+    .chat-messages::-webkit-scrollbar-thumb { background: #00d4ff; border-radius: 99px; }
     .message-wrapper {
       display: flex;
       gap: 10px;
@@ -812,6 +818,8 @@ export class HelpComponent implements OnInit, OnDestroy {
   activeVideo: VideoTutorial | null = null;
 
 
+  @ViewChild('scrollContainer') private scrollContainer?: ElementRef;
+
   constructor(
     private router: Router,
     private supportService: SupportAgentService
@@ -820,6 +828,7 @@ export class HelpComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.sub = this.supportService.chatHistory$.subscribe(history => {
       this.messages = history;
+      setTimeout(() => this.scrollToBottom(), 50);
     });
 
     this.supportService.isInteractiveMode$.subscribe(mode => {
@@ -829,6 +838,14 @@ export class HelpComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     if (this.sub) this.sub.unsubscribe();
+  }
+
+  private scrollToBottom(): void {
+    try {
+      if (this.scrollContainer?.nativeElement) {
+        this.scrollContainer.nativeElement.scrollTop = this.scrollContainer.nativeElement.scrollHeight;
+      }
+    } catch (_) {}
   }
 
   get filteredVideos(): VideoTutorial[] {
