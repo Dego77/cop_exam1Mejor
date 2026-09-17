@@ -48,20 +48,43 @@ RESPOND ALWAYS WITH A VALID JSON OBJECT matching this exact structure:
 Plain JSON output only, no markdown code block markers.
 `;
 
-      const targetModel = (model && !model.includes('2.5')) ? model : 'gemini-3.6-flash';
+      const primaryModel = (model && !model.includes('2.5') && !model.includes('pro')) ? model : 'gemini-3.6-flash';
+      const modelsToTry = [primaryModel, 'gemini-3.5-flash', 'gemini-flash-latest'].filter((v, i, a) => a.indexOf(v) === i);
 
-      const response = await ai.models.generateContent({
-        model: targetModel,
-        contents: prompt,
-        config: {
-          systemInstruction: supportInstruction,
-          temperature: 0.3,
-        },
-      });
+      for (const targetModel of modelsToTry) {
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            const response = await ai.models.generateContent({
+              model: targetModel,
+              contents: prompt,
+              config: {
+                systemInstruction: supportInstruction,
+                temperature: 0.3,
+              },
+            });
 
-      const responseText = response.text || '';
-      const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-      return JSON.parse(cleanJson);
+            const responseText = response.text || '';
+            const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+            const parsed = JSON.parse(cleanJson);
+            if (parsed && typeof parsed === 'object') {
+              return parsed;
+            }
+          } catch (err: any) {
+            console.warn(`Support AI model ${targetModel} attempt ${attempt} failed:`, err?.message || err);
+            const isTransient = err?.status === 'UNAVAILABLE' ||
+                                err?.status === 'RESOURCE_EXHAUSTED' ||
+                                err?.message?.includes('503') ||
+                                err?.message?.includes('429');
+            if (attempt < 2 && isTransient) {
+              await new Promise(r => setTimeout(r, 1200));
+              continue;
+            }
+            break;
+          }
+        }
+      }
+
+      throw new Error('Modelos de Support AI temporalmente no disponibles.');
     } catch (err: any) {
       console.error('Support AI Error:', err?.message || err);
       return {
