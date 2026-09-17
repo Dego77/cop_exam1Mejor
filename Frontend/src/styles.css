@@ -319,3 +319,35 @@ html, body {
   transition: opacity 0.15s ease;
   z-index: 100;
 }
+
+/* =====================================================
+   ClassForge Spotlight Highlight Effect (Tutor AI)
+   ===================================================== */
+@keyframes spotlightPulse {
+  0% {
+    outline: 3px solid #00d4ff;
+    outline-offset: 3px;
+    box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.8), 0 0 25px rgba(0, 212, 255, 0.6);
+    transform: scale(1);
+  }
+  50% {
+    outline: 3px solid #38bdf8;
+    outline-offset: 6px;
+    box-shadow: 0 0 0 14px rgba(0, 212, 255, 0), 0 0 35px rgba(0, 212, 255, 0.9);
+    transform: scale(1.05);
+  }
+  100% {
+    outline: 3px solid #00d4ff;
+    outline-offset: 3px;
+    box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.8), 0 0 25px rgba(0, 212, 255, 0.6);
+    transform: scale(1);
+  }
+}
+
+.classforge-spotlight-active {
+  animation: spotlightPulse 1.2s infinite ease-in-out !important;
+  z-index: 9999 !important;
+  position: relative !important;
+  transition: all 0.3s ease !important;
+}
+

@@ -12,6 +12,7 @@ import { EaExporterService } from '../../core/services/ea-exporter.service';
 import { EaImporterService } from '../../core/services/ea-importer.service';
 import { WebSocketService, CursorData } from '../../core/services/websocket.service';
 import { AuthService } from '../../core/services/auth.service';
+import { SupportAgentService } from '../../core/services/support-agent.service';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -136,6 +137,7 @@ export class EditorComponent implements OnInit, OnDestroy {
     private eaExporterService: EaExporterService,
     private eaImporterService: EaImporterService,
     private wsService: WebSocketService,
+    private supportService: SupportAgentService,
     private route: ActivatedRoute,
     private router: Router
   ) {}
@@ -148,6 +150,15 @@ export class EditorComponent implements OnInit, OnDestroy {
     }
 
     this.wsService.connect();
+
+    // Subscribe to Support AI Element Highlight / Spotlight
+    this.subs.add(
+      this.supportService.highlightSelector$.subscribe(selector => {
+        if (selector) {
+          this.triggerSpotlight(selector);
+        }
+      })
+    );
 
     // Subscribe to Diagram changes
     this.subs.add(
@@ -1034,5 +1045,29 @@ export class EditorComponent implements OnInit, OnDestroy {
         }
       });
     }
+  }
+
+  private triggerSpotlight(selector: string): void {
+    let attempts = 0;
+    const interval = setInterval(() => {
+      attempts++;
+      const el = document.querySelector(selector) as HTMLElement;
+      if (el) {
+        clearInterval(interval);
+        try {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+        } catch (_) {}
+
+        el.classList.add('classforge-spotlight-active');
+
+        setTimeout(() => {
+          el.classList.remove('classforge-spotlight-active');
+          this.supportService.clearHighlight();
+        }, 5000);
+      } else if (attempts >= 8) {
+        clearInterval(interval);
+        this.supportService.clearHighlight();
+      }
+    }, 250);
   }
 }

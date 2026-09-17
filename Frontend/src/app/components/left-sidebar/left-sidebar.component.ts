@@ -7,7 +7,7 @@ import { UMLNode } from '../../core/services/diagram.service';
   standalone: true,
   imports: [CommonModule],
   template: `
-    <aside class="left-sidebar">
+    <aside class="left-sidebar" id="left-sidebar-uml">
       <!-- Vertical Resizer Handle Bar (ew-resize) -->
       <div 
         class="sidebar-resizer-left" 

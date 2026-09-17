@@ -144,7 +144,7 @@ interface VideoTutorial {
                   <button 
                     *ngIf="msg.targetSelector && isInteractiveMode" 
                     class="highlight-action-btn"
-                    (click)="highlightElement(msg.targetSelector)">
+                    (click)="highlightElement(msg.targetSelector, msg)">
                     🎯 Señalar herramienta en pantalla
                   </button>
 
@@ -786,21 +786,23 @@ export class HelpComponent implements OnInit, OnDestroy {
     },
     {
       id: '2',
-      title: 'Modelado UML: Clases y Relaciones',
-      category: 'Diagramas UML',
-      duration: '05:20',
-      description: 'Guía paso a paso para crear clases, atributos, métodos y conectores de herencia o composición.',
+      title: 'Crear Nuevo Proyecto',
+      category: 'Primeros Pasos',
+      duration: '00:21',
+      description: 'Guía rápida para crear, guardar y gestionar espacios de trabajo para diagramas UML.',
       icon: '▶',
-      isAvailable: false
+      videoUrl: '/assets/videos/crearProyecto.mp4',
+      isAvailable: true
     },
     {
       id: '3',
-      title: 'Generar Código SQL DDL & XMI',
-      category: 'Exportar SQL/XMI',
-      duration: '04:10',
-      description: 'Convierte tus diagramas de clases en scripts de base de datos relacional PostgreSQL con un clic.',
+      title: 'Modelado UML: Crear Clase con Atributos',
+      category: 'Diagramas UML',
+      duration: '00:55',
+      description: 'Guía paso a paso para crear clases en el Canvas, definir atributos, tipos de datos y visibilidad.',
       icon: '▶',
-      isAvailable: false
+      videoUrl: '/assets/videos/crear_Clasecon_atributos.mp4',
+      isAvailable: true
     },
     {
       id: '4',
@@ -811,6 +813,15 @@ export class HelpComponent implements OnInit, OnDestroy {
       icon: '▶',
       videoUrl: '/assets/videos/InvitarColaborador.mp4',
       isAvailable: true
+    },
+    {
+      id: '5',
+      title: 'Generar Código SQL DDL & XMI',
+      category: 'Exportar SQL/XMI',
+      duration: '04:10',
+      description: 'Convierte tus diagramas de clases en scripts de base de datos relacional PostgreSQL con un clic.',
+      icon: '▶',
+      isAvailable: false
     }
   ];
 
@@ -845,7 +856,7 @@ export class HelpComponent implements OnInit, OnDestroy {
       if (this.scrollContainer?.nativeElement) {
         this.scrollContainer.nativeElement.scrollTop = this.scrollContainer.nativeElement.scrollHeight;
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   get filteredVideos(): VideoTutorial[] {
@@ -883,8 +894,14 @@ export class HelpComponent implements OnInit, OnDestroy {
     this.sendMessage();
   }
 
-  highlightElement(selector: string): void {
+  highlightElement(selector: string, msg?: SupportChatMessage): void {
     this.supportService.setHighlight(selector);
+    if (msg) {
+      const tipText = msg.stepGuide?.[0] || msg.text;
+      this.supportService.setMascotTip(`🎯 ${tipText}`);
+    } else {
+      this.supportService.setMascotTip(`🎯 ¡Aquí está la herramienta que necesitas!`);
+    }
     this.router.navigate(['/editor']);
   }
 

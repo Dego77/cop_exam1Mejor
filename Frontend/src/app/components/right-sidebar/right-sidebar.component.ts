@@ -13,7 +13,7 @@ import { AuthService } from '../../core/services/auth.service';
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
-    <aside class="right-sidebar">
+    <aside class="right-sidebar" id="right-sidebar-ai">
       <!-- Vertical Resizer Handle Bar (ew-resize) -->
       <div 
         class="sidebar-resizer" 

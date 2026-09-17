@@ -22,7 +22,7 @@ import { ProjectService, Project } from '../../core/services/project.service';
 
 
         <div class="project-selector-wrapper">
-          <button class="btn btn-ghost project-btn" (click)="toggleProjectMenu()">
+          <button id="btn-create-project" class="btn btn-ghost project-btn" (click)="toggleProjectMenu()">
             <span class="project-icon">📁</span>
             <span class="project-title">{{ currentProject?.name || 'Seleccionar Proyecto...' }}</span>
             <span class="arrow-down">▼</span>
@@ -151,7 +151,7 @@ import { ProjectService, Project } from '../../core/services/project.service';
               </span>
             </div>
           </div>
-          <button *ngIf="isOwner" class="btn btn-ghost btn-sm invite-btn" (click)="openInviteModal()" title="Invitar colaborador">
+          <button *ngIf="isOwner" id="btn-invite-collab" class="btn btn-ghost btn-sm invite-btn" (click)="openInviteModal()" title="Invitar colaborador">
             <span>+ Invitar</span>
           </button>
         </div>
@@ -259,10 +259,10 @@ import { ProjectService, Project } from '../../core/services/project.service';
       </div>
 
       <div class="navbar-right">
-        <button class="btn btn-ghost" (click)="exportXMI.emit()" title="Exportar archivo Enterprise Architect XMI">
+        <button id="btn-export-xmi" class="btn btn-ghost" (click)="exportXMI.emit()" title="Exportar archivo Enterprise Architect XMI">
           <span>📦 Export XMI</span>
         </button>
-        <button class="btn btn-violet" (click)="exportSQL.emit()" title="Generar script DDL PostgreSQL">
+        <button id="btn-export-sql" class="btn btn-violet" (click)="exportSQL.emit()" title="Generar script DDL PostgreSQL">
           <span>⚡ Generar SQL</span>
         </button>
 
