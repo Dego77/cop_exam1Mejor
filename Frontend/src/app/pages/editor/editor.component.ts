@@ -140,7 +140,7 @@ export class EditorComponent implements OnInit, OnDestroy {
     private supportService: SupportAgentService,
     private route: ActivatedRoute,
     private router: Router
-  ) {}
+  ) { }
 
   ngOnInit(): void {
     // Check authentication
@@ -269,7 +269,7 @@ export class EditorComponent implements OnInit, OnDestroy {
     const cachedStr = localStorage.getItem(cacheKey);
     let localCachedProjects: Project[] = [];
     if (cachedStr) {
-      try { localCachedProjects = JSON.parse(cachedStr); } catch (e) {}
+      try { localCachedProjects = JSON.parse(cachedStr); } catch (e) { }
     }
 
     this.projectService.getAll().subscribe({
@@ -335,7 +335,7 @@ export class EditorComponent implements OnInit, OnDestroy {
     try {
       const cacheKey = this.getUserCacheKey();
       localStorage.setItem(cacheKey, JSON.stringify(this.projects));
-    } catch (e) {}
+    } catch (e) { }
   }
 
 
@@ -616,7 +616,7 @@ export class EditorComponent implements OnInit, OnDestroy {
         this.currentProject = fullProj;
         this.updateOnlineCollaboratorsList();
       },
-      error: () => {}
+      error: () => { }
     });
 
     return new Promise<void>((resolve) => {
@@ -818,8 +818,8 @@ export class EditorComponent implements OnInit, OnDestroy {
       sourceNodeId: event.sourceId,
       targetNodeId: event.targetId,
       type: event.type,
-      sourceMultiplicity: (isReflexive || event.type === 'AssociationClass') ? '' : '1',
-      targetMultiplicity: (isReflexive || event.type === 'AssociationClass') ? '' : '*',
+      sourceMultiplicity: (isReflexive || event.type === 'AssociationClass') ? '' : '*',
+      targetMultiplicity: (isReflexive || event.type === 'AssociationClass') ? '' : '1',
       label: '',
       associationClassNodeId: assocClassId
     };
@@ -908,13 +908,13 @@ export class EditorComponent implements OnInit, OnDestroy {
 
   onSaveProject(): void {
     const projectName = this.currentProject?.name || 'colab';
-    
+
     // 1. Guardar en Base de Datos PostgreSQL
     this.diagramService.saveCurrentDiagram().subscribe({
       next: async () => {
         // 2. Sobrescribir directamente sobre el mismo archivo físico (.eap / Uso1_1.eap) sin abrir diálogos emergentes
         await this.eaExporterService.saveDirectlyToActiveFile(projectName, this.nodes, this.connectors);
-        
+
         const cleanName = projectName.toLowerCase().endsWith('.eap') ? projectName : `${projectName}.eap`;
         alert(`💾 Guardado exitoso:\n- Proyecto "${projectName}" en PostgreSQL DB actualizado.\n- Archivo físico "${cleanName}" actualizado directamente en tu equipo.`);
       },
@@ -994,7 +994,7 @@ export class EditorComponent implements OnInit, OnDestroy {
         this.diagramService.clearLocalSnapshot(proj.id);
         try {
           await this.diagramService.purgeDiagram(proj.id).toPromise();
-        } catch (e) {}
+        } catch (e) { }
       }
 
       await this.onSelectProject(proj);
@@ -1056,7 +1056,7 @@ export class EditorComponent implements OnInit, OnDestroy {
         clearInterval(interval);
         try {
           el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-        } catch (_) {}
+        } catch (_) { }
 
         el.classList.add('classforge-spotlight-active');
 

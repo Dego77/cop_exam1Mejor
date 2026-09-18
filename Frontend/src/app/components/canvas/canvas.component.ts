@@ -1744,15 +1744,27 @@ export class CanvasComponent {
     this.zoomLevel = Math.max(0.5, Math.min(2.0, this.zoomLevel + delta));
   }
 
+  getNodeHeight(node: UMLNode | undefined): number {
+    if (!node) return 160;
+    const attrsCount = Math.max(1, node.attributes?.length || 0);
+    const methodsCount = Math.max(1, node.methods?.length || 0);
+    const calculatedH = 52 + 30 + (attrsCount * 26) + 30 + (methodsCount * 26) + 12;
+    return Math.max(node.height || 160, calculatedH);
+  }
+
+  getNodeWidth(node: UMLNode | undefined): number {
+    return 232;
+  }
+
   getConnectorPath(conn: UMLConnector): string {
     const source = this.findNode(conn.sourceNodeId);
     const target = this.findNode(conn.targetNodeId);
     if (!source || !target) return '';
 
-    const sourceW = source.width || 230;
-    const sourceH = source.height || 160;
-    const targetW = target.width || 230;
-    const targetH = target.height || 160;
+    const sourceW = this.getNodeWidth(source);
+    const sourceH = this.getNodeHeight(source);
+    const targetW = this.getNodeWidth(target);
+    const targetH = this.getNodeHeight(target);
 
     const scx = source.positionX + sourceW / 2;
     const scy = source.positionY + sourceH / 2;
@@ -1947,7 +1959,7 @@ export class CanvasComponent {
   getAssocClassTopY(conn: UMLConnector): number {
     const node = this.getAssocClassNode(conn);
     if (!node) return this.getConnectorMidY(conn);
-    return node.positionY + (node.height || 160) / 2;
+    return node.positionY + this.getNodeHeight(node) / 2;
   }
 
 
@@ -1956,10 +1968,10 @@ export class CanvasComponent {
     const target = this.findNode(conn.targetNodeId);
     if (!source || !target) return { x: 0, y: 0, angle: 0 };
 
-    const sourceW = source.width || 230;
-    const sourceH = source.height || 160;
-    const targetW = target.width || 230;
-    const targetH = target.height || 160;
+    const sourceW = this.getNodeWidth(source);
+    const sourceH = this.getNodeHeight(source);
+    const targetW = this.getNodeWidth(target);
+    const targetH = this.getNodeHeight(target);
 
     const scx = source.positionX + sourceW / 2;
     const scy = source.positionY + sourceH / 2;
@@ -1987,10 +1999,10 @@ export class CanvasComponent {
     const target = this.findNode(conn.targetNodeId);
     if (!source || !target) return { x: 0, y: 0, angle: 0 };
 
-    const sourceW = source.width || 230;
-    const sourceH = source.height || 160;
-    const targetW = target.width || 230;
-    const targetH = target.height || 160;
+    const sourceW = this.getNodeWidth(source);
+    const sourceH = this.getNodeHeight(source);
+    const targetW = this.getNodeWidth(target);
+    const targetH = this.getNodeHeight(target);
 
     const scx = source.positionX + sourceW / 2;
     const scy = source.positionY + sourceH / 2;
