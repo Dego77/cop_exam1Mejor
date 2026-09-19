@@ -125,11 +125,27 @@ export class EaExporterService {
       });
     }
 
+    // Pre-process connectors to identify nodes that are actually "association classes"
+    // (the junction/intermediate entity of a many-to-many relation). Those nodes must be
+    // exported as a single merged uml:AssociationClass element instead of a standalone
+    // uml:Class, otherwise Enterprise Architect has no standard way to know the class is
+    // tied to the many-to-many relation between the two real entities.
+    const assocClassNodeIds = new Set<string>();
+    if (connectors && connectors.length > 0) {
+      connectors.forEach(conn => {
+        if (conn.associationClassNodeId && nodeMap.has(conn.associationClassNodeId)) {
+          assocClassNodeIds.add(conn.associationClassNodeId);
+        }
+      });
+    }
+    const assocClassContentMap = new Map<string, { attrsXml: string; methodsXml: string; generalizationsXml: string }>();
+
     // 1. DYNAMIC MAPPING OF ALL NODES / CLASSES
     if (nodes && nodes.length > 0) {
       nodes.forEach((node, idx) => {
         const nodeInfo = nodeMap.get(node.id)!;
         const nodeEaId = nodeInfo.eaId;
+        const isAssocClassNode = assocClassNodeIds.has(node.id);
 
         // Parse Generalizations (Inheritance) inside class
         let generalizationsXml = '';
@@ -170,17 +186,24 @@ export class EaExporterService {
           });
         }
 
-        // Standard UML Class Element (including generalization links if any)
-        classesXml += `
+        if (isAssocClassNode) {
+          // Deferred: merged into a single uml:AssociationClass packagedElement together with
+          // its association ends when the owning connector is processed below (step 2), since
+          // in the UML metamodel an association class is ONE element, not a class + a link.
+          assocClassContentMap.set(node.id, { attrsXml, methodsXml, generalizationsXml });
+        } else {
+          // Standard UML Class Element (including generalization links if any)
+          classesXml += `
         <packagedElement xmi:type="uml:Class" xmi:id="${nodeEaId}" name="${node.name}">
           ${generalizationsXml}
           ${attrsXml}
           ${methodsXml}
         </packagedElement>`;
+        }
 
         // Enterprise Architect Extension Element Definition
         elementsExtensionXml += `
-        <element xmi:idref="${nodeEaId}" xmi:type="uml:Class" name="${node.name}" scope="public">
+        <element xmi:idref="${nodeEaId}" xmi:type="${isAssocClassNode ? 'uml:AssociationClass' : 'uml:Class'}" name="${node.name}" scope="public">
           <model package="${packageEaId}" tpos="${idx}" ea_localid="${nodeInfo.localId}"/>
           <properties stereotype="${node.stereotype || 'Entity'}" isSpecification="false" sType="Class" ntype="0"/>
           <extendedProperties package_name="Logical View"/>
@@ -203,9 +226,16 @@ export class EaExporterService {
 
     if (connectors && connectors.length > 0) {
       connectors.forEach((conn, idx) => {
-        const connEaId = this.toEaGuid(conn.id || `conn_${idx}`);
         const srcInfo = nodeMap.get(conn.sourceNodeId);
         const tgtInfo = nodeMap.get(conn.targetNodeId);
+        const assocInfo = conn.associationClassNodeId ? nodeMap.get(conn.associationClassNodeId) : undefined;
+        const isAssocClassConn = !!(assocInfo && assocClassNodeIds.has(assocInfo.node.id));
+
+        // An association class is a SINGLE element in the UML metamodel (both the Association
+        // and the Class at once), so it must carry one shared xmi:id. Reuse the junction node's
+        // own eaId (the same id already used for its diagram box) instead of minting a separate
+        // id for "the connector", otherwise Enterprise Architect sees two disconnected elements.
+        const connEaId = isAssocClassConn ? assocInfo!.eaId : this.toEaGuid(conn.id || `conn_${idx}`);
 
         const srcEaId = srcInfo ? srcInfo.eaId : this.toEaGuid(conn.sourceNodeId);
         const tgtEaId = tgtInfo ? tgtInfo.eaId : this.toEaGuid(conn.targetNodeId);
@@ -219,6 +249,7 @@ export class EaExporterService {
         let connUmlType = 'uml:Association';
         let eaType = 'Association';
         let subTypeAttr = '';
+        let aggregationValue = '';
 
         switch (conn.type) {
           case 'Inheritance':
@@ -237,11 +268,13 @@ export class EaExporterService {
             connUmlType = 'uml:Association';
             eaType = 'Aggregation';
             subTypeAttr = 'subType="Weak"';
+            aggregationValue = 'shared';
             break;
           case 'Composition':
             connUmlType = 'uml:Association';
             eaType = 'Aggregation';
             subTypeAttr = 'subType="Strong"';
+            aggregationValue = 'composite';
             break;
           default:
             connUmlType = 'uml:Association';
@@ -249,9 +282,19 @@ export class EaExporterService {
             break;
         }
 
+        if (isAssocClassConn) {
+          connUmlType = 'uml:AssociationClass';
+        }
+
         const isStructuralAssoc = conn.type === 'Association' || !conn.type;
-        const defaultSrcMult = isStructuralAssoc ? '1' : '';
-        const defaultTgtMult = isStructuralAssoc ? '*' : '';
+        const isWholePart = conn.type === 'Aggregation' || conn.type === 'Composition';
+        // The diamond is always rendered at the connector's TARGET endpoint (see
+        // canvas.component.ts getDiamondPoints() -> getTargetEndpoint()), so by UML convention
+        // the target class is the "whole" and the source class is the "part". When the user
+        // left a multiplicity blank on an Aggregation/Composition, default to the usual
+        // whole/part reading instead of exporting an empty (ambiguous) multiplicity.
+        const defaultSrcMult = isStructuralAssoc ? '1' : (isWholePart ? '0..*' : '');
+        const defaultTgtMult = isStructuralAssoc ? '*' : (isWholePart ? '1' : '');
 
         const rawSrcMult = (conn.sourceMultiplicity !== undefined && conn.sourceMultiplicity !== '') ? conn.sourceMultiplicity : defaultSrcMult;
         const rawTgtMult = (conn.targetMultiplicity !== undefined && conn.targetMultiplicity !== '') ? conn.targetMultiplicity : defaultTgtMult;
@@ -259,14 +302,27 @@ export class EaExporterService {
         const srcMult = this.buildMultiplicityXml(rawSrcMult, `${connEaId}_src`);
         const tgtMult = this.buildMultiplicityXml(rawTgtMult, `${connEaId}_tgt`);
 
-        const assocInfo = conn.associationClassNodeId ? nodeMap.get(conn.associationClassNodeId) : undefined;
+        // Standard UML2 aggregation kind belongs on the ownedEnd typed as the "part" (source
+        // here, see note above): the property whose type is the aggregated class carries
+        // aggregation="shared"/"composite", while the "whole" end (target) stays "none".
+        const srcAggAttr = aggregationValue ? ` aggregation="${aggregationValue}"` : '';
+
         const assocClassAttr = assocInfo ? `associationClass="${assocInfo.eaId}"` : (conn.associationClassNodeId ? `associationClass="${conn.associationClassNodeId}"` : '');
 
-        // Standard UML 2.1 Association in packagedElement (memberEnd & type xmi:idref)
+        // Standard UML 2.1 Association / AssociationClass in packagedElement (memberEnd & type xmi:idref)
         if (conn.type !== 'Inheritance') {
+          let assocClassMembersXml = '';
+          if (isAssocClassConn) {
+            const content = assocClassContentMap.get(assocInfo!.node.id);
+            assocClassMembersXml = `
+          ${content ? content.generalizationsXml : ''}
+          ${content ? content.attrsXml : ''}
+          ${content ? content.methodsXml : ''}`;
+          }
+
           connectorsXml += `
-        <packagedElement xmi:type="${connUmlType}" xmi:id="${connEaId}" name="${conn.label || ''}" memberEnd="${connEaId}_src ${connEaId}_tgt">
-          <ownedEnd xmi:type="uml:Property" xmi:id="${connEaId}_src" visibility="public" association="${connEaId}">
+        <packagedElement xmi:type="${connUmlType}" xmi:id="${connEaId}" name="${isAssocClassConn ? assocInfo!.node.name : (conn.label || '')}" memberEnd="${connEaId}_src ${connEaId}_tgt">
+          <ownedEnd xmi:type="uml:Property" xmi:id="${connEaId}_src" visibility="public" association="${connEaId}"${srcAggAttr}>
             <type xmi:idref="${srcEaId}"/>
             ${srcMult.lowVal}
             ${srcMult.uppVal}
@@ -275,17 +331,17 @@ export class EaExporterService {
             <type xmi:idref="${tgtEaId}"/>
             ${tgtMult.lowVal}
             ${tgtMult.uppVal}
-          </ownedEnd>
+          </ownedEnd>${assocClassMembersXml}
         </packagedElement>`;
         }
 
         // Enterprise Architect Extension Connector Definition with EXPLICIT <model type="Class"/>
         connectorsExtensionXml += `
-        <connector xmi:idref="${connEaId}" name="${conn.label || ''}">
+        <connector xmi:idref="${connEaId}" name="${isAssocClassConn ? assocInfo!.node.name : (conn.label || '')}">
           <source xmi:idref="${srcEaId}">
             <model type="Class" name="${srcName}" ea_localid="${srcLocalId}"/>
             <role visibility="Public"/>
-            <type multiplicity="${srcMult.eaTypeMult}"/>
+            <type multiplicity="${srcMult.eaTypeMult}" aggregation="${aggregationValue}"/>
           </source>
           <target xmi:idref="${tgtEaId}">
             <model type="Class" name="${tgtName}" ea_localid="${tgtLocalId}"/>
@@ -296,9 +352,14 @@ export class EaExporterService {
           <appearance linemode="3" linecolor="-1" linewidth="0" seqno="0" headstyle="0" linestyle="0"/>
         </connector>`;
 
-        // Enterprise Architect Diagram Visual Line Link Placement
-        diagramElementsXml += `
+        // Enterprise Architect Diagram Visual Line Link Placement. Skipped for an association
+        // class: its connEaId is the same id as its diagram box (see above), which already has
+        // its own geometry entry from the node loop - a second entry with the same subject would
+        // give the diagram two conflicting geometries for one element.
+        if (!isAssocClassConn) {
+          diagramElementsXml += `
           <element geometry="SX=0;SY=0;EX=0;EY=0;Path=;" subject="${connEaId}" style="LEStyle=3;BStyle=0;"/>`;
+        }
       });
     }
 

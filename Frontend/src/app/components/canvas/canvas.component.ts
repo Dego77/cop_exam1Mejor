@@ -1756,6 +1756,76 @@ export class CanvasComponent {
     return 232;
   }
 
+  getConnectionFace(conn: UMLConnector, isTarget: boolean): 'top' | 'bottom' | 'left' | 'right' {
+    const source = this.findNode(conn.sourceNodeId);
+    const target = this.findNode(conn.targetNodeId);
+    if (!source || !target) return 'top';
+
+    const sourceW = this.getNodeWidth(source);
+    const sourceH = this.getNodeHeight(source);
+    const targetW = this.getNodeWidth(target);
+    const targetH = this.getNodeHeight(target);
+
+    const scx = source.positionX + sourceW / 2;
+    const scy = source.positionY + sourceH / 2;
+    const tcx = target.positionX + targetW / 2;
+    const tcy = target.positionY + targetH / 2;
+
+    const dx = tcx - scx;
+    const dy = tcy - scy;
+
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      if (dx >= 0) {
+        return isTarget ? 'left' : 'right';
+      } else {
+        return isTarget ? 'right' : 'left';
+      }
+    } else {
+      if (dy >= 0) {
+        return isTarget ? 'top' : 'bottom';
+      } else {
+        return isTarget ? 'bottom' : 'top';
+      }
+    }
+  }
+
+  getConnectorOffsetOnFace(conn: UMLConnector, isTarget: boolean): number {
+    const nodeId = isTarget ? conn.targetNodeId : conn.sourceNodeId;
+    if (!nodeId) return 0;
+    const face = this.getConnectionFace(conn, isTarget);
+
+    const sameFaceConns = (this.connectors || []).filter(c => {
+      if (c.targetNodeId === nodeId && this.getConnectionFace(c, true) === face) return true;
+      if (c.sourceNodeId === nodeId && this.getConnectionFace(c, false) === face) return true;
+      return false;
+    });
+
+    if (sameFaceConns.length <= 1) return 0;
+
+    sameFaceConns.sort((a, b) => {
+      const otherIdA = a.targetNodeId === nodeId ? a.sourceNodeId : a.targetNodeId;
+      const otherIdB = b.targetNodeId === nodeId ? b.sourceNodeId : b.targetNodeId;
+      const nodeA = this.findNode(otherIdA);
+      const nodeB = this.findNode(otherIdB);
+
+      if (face === 'top' || face === 'bottom') {
+        const coordA = nodeA ? nodeA.positionX + this.getNodeWidth(nodeA) / 2 : 0;
+        const coordB = nodeB ? nodeB.positionX + this.getNodeWidth(nodeB) / 2 : 0;
+        return coordA - coordB;
+      } else {
+        const coordA = nodeA ? nodeA.positionY + this.getNodeHeight(nodeA) / 2 : 0;
+        const coordB = nodeB ? nodeB.positionY + this.getNodeHeight(nodeB) / 2 : 0;
+        return coordA - coordB;
+      }
+    });
+
+    const index = sameFaceConns.findIndex(c => c.id === conn.id);
+    if (index === -1) return 0;
+
+    const spacing = 36;
+    return (index - (sameFaceConns.length - 1) / 2) * spacing;
+  }
+
   getConnectorPath(conn: UMLConnector): string {
     const source = this.findNode(conn.sourceNodeId);
     const target = this.findNode(conn.targetNodeId);
@@ -1774,6 +1844,9 @@ export class CanvasComponent {
     const dx = tcx - scx;
     const dy = tcy - scy;
 
+    const srcOffset = this.getConnectorOffsetOnFace(conn, false);
+    const tgtOffset = this.getConnectorOffsetOnFace(conn, true);
+
     let sx = scx;
     let sy = scy;
     let tx = tcx;
@@ -1789,18 +1862,18 @@ export class CanvasComponent {
     if (Math.abs(dx) >= Math.abs(dy)) {
       // Horizontal routing
       sx = dx >= 0 ? source.positionX + sourceW : source.positionX;
-      sy = scy;
+      sy = scy + srcOffset;
       const rawTx = dx >= 0 ? target.positionX : target.positionX + targetW;
       tx = dx >= 0 ? rawTx - trimOffset : rawTx + trimOffset;
-      ty = tcy;
+      ty = tcy + tgtOffset;
       const c1x = sx + (tx - sx) / 2;
       return `M ${sx} ${sy} C ${c1x} ${sy}, ${c1x} ${ty}, ${tx} ${ty}`;
     } else {
       // Vertical routing
-      sx = scx;
+      sx = scx + srcOffset;
       sy = dy >= 0 ? source.positionY + sourceH : source.positionY;
       const rawTy = dy >= 0 ? target.positionY : target.positionY + targetH;
-      tx = tcx;
+      tx = tcx + tgtOffset;
       ty = dy >= 0 ? rawTy - trimOffset : rawTy + trimOffset;
       const c1y = sy + (ty - sy) / 2;
       return `M ${sx} ${sy} C ${sx} ${c1y}, ${tx} ${c1y}, ${tx} ${ty}`;
@@ -1981,13 +2054,15 @@ export class CanvasComponent {
     const dx = tcx - scx;
     const dy = tcy - scy;
 
+    const srcOffset = this.getConnectorOffsetOnFace(conn, false);
+
     if (Math.abs(dx) >= Math.abs(dy)) {
       const ex = dx >= 0 ? source.positionX + sourceW : source.positionX;
-      const ey = scy;
+      const ey = scy + srcOffset;
       const angle = dx >= 0 ? 0 : Math.PI;
       return { x: ex, y: ey, angle };
     } else {
-      const ex = scx;
+      const ex = scx + srcOffset;
       const ey = dy >= 0 ? source.positionY + sourceH : source.positionY;
       const angle = dy >= 0 ? Math.PI / 2 : -Math.PI / 2;
       return { x: ex, y: ey, angle };
@@ -2012,13 +2087,15 @@ export class CanvasComponent {
     const dx = tcx - scx;
     const dy = tcy - scy;
 
+    const tgtOffset = this.getConnectorOffsetOnFace(conn, true);
+
     if (Math.abs(dx) >= Math.abs(dy)) {
       const ex = dx >= 0 ? target.positionX : target.positionX + targetW;
-      const ey = tcy;
+      const ey = tcy + tgtOffset;
       const angle = dx >= 0 ? 0 : Math.PI;
       return { x: ex, y: ey, angle };
     } else {
-      const ex = tcx;
+      const ex = tcx + tgtOffset;
       const ey = dy >= 0 ? target.positionY : target.positionY + targetH;
       const angle = dy >= 0 ? Math.PI / 2 : -Math.PI / 2;
       return { x: ex, y: ey, angle };

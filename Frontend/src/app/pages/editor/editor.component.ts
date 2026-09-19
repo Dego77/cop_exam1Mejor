@@ -83,6 +83,7 @@ import { Subscription } from 'rxjs';
           [sidebarWidth]="rightSidebarWidth"
           (sidebarWidthChange)="rightSidebarWidth = $event"
           [projectId]="currentProject?.id || ''"
+          [projectName]="currentProject?.name || ''"
           (diagramUpdated)="onAIDiagramUpdated()"
         ></app-right-sidebar>
       </div>

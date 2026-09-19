@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { FlutterGeneratorService } from './flutter.service';
 
 export interface UMLAttribute {
   id?: string;
@@ -63,6 +64,14 @@ export class SpringBootGeneratorService {
     return snake.endsWith('s') ? snake : `${snake}s`;
   }
 
+  private static toSnakeSingular(name: string): string {
+    return name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+  }
+
+  private static pluralizeField(name: string): string {
+    return name.endsWith('s') ? name : `${name}s`;
+  }
+
   private static mapToJavaType(typeStr: string): string {
     const t = (typeStr || 'String').toLowerCase().trim();
     if (t === 'int' || t === 'integer') return 'Integer';
@@ -72,6 +81,15 @@ export class SpringBootGeneratorService {
     if (t === 'char' || t === 'character') return 'String';
     if (t === 'date' || t === 'datetime' || t === 'timestamp') return 'java.time.LocalDateTime';
     return 'String';
+  }
+
+  private static javaTypeToPg(javaType: string): string {
+    if (javaType === 'Integer') return 'INTEGER';
+    if (javaType === 'Long') return 'BIGINT';
+    if (javaType === 'Double') return 'DOUBLE PRECISION';
+    if (javaType === 'Boolean') return 'BOOLEAN';
+    if (javaType.includes('LocalDateTime')) return 'TIMESTAMP';
+    return 'VARCHAR(255)';
   }
 
   /**
@@ -122,34 +140,76 @@ export class SpringBootGeneratorService {
 
     const validNodes = nodes.filter((n) => n.stereotype !== 'Package');
 
+    // Herencia (Inheritance) e implementación de interfaces (Implementation) son relaciones
+    // estructurales (extends/implements en Java), no campos JPA, así que se resuelven aparte.
+    const childToParentId = new Map<string, string>();
+    const parentIdsWithChildren = new Set<string>();
+    const implementsByNodeId = new Map<string, string[]>();
+    connectors.forEach((c) => {
+      if (c.type === 'Inheritance') {
+        childToParentId.set(c.sourceNodeId, c.targetNodeId);
+        parentIdsWithChildren.add(c.targetNodeId);
+      } else if (c.type === 'Implementation') {
+        const iface = nodeMap.get(c.targetNodeId);
+        if (iface) {
+          const arr = implementsByNodeId.get(c.sourceNodeId) || [];
+          arr.push(this.sanitizeJavaName(iface.name));
+          implementsByNodeId.set(c.sourceNodeId, arr);
+        }
+      }
+    });
+
+    // Detectar, de una sola vez, qué nodos son Clases de Asociación y a qué conector (el que
+    // une a las dos entidades "reales") está enlazada cada una. Se reutiliza tanto para
+    // construir sus atributos/relaciones como para evitar generar ADEMÁS una relación
+    // Many-to-Many/One-to-Many directa entre esas dos entidades por el mismo conector
+    // (antes ambos mecanismos convivían sin reconciliarse).
+    const findAssocConnector = (assocNode: UMLNode) =>
+      connectors.find(
+        (c) =>
+          c.associationClassNodeId === assocNode.id ||
+          c.type === 'AssociationClass' ||
+          (nodeMap.get(c.sourceNodeId) && nodeMap.get(c.targetNodeId) &&
+            (`${nodeMap.get(c.sourceNodeId)?.name}_${nodeMap.get(c.targetNodeId)?.name}`.toLowerCase() === assocNode.name.toLowerCase() ||
+              `${nodeMap.get(c.targetNodeId)?.name}_${nodeMap.get(c.sourceNodeId)?.name}`.toLowerCase() === assocNode.name.toLowerCase()))
+      );
+
+    const assocConnByNodeId = new Map<string, UMLConnector>();
+    const connectorIdsConsumedByAssocClass = new Set<string>();
+    validNodes.forEach((n) => {
+      const isAssoc =
+        n.stereotype === 'AssociationClass' ||
+        connectors.some(
+          (c) =>
+            c.associationClassNodeId === n.id ||
+            (c.type === 'AssociationClass' &&
+              (`${nodeMap.get(c.sourceNodeId)?.name}_${nodeMap.get(c.targetNodeId)?.name}`.toLowerCase() === n.name.toLowerCase() ||
+                `${nodeMap.get(c.targetNodeId)?.name}_${nodeMap.get(c.sourceNodeId)?.name}`.toLowerCase() === n.name.toLowerCase()))
+        );
+      if (!isAssoc) return;
+      const assocConn = findAssocConnector(n);
+      if (assocConn) {
+        assocConnByNodeId.set(n.id, assocConn);
+        connectorIdsConsumedByAssocClass.add(assocConn.id);
+      }
+    });
+
     // Mapeo inicial de entidades
     const entities = validNodes.map((node) => {
       const className = this.sanitizeJavaName(node.name);
       const tableName = this.toTableName(className);
 
-      // Verificar si es una Clase de Asociación
-      const isAssocClass =
-        node.stereotype === 'AssociationClass' ||
-        connectors.some(
-          (c) =>
-            c.associationClassNodeId === node.id ||
-            (c.type === 'AssociationClass' &&
-              (`${nodeMap.get(c.sourceNodeId)?.name}_${nodeMap.get(c.targetNodeId)?.name}`.toLowerCase() === node.name.toLowerCase() ||
-                `${nodeMap.get(c.targetNodeId)?.name}_${nodeMap.get(c.sourceNodeId)?.name}`.toLowerCase() === node.name.toLowerCase()))
-        );
+      const isAssocClass = assocConnByNodeId.has(node.id) || node.stereotype === 'AssociationClass';
+
+      const parentNodeId = childToParentId.get(node.id) || null;
+      const isInheritanceChild = !!parentNodeId;
+      const isInterfaceStereotype = node.stereotype === 'Interface';
 
       let attributes: any[] = [];
+      const assocRelationships: any[] = [];
 
       if (isAssocClass) {
-        // Buscar el conector que enlaza a esta Clase de Asociación
-        const assocConn = connectors.find(
-          (c) =>
-            c.associationClassNodeId === node.id ||
-            c.type === 'AssociationClass' ||
-            (nodeMap.get(c.sourceNodeId) && nodeMap.get(c.targetNodeId) &&
-              (`${nodeMap.get(c.sourceNodeId)?.name}_${nodeMap.get(c.targetNodeId)?.name}`.toLowerCase() === node.name.toLowerCase() ||
-                `${nodeMap.get(c.targetNodeId)?.name}_${nodeMap.get(c.sourceNodeId)?.name}`.toLowerCase() === node.name.toLowerCase()))
-        );
+        const assocConn = assocConnByNodeId.get(node.id);
 
         if (assocConn) {
           const sourceNode = nodeMap.get(assocConn.sourceNodeId);
@@ -158,6 +218,8 @@ export class SpringBootGeneratorService {
           if (sourceNode && targetNode) {
             const sourcePk = this.getNodePrimaryKey(sourceNode);
             const targetPk = this.getNodePrimaryKey(targetNode);
+            const sourceEntityClass = this.sanitizeJavaName(sourceNode.name);
+            const targetEntityClass = this.sanitizeJavaName(targetNode.name);
 
             // Agregar la PK del origen como PK y FK
             attributes.push({
@@ -165,7 +227,7 @@ export class SpringBootGeneratorService {
               type: sourcePk.type,
               isPrimaryKey: true,
               isForeignKey: true,
-              foreignKeyEntity: this.sanitizeJavaName(sourceNode.name),
+              foreignKeyEntity: sourceEntityClass,
             });
 
             // Agregar la PK del destino como PK y FK
@@ -174,7 +236,27 @@ export class SpringBootGeneratorService {
               type: targetPk.type,
               isPrimaryKey: true,
               isForeignKey: true,
-              foreignKeyEntity: this.sanitizeJavaName(targetNode.name),
+              foreignKeyEntity: targetEntityClass,
+            });
+
+            // Referencias @ManyToOne + @MapsId hacia cada entidad relacionada, usando el mismo
+            // nombre de campo que su respectiva PK dentro de la clave compuesta (@EmbeddedId),
+            // para que generateEntityJava pueda generar un @EmbeddedId real en vez de dos @Id sueltos.
+            assocRelationships.push({
+              type: 'MANY_TO_ONE',
+              mapsId: true,
+              targetEntity: sourceEntityClass,
+              fieldName: this.sanitizeFieldName(sourceEntityClass),
+              idField: sourcePk.name,
+              joinColumn: sourcePk.name,
+            });
+            assocRelationships.push({
+              type: 'MANY_TO_ONE',
+              mapsId: true,
+              targetEntity: targetEntityClass,
+              fieldName: this.sanitizeFieldName(targetEntityClass),
+              idField: targetPk.name,
+              joinColumn: targetPk.name,
             });
           }
         }
@@ -202,8 +284,10 @@ export class SpringBootGeneratorService {
           };
         });
 
-        // Si no tiene clave primaria explícita, agregar 'id' por defecto
-        if (!attributes.some((a) => a.isPrimaryKey)) {
+        // Si no tiene clave primaria explícita, agregar 'id' por defecto.
+        // Excepción: las clases hijas de herencia NO reciben su propio id (heredan la PK del
+        // padre en la estrategia SINGLE_TABLE), y las interfaces no se persisten.
+        if (!attributes.some((a) => a.isPrimaryKey) && !isInheritanceChild && !isInterfaceStereotype) {
           attributes.unshift({
             name: `id_${this.sanitizeFieldName(node.name)}`,
             type: 'Long',
@@ -212,57 +296,139 @@ export class SpringBootGeneratorService {
         }
       }
 
-      // Procesar Relaciones para esta Entidad
-      const relationships: any[] = [];
+      // Procesar Relaciones JPA reales (Many-to-One / One-to-Many / Many-to-Many / One-to-One)
+      // para esta Entidad. Inheritance e Implementation NO generan campos aquí: se resuelven
+      // como extends/implements usando childToParentId/implementsByNodeId (calculados arriba).
+      const relationships: any[] = [...assocRelationships];
       connectors.forEach((conn) => {
+        // Estas ya se manejan aparte; y Dependency es solo una referencia de uso, no persistencia.
+        if (conn.type === 'Inheritance' || conn.type === 'Implementation' || conn.type === 'Dependency') return;
+
+        // Este conector ya quedó modelado por una Clase de Asociación (arriba, vía @MapsId):
+        // no generar además un Many-to-Many/One-to-Many directo para el mismo par de clases.
+        if (connectorIdsConsumedByAssocClass.has(conn.id)) return;
+
         const sourceNode = nodeMap.get(conn.sourceNodeId);
         const targetNode = nodeMap.get(conn.targetNodeId);
+        if (!sourceNode || !targetNode) return;
 
-        if (sourceNode && targetNode) {
-          const sourceClass = this.sanitizeJavaName(sourceNode.name);
-          const targetClass = this.sanitizeJavaName(targetNode.name);
+        const sourceClass = this.sanitizeJavaName(sourceNode.name);
+        const targetClass = this.sanitizeJavaName(targetNode.name);
 
-          if (isAssocClass) {
-            if (sourceNode.id === node.id || targetNode.id === node.id || className === `${sourceClass}_${targetClass}`) {
-              // Relación de la Clase de Asociación con sus padres
-              relationships.push({
-                type: 'MANY_TO_ONE',
-                targetEntity: sourceClass,
-                foreignKey: this.getNodePrimaryKey(sourceNode).name,
-              });
-              relationships.push({
-                type: 'MANY_TO_ONE',
-                targetEntity: targetClass,
-                foreignKey: this.getNodePrimaryKey(targetNode).name,
-              });
-            }
+        if (isAssocClass) {
+          // La Clase de Asociación ya recibió sus dos FKs compuestas + @ManyToOne/@MapsId
+          // (arriba, vía assocRelationships); un conector "suelto" que además la toque (p. ej.
+          // la línea punteada de enlace en el diagrama) no debe generar una relación adicional.
+          return;
+        }
+
+        const srcMult = conn.sourceMultiplicity || '';
+        const tgtMult = conn.targetMultiplicity || '';
+        const isManyToMany = srcMult.includes('*') && tgtMult.includes('*');
+        // Relación 1 a 1: ninguno de los dos extremos tiene multiplicidad "muchos" y ambos
+        // extremos declaran cardinalidad explícita (p. ej. "+1"/"+1" o "1"/"0..1").
+        const isOneToOne =
+          !isManyToMany && srcMult.trim() !== '' && tgtMult.trim() !== '' &&
+          !srcMult.includes('*') && !tgtMult.includes('*');
+        const cascade =
+          conn.type === 'Composition'
+            ? 'CascadeType.ALL, orphanRemoval = true'
+            : conn.type === 'Aggregation'
+              ? '{CascadeType.PERSIST, CascadeType.MERGE}'
+              : null;
+
+        if (conn.sourceNodeId === node.id) {
+          if (isManyToMany) {
+            relationships.push({
+              type: 'MANY_TO_MANY',
+              owning: true,
+              targetEntity: targetClass,
+              fieldName: this.pluralizeField(this.sanitizeFieldName(targetClass)),
+              joinTable: `${tableName}_${this.toTableName(targetClass)}`,
+              joinColumn: `${this.toSnakeSingular(className)}_id`,
+              inverseJoinColumn: `${this.toSnakeSingular(targetClass)}_id`,
+            });
+          } else if (isOneToOne) {
+            relationships.push({
+              type: 'ONE_TO_ONE',
+              owning: true,
+              targetEntity: targetClass,
+              fieldName: this.sanitizeFieldName(targetClass),
+              joinColumn: `${this.toSnakeSingular(targetClass)}_id`,
+            });
           } else {
-            if (conn.sourceNodeId === node.id) {
-              const relType = conn.type === 'Inheritance' ? 'INHERITANCE' : 'MANY_TO_ONE';
-              relationships.push({
-                type: relType,
-                targetEntity: targetClass,
-                foreignKey: `${this.sanitizeFieldName(targetClass)}_id`,
-              });
-            } else if (conn.targetNodeId === node.id) {
-              relationships.push({
-                type: 'ONE_TO_MANY',
-                targetEntity: sourceClass,
-                mappedBy: this.sanitizeFieldName(className),
-              });
-            }
+            relationships.push({
+              type: 'MANY_TO_ONE',
+              targetEntity: targetClass,
+              fieldName: this.sanitizeFieldName(targetClass),
+              joinColumn: `${this.toSnakeSingular(targetClass)}_id`,
+            });
+          }
+        } else if (conn.targetNodeId === node.id) {
+          if (isManyToMany) {
+            relationships.push({
+              type: 'MANY_TO_MANY',
+              owning: false,
+              targetEntity: sourceClass,
+              fieldName: this.pluralizeField(this.sanitizeFieldName(sourceClass)),
+              mappedBy: this.pluralizeField(this.sanitizeFieldName(className)),
+            });
+          } else if (isOneToOne) {
+            relationships.push({
+              type: 'ONE_TO_ONE',
+              owning: false,
+              targetEntity: sourceClass,
+              fieldName: this.sanitizeFieldName(sourceClass),
+              mappedBy: this.sanitizeFieldName(className),
+            });
+          } else {
+            relationships.push({
+              type: 'ONE_TO_MANY',
+              targetEntity: sourceClass,
+              fieldName: this.pluralizeField(this.sanitizeFieldName(sourceClass)),
+              mappedBy: this.sanitizeFieldName(className),
+              cascade,
+            });
           }
         }
       });
+
+      const parentClass = parentNodeId ? this.sanitizeJavaName(nodeMap.get(parentNodeId)?.name || '') : null;
 
       return {
         className,
         tableName,
         stereotype: node.stereotype || (isAssocClass ? 'AssociationClass' : 'Class'),
         isAssociationClass: isAssocClass,
+        // Las Clases de Asociación tienen PK compuesta -> se modelan con @EmbeddedId usando
+        // esta clase auxiliar (ver generateAssocClassIdJava), en vez de dos @Id sueltos.
+        idClassName: isAssocClass ? `${className}Id` : null,
+        isInterfaceStereotype,
+        parentClass,
+        isInheritanceChild,
+        isInheritanceRoot: parentIdsWithChildren.has(node.id) && !parentNodeId,
+        implementsInterfaces: implementsByNodeId.get(node.id) || [],
         attributes,
         relationships,
       };
+    });
+
+    // PK "efectiva" de cada entidad: la propia si la tiene, o si no (hija de herencia
+    // SINGLE_TABLE) la de su ancestro raíz. Repository/Service/Controller la usan para
+    // tipar @PathVariable e invocar el setter correcto, ya que las hijas no declaran @Id propio.
+    const entityByClassName = new Map(entities.map((e: any) => [e.className, e]));
+    entities.forEach((e: any) => {
+      if (e.isAssociationClass) {
+        // La PK real es la clase @EmbeddedId compuesta, no un único atributo escalar.
+        e.effectivePk = { name: 'id', type: e.idClassName };
+        return;
+      }
+      let ancestor = e;
+      while (ancestor.isInheritanceChild && ancestor.parentClass && entityByClassName.has(ancestor.parentClass)) {
+        ancestor = entityByClassName.get(ancestor.parentClass);
+      }
+      const pk = (ancestor.attributes || []).find((a: any) => a.isPrimaryKey);
+      e.effectivePk = pk ? { name: pk.name, type: pk.type } : { name: 'id', type: 'Long' };
     });
 
     return {
@@ -283,7 +449,10 @@ export class SpringBootGeneratorService {
   ): Promise<Buffer> {
     const zip = new JSZip();
     const cleanProjectName = this.sanitizeJavaName(projectName);
-    const rootFolder = zip.folder(cleanProjectName.toLowerCase())!;
+    // Un único folder de proyecto en el zip, con `backend/` (Spring Boot) y `flutter_app/`
+    // (app Flutter con CRUD + agente de IA local) como carpetas hermanas.
+    const projectRoot = zip.folder(cleanProjectName.toLowerCase())!;
+    const rootFolder = projectRoot.folder('backend')!;
 
     const canonicalJson = this.generateCanonicalJson(nodes, connectors, cleanProjectName) as any;
     const entities = canonicalJson.entities as any[];
@@ -307,9 +476,15 @@ export class SpringBootGeneratorService {
     const serviceFolder = javaFolder.folder('service')!;
     const controllerFolder = javaFolder.folder('controller')!;
 
-    // For each entity, generate Model, Repo, Service, Controller
+    // For each entity, generate Model, Repo, Service, Controller.
+    // Las entidades con stereotype 'Interface' solo generan el archivo de modelo (interface Java);
+    // no se persisten, así que no tienen Repository/Service/Controller CRUD.
     entities.forEach((ent: any) => {
       modelFolder.file(`${ent.className}.java`, this.generateEntityJava(ent));
+      if (ent.isAssociationClass) {
+        modelFolder.file(`${ent.idClassName}.java`, this.generateAssocClassIdJava(ent));
+      }
+      if (ent.isInterfaceStereotype) return;
       repoFolder.file(`${ent.className}Repository.java`, this.generateRepositoryJava(ent));
       serviceFolder.file(`${ent.className}Service.java`, this.generateServiceJava(ent));
       controllerFolder.file(`${ent.className}Controller.java`, this.generateControllerJava(ent));
@@ -318,6 +493,9 @@ export class SpringBootGeneratorService {
     // 4. Controlador de Asistente IA para Flutter / Postman
     const aiFolder = javaFolder.folder('ai')!;
     aiFolder.file('AiAssistantController.java', this.generateAiAssistantController(entities));
+
+    // 5. App Flutter (CRUD contra este mismo backend + agente de chat/voz con IA local)
+    FlutterGeneratorService.addFlutterAppToZip(projectRoot, 'flutter_app', entities, cleanProjectName);
 
     // Generar el Buffer del ZIP
     return await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
@@ -413,34 +591,84 @@ server.port=8080
 
   private static generateSchemaSql(entities: any[]): string {
     let sql = `-- Script DDL PostgreSQL para ${entities.length} entidades\n\n`;
+    const joinTablesSql: string[] = [];
+
+    // Tipo de PK real de cada entidad, para tipar correctamente las columnas FK.
+    const pkTypeByClassName = new Map<string, string>();
+    entities.forEach((e) => {
+      const pk = (e.attributes || []).find((a: any) => a.isPrimaryKey);
+      pkTypeByClassName.set(e.className, pk ? pk.type : 'Long');
+    });
+
+    // Añade las columnas/atributos y FKs de `ent` a `cols`/`fkConstraints`, usando `physicalTableName`
+    // como tabla dueña de las FKs (la raíz, cuando `ent` es una hija de herencia SINGLE_TABLE).
+    const appendEntityColumns = (ent: any, physicalTableName: string, cols: string[], pkNames: string[], fkConstraints: string[]) => {
+      ent.attributes.forEach((attr: any) => {
+        if (attr.isPrimaryKey) pkNames.push(attr.name);
+        cols.push(`  ${attr.name} ${this.javaTypeToPg(attr.type)}`);
+      });
+
+      if (ent.isAssociationClass) {
+        // Las columnas PK/FK compuestas ya se agregaron arriba (son atributos planos); solo
+        // falta declarar sus FOREIGN KEY hacia cada entidad relacionada.
+        (ent.attributes || []).forEach((attr: any) => {
+          if (attr.isForeignKey && attr.foreignKeyEntity) {
+            fkConstraints.push(`  FOREIGN KEY (${attr.name}) REFERENCES ${this.toTableName(attr.foreignKeyEntity)}`);
+          }
+        });
+        return;
+      }
+
+      (ent.relationships || []).forEach((rel: any) => {
+        if (rel.type === 'MANY_TO_ONE' || (rel.type === 'ONE_TO_ONE' && rel.owning)) {
+          const targetTable = this.toTableName(rel.targetEntity);
+          const fkType = this.javaTypeToPg(pkTypeByClassName.get(rel.targetEntity) || 'Long');
+          const uniqueSql = rel.type === 'ONE_TO_ONE' ? ' UNIQUE' : '';
+          cols.push(`  ${rel.joinColumn} ${fkType}${uniqueSql}`);
+          fkConstraints.push(`  FOREIGN KEY (${rel.joinColumn}) REFERENCES ${targetTable}`);
+        } else if (rel.type === 'MANY_TO_MANY' && rel.owning) {
+          const targetTable = this.toTableName(rel.targetEntity);
+          const ownFkType = this.javaTypeToPg(pkTypeByClassName.get(ent.className) || 'Long');
+          const targetFkType = this.javaTypeToPg(pkTypeByClassName.get(rel.targetEntity) || 'Long');
+          joinTablesSql.push(
+            `CREATE TABLE IF NOT EXISTS ${rel.joinTable} (\n` +
+            `  ${rel.joinColumn} ${ownFkType} NOT NULL,\n` +
+            `  ${rel.inverseJoinColumn} ${targetFkType} NOT NULL,\n` +
+            `  PRIMARY KEY (${rel.joinColumn}, ${rel.inverseJoinColumn}),\n` +
+            `  FOREIGN KEY (${rel.joinColumn}) REFERENCES ${physicalTableName},\n` +
+            `  FOREIGN KEY (${rel.inverseJoinColumn}) REFERENCES ${targetTable}\n` +
+            `);\n`
+          );
+        }
+      });
+    };
 
     entities.forEach((ent) => {
-      sql += `CREATE TABLE IF NOT EXISTS ${ent.tableName} (\n`;
+      // Las interfaces no se persisten, y las hijas de herencia SINGLE_TABLE comparten la
+      // tabla física de su raíz (se pliegan ahí más abajo), así que no tienen tabla propia.
+      if (ent.isInterfaceStereotype || ent.isInheritanceChild) return;
+
       const cols: string[] = [];
       const pkNames: string[] = [];
+      const fkConstraints: string[] = [];
 
-      ent.attributes.forEach((attr: any) => {
-        let pgType = 'VARCHAR(255)';
-        if (attr.type === 'Integer') pgType = 'INTEGER';
-        if (attr.type === 'Long') pgType = 'BIGINT';
-        if (attr.type === 'Double') pgType = 'DOUBLE PRECISION';
-        if (attr.type === 'Boolean') pgType = 'BOOLEAN';
-        if (attr.type.includes('LocalDateTime')) pgType = 'TIMESTAMP';
+      appendEntityColumns(ent, ent.tableName, cols, pkNames, fkConstraints);
 
-        if (attr.isPrimaryKey) {
-          pkNames.push(attr.name);
-        }
-        cols.push(`  ${attr.name} ${pgType}`);
-      });
+      if (ent.isInheritanceRoot) {
+        cols.push(`  dtype VARCHAR(31)`);
+        entities
+          .filter((e) => e.parentClass === ent.className)
+          .forEach((child) => appendEntityColumns(child, ent.tableName, cols, pkNames, fkConstraints));
+      }
 
       if (pkNames.length > 0) {
         cols.push(`  PRIMARY KEY (${pkNames.join(', ')})`);
       }
 
-      sql += cols.join(',\n') + '\n);\n\n';
+      sql += `CREATE TABLE IF NOT EXISTS ${ent.tableName} (\n` + cols.concat(fkConstraints).join(',\n') + '\n);\n\n';
     });
 
-    return sql;
+    return sql + joinTablesSql.join('\n');
   }
 
   private static generateApplicationJava(): string {
@@ -461,26 +689,67 @@ public class Application {
 
   private static generateEntityJava(ent: any): string {
     const className = ent.className;
+
+    // Un nodo con stereotype 'Interface' es un contrato, no una entidad persistida:
+    // se genera como `interface` Java plano (sin @Entity/JPA) en vez de forzar una tabla.
+    if (ent.isInterfaceStereotype) {
+      let ifaceCode = `package com.examen.backend.model;
+
+public interface ${className} {
+`;
+      (ent.attributes || []).forEach((attr: any) => {
+        const capitalized = attr.name.charAt(0).toUpperCase() + attr.name.slice(1);
+        ifaceCode += `    ${attr.type} get${capitalized}();\n`;
+      });
+      ifaceCode += `}\n`;
+      return ifaceCode;
+    }
+
+    const extendsClause = ent.parentClass ? ` extends ${ent.parentClass}` : '';
+    const implementsClause = ent.implementsInterfaces && ent.implementsInterfaces.length > 0
+      ? ` implements ${ent.implementsInterfaces.join(', ')}`
+      : '';
+    const inheritanceAnnotations = ent.isInheritanceRoot
+      ? `@Inheritance(strategy = InheritanceType.SINGLE_TABLE)\n@DiscriminatorColumn(name = "dtype")\n`
+      : '';
+    const discriminatorAnnotation = (ent.isInheritanceRoot || ent.isInheritanceChild)
+      ? `@DiscriminatorValue("${className}")\n`
+      : '';
+
+    // En herencia SINGLE_TABLE solo la raíz declara la tabla física; las hijas comparten esa
+    // misma tabla implícitamente y no deben repetir @Table.
+    const tableAnnotation = ent.isInheritanceChild ? '' : `@Table(name = "${ent.tableName}")\n`;
+
     let code = `package com.examen.backend.model;
 
 import jakarta.persistence.*;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import lombok.*;
 import java.util.*;
 
 @Entity
-@Table(name = "${ent.tableName}")
-@Getter
+${tableAnnotation}${inheritanceAnnotations}${discriminatorAnnotation}@Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class ${className} {
+public class ${className}${extendsClause}${implementsClause} {
 
 `;
 
     const pkAttrs = ent.attributes.filter((a: any) => a.isPrimaryKey);
 
+    if (ent.isAssociationClass) {
+      // Clave compuesta real vía @EmbeddedId (ver generateAssocClassIdJava), en vez de dos
+      // @Id sueltos (inválido en JPA/Hibernate: una entidad no puede tener más de un @Id sin
+      // @EmbeddedId/@IdClass). @JsonUnwrapped mantiene el JSON plano (id_usuario, id_ventas
+      // al nivel superior, igual que en schema.sql) en vez de anidarlo bajo "id".
+      code += `    @EmbeddedId\n    @JsonUnwrapped\n    private ${ent.idClassName} id;\n\n`;
+    }
+
     ent.attributes.forEach((attr: any) => {
+      if (ent.isAssociationClass && attr.isPrimaryKey) return; // ya están dentro de `id`
       if (attr.isPrimaryKey) {
         if (pkAttrs.length === 1 && attr.type === 'Long') {
           code += `    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n`;
@@ -491,14 +760,65 @@ public class ${className} {
       code += `    private ${attr.type} ${attr.name};\n\n`;
     });
 
+    // Relaciones JPA reales derivadas de los conectores UML del diagrama.
+    (ent.relationships || []).forEach((rel: any) => {
+      if (rel.mapsId) {
+        // Clase de Asociación: el campo de objeto comparte su parte de la PK compuesta con `id`.
+        code += `    @ManyToOne\n    @MapsId("${rel.idField}")\n    @JoinColumn(name = "${rel.joinColumn}")\n    private ${rel.targetEntity} ${rel.fieldName};\n\n`;
+      } else if (rel.type === 'MANY_TO_ONE') {
+        code += `    @ManyToOne\n    @JoinColumn(name = "${rel.joinColumn}")\n    private ${rel.targetEntity} ${rel.fieldName};\n\n`;
+      } else if (rel.type === 'ONE_TO_MANY') {
+        const cascadeAttr = rel.cascade ? `, cascade = ${rel.cascade}` : '';
+        code += `    @OneToMany(mappedBy = "${rel.mappedBy}"${cascadeAttr})\n    @JsonIgnore\n    @Builder.Default\n    private List<${rel.targetEntity}> ${rel.fieldName} = new ArrayList<>();\n\n`;
+      } else if (rel.type === 'ONE_TO_ONE') {
+        if (rel.owning) {
+          code += `    @OneToOne\n    @JoinColumn(name = "${rel.joinColumn}", unique = true)\n    private ${rel.targetEntity} ${rel.fieldName};\n\n`;
+        } else {
+          code += `    @OneToOne(mappedBy = "${rel.mappedBy}")\n    @JsonIgnore\n    private ${rel.targetEntity} ${rel.fieldName};\n\n`;
+        }
+      } else if (rel.type === 'MANY_TO_MANY') {
+        if (rel.owning) {
+          code += `    @ManyToMany\n    @JoinTable(\n        name = "${rel.joinTable}",\n        joinColumns = @JoinColumn(name = "${rel.joinColumn}"),\n        inverseJoinColumns = @JoinColumn(name = "${rel.inverseJoinColumn}")\n    )\n    @Builder.Default\n    private List<${rel.targetEntity}> ${rel.fieldName} = new ArrayList<>();\n\n`;
+        } else {
+          code += `    @ManyToMany(mappedBy = "${rel.mappedBy}")\n    @JsonIgnore\n    @Builder.Default\n    private List<${rel.targetEntity}> ${rel.fieldName} = new ArrayList<>();\n\n`;
+        }
+      }
+    });
+
+    code += `}\n`;
+    return code;
+  }
+
+  /**
+   * Genera la clase @Embeddable que representa la clave primaria compuesta de una Clase de
+   * Asociación (p. ej. DetalleVentasId con idUsuario + idVentas), usada por su @EmbeddedId.
+   */
+  private static generateAssocClassIdJava(ent: any): string {
+    const pkAttrs = (ent.attributes || []).filter((a: any) => a.isPrimaryKey);
+
+    let code = `package com.examen.backend.model;
+
+import java.io.Serializable;
+import lombok.*;
+
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@EqualsAndHashCode
+public class ${ent.idClassName} implements Serializable {
+
+`;
+    pkAttrs.forEach((attr: any) => {
+      code += `    private ${attr.type} ${attr.name};\n`;
+    });
     code += `}\n`;
     return code;
   }
 
   private static generateRepositoryJava(ent: any): string {
     const className = ent.className;
-    const pkAttr = ent.attributes.find((a: any) => a.isPrimaryKey);
-    const pkType = pkAttr ? pkAttr.type : 'Long';
+    const pkType = ent.effectivePk ? ent.effectivePk.type : 'Long';
 
     return `package com.examen.backend.repository;
 
@@ -516,8 +836,7 @@ public interface ${className}Repository extends JpaRepository<${className}, ${pk
     const className = ent.className;
     const varName = this.sanitizeFieldName(className);
     const repoVar = `${varName}Repository`;
-    const pkAttr = ent.attributes.find((a: any) => a.isPrimaryKey);
-    const pkType = pkAttr ? pkAttr.type : 'Long';
+    const pkType = ent.effectivePk ? ent.effectivePk.type : 'Long';
 
     return `package com.examen.backend.service;
 
@@ -558,8 +877,43 @@ public class ${className}Service {
     const varName = this.sanitizeFieldName(className);
     const serviceVar = `${varName}Service`;
     const endpoint = ent.tableName;
-    const pkAttr = ent.attributes.find((a: any) => a.isPrimaryKey);
-    const pkType = pkAttr ? pkAttr.type : 'Long';
+
+    if (ent.isAssociationClass) {
+      // Clave compuesta (@EmbeddedId): sin un Converter<String, ${ent.idClassName}> registrado,
+      // Spring MVC no puede bindear un @PathVariable a ella desde la URL, así que solo se
+      // exponen list/create (los que no dependen de bindear la PK compuesta desde un path).
+      return `package com.examen.backend.controller;
+
+import com.examen.backend.model.${className};
+import com.examen.backend.service.${className}Service;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/v1/${endpoint}")
+@CrossOrigin(origins = "*")
+public class ${className}Controller {
+
+    @Autowired
+    private ${className}Service ${serviceVar};
+
+    @GetMapping
+    public List<${className}> getAll() {
+        return ${serviceVar}.findAll();
+    }
+
+    @PostMapping
+    public ${className} create(@RequestBody ${className} entity) {
+        return ${serviceVar}.save(entity);
+    }
+}
+`;
+    }
+
+    const pkType = ent.effectivePk ? ent.effectivePk.type : 'Long';
+    const pkFieldName = ent.effectivePk ? ent.effectivePk.name : 'id';
+    const pkSetter = `set${pkFieldName.charAt(0).toUpperCase()}${pkFieldName.slice(1)}`;
 
     return `package com.examen.backend.controller;
 
@@ -593,6 +947,15 @@ public class ${className}Controller {
     @PostMapping
     public ${className} create(@RequestBody ${className} entity) {
         return ${serviceVar}.save(entity);
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<${className}> update(@PathVariable ${pkType} id, @RequestBody ${className} entity) {
+        if (!${serviceVar}.findById(id).isPresent()) {
+            return ResponseEntity.notFound().build();
+        }
+        entity.${pkSetter}(id);
+        return ResponseEntity.ok(${serviceVar}.save(entity));
     }
 
     @DeleteMapping("/{id}")

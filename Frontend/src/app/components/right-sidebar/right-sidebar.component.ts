@@ -2,6 +2,8 @@ import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, ViewChild, E
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
+import { Subscription, combineLatest } from 'rxjs';
+import { debounceTime } from 'rxjs/operators';
 import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service';
 import { ProjectService } from '../../core/services/project.service';
 import { DiagramService } from '../../core/services/diagram.service';
@@ -233,18 +235,19 @@ import { AuthService } from '../../core/services/auth.service';
           </div>
 
           <div class="code-box">
-            <pre class="json-code"><code>{{ jsonCodeString || 'Cargando esquema JSON del lienzo...' }}</code></pre>
+            <pre class="json-code" *ngIf="!jsonError"><code>{{ jsonCodeString || 'Cargando esquema JSON del lienzo...' }}</code></pre>
+            <pre class="json-code json-error" *ngIf="jsonError"><code>No se pudo generar el esquema JSON. Verifica tu conexión y presiona "Actualizar".</code></pre>
           </div>
 
           <div class="code-actions">
             <button class="btn btn-ghost btn-xs" (click)="copyJsonToClipboard()">
-              <span>📋 {{ isCopied ? '¡Copiado!' : 'Copiar' }}</span>
+              <span> {{ isCopied ? '¡Copiado!' : 'Copiar' }}</span>
             </button>
             <button class="btn btn-ghost btn-xs" (click)="refreshCanonicalJson()">
-              <span>🔄 Actualizar</span>
+              <span>Actualizar</span>
             </button>
             <button class="btn btn-primary btn-xs" (click)="downloadJsonFile()">
-              <span>💾 Descargar</span>
+              <span>Descargar</span>
             </button>
           </div>
         </div>
@@ -846,6 +849,7 @@ import { AuthService } from '../../core/services/auth.service';
 })
 export class RightSidebarComponent implements OnInit, OnDestroy {
   @Input() projectId = '';
+  @Input() projectName = '';
   @Input() sidebarWidth = 320;
   @Output() diagramUpdated = new EventEmitter<void>();
   @Output() sidebarWidthChange = new EventEmitter<number>();
@@ -881,6 +885,7 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.stopResizing();
+    this.diagramChangeSub?.unsubscribe();
   }
 
   activeTab: 'AI' | 'CODE' = 'AI';
@@ -933,7 +938,9 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
   sqlOpts = { fk: true, indexes: true, migrations: false, seed: false };
 
   jsonCodeString = '';
+  jsonError = false;
   isCopied = false;
+  private diagramChangeSub?: Subscription;
 
   selectTab(tab: 'AI' | 'CODE'): void {
     this.activeTab = tab;
@@ -946,21 +953,14 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
     const nodes = this.diagramService.currentNodes;
     const connectors = this.diagramService.currentConnectors;
 
-    this.projectService.exportCanonicalJson(this.projectId, nodes, connectors).subscribe({
+    this.jsonError = false;
+    this.projectService.exportCanonicalJson(this.projectId, nodes, connectors, this.projectName).subscribe({
       next: (res) => {
         this.jsonCodeString = JSON.stringify(res, null, 2);
       },
       error: () => {
-        const simpleSchema = {
-          projectName: 'DiagramaUML',
-          database: 'PostgreSQL',
-          entities: (nodes || []).map(n => ({
-            className: n.name,
-            attributes: n.attributes || [],
-            relationships: (connectors || []).filter(c => c.sourceNodeId === n.id)
-          }))
-        };
-        this.jsonCodeString = JSON.stringify(simpleSchema, null, 2);
+        this.jsonCodeString = '';
+        this.jsonError = true;
       }
     });
   }
@@ -986,24 +986,33 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
 
   constructor(
 
-    private aiService: AIAgentService, 
+    private aiService: AIAgentService,
     private projectService: ProjectService,
     private diagramService: DiagramService,
     private wsService: WebSocketService,
     private auth: AuthService,
     private router: Router
-  ) {}
+  ) { }
 
   ngOnInit(): void {
     if (this.projectId) {
       this.loadHistory();
     }
+
+    this.diagramChangeSub = combineLatest([
+      this.diagramService.nodes$,
+      this.diagramService.connectors$
+    ]).pipe(debounceTime(600)).subscribe(() => {
+      if (this.activeTab === 'CODE') {
+        this.refreshCanonicalJson();
+      }
+    });
   }
 
   loadHistory(): void {
     this.aiService.getChatHistory(this.projectId).subscribe({
       next: (history) => this.chatHistory = history || [],
-      error: () => {}
+      error: () => { }
     });
   }
 
@@ -1016,7 +1025,7 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
       utterance.lang = 'es-ES';
       utterance.rate = 1.0;
       window.speechSynthesis.speak(utterance);
-    } catch (e) {}
+    } catch (e) { }
   }
 
   sendTextPrompt(): void {
@@ -1033,6 +1042,23 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
       this.aiService.sendTextPrompt(this.projectId, prompt, this.selectedAgent.id, currentNodes).subscribe({
         next: (res) => {
           this.isProcessing = false;
+
+          if (res?.aiResponse?.error === true) {
+            const localResult = this.aiService.processSmartPromptLocally(prompt, currentNodes, currentConnectors);
+            this.chatHistory.push({
+              sender: 'AI',
+              mode: 'CHAT',
+              content: `${res.aiResponse.message}\n\n${localResult.message}`,
+              timestamp: new Date()
+            });
+            this.speakText(localResult.message);
+            this.diagramUpdated.emit();
+            if (this.projectId) {
+              this.wsService.emitDiagramReloaded(this.projectId);
+            }
+            return;
+          }
+
           if (res?.createdNodes && res.createdNodes.length > 0) {
             res.createdNodes.forEach((n: any) => this.diagramService.addLocalNode(n));
           }
@@ -1133,7 +1159,7 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
           this.recordedTranscript = text;
         };
 
-        try { this.speechRecognition.start(); } catch {}
+        try { this.speechRecognition.start(); } catch { }
       }
 
       this.mediaRecorder.ondataavailable = (event: any) => {
@@ -1154,7 +1180,7 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
 
   stopRecording(): void {
     if (this.speechRecognition) {
-      try { this.speechRecognition.stop(); } catch {}
+      try { this.speechRecognition.stop(); } catch { }
     }
     if (this.mediaRecorder && this.isRecording) {
       this.mediaRecorder.stop();

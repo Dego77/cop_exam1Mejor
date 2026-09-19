@@ -3,6 +3,8 @@ import fs from 'fs';
 export interface AIServiceResponse {
   message: string;
   action?: 'CREATE_CLASSES' | 'MODIFY_CLASSES' | 'DELETE_CLASSES' | 'GENERAL_RESPONSE';
+  /** True only when the AI service call itself failed (after exhausting retries/fallback models), not for legitimate informational responses. */
+  error?: boolean;
   classesGenerated?: any[];
   classesModified?: any[];
   classesToDelete?: string[];
@@ -128,13 +130,85 @@ CRITICAL RULES:
     return 'gemini-3.6-flash';
   }
 
+  private static isTransientError(err: any): boolean {
+    return err?.status === 'UNAVAILABLE' || err?.status === 'RESOURCE_EXHAUSTED' ||
+      /503|429/.test(String(err?.message || ''));
+  }
+
+  private static isAuthError(err: any): boolean {
+    return err?.status === 'UNAUTHENTICATED' || err?.status === 'PERMISSION_DENIED' ||
+      /api key|401|403|unauthenticated|permission_denied/i.test(String(err?.message || ''));
+  }
+
+  /**
+   * Calls Gemini with up to 3 attempts per model, falling back through
+   * gemini-3.6-flash -> requested model -> gemini-3.1-pro-preview on transient
+   * errors (503/429). Used by both text and photo prompts so a flaky/overloaded
+   * model doesn't fail one entry point while the other silently recovers.
+   */
+  private static async generateWithRetry(
+    contents: any,
+    config: Record<string, any> | undefined,
+    model: string | undefined,
+    logPrefix: string
+  ): Promise<string> {
+    const ai = await this.getAIInstance();
+    const primaryModel = this.resolveModel(model);
+    const modelsToTry = ['gemini-3.6-flash', primaryModel, 'gemini-3.1-pro-preview'].filter((v, i, a) => a.indexOf(v) === i);
+
+    let lastError: any = null;
+    for (const modName of modelsToTry) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await ai.models.generateContent({
+            model: modName,
+            contents,
+            ...(config ? { config } : {}),
+          });
+          return response.text || '';
+        } catch (err: any) {
+          lastError = err;
+          console.warn(`${logPrefix} model ${modName} attempt ${attempt} failed:`, err?.message || err);
+          if (attempt < 3 && this.isTransientError(err)) {
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
+          break;
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  private static buildFailureResponse(error: any, context: string): AIServiceResponse {
+    console.error(`AI ${context} Error:`, error?.message || error);
+    if (this.isAuthError(error)) {
+      return {
+        message: 'No se pudo conectar con el servicio de IA: la clave API de Gemini es inválida o no tiene permisos. Verifica la configuración del servidor.',
+        action: 'GENERAL_RESPONSE',
+        error: true,
+      };
+    }
+    if (this.isTransientError(error)) {
+      return {
+        message: 'El servicio de IA está temporalmente saturado o no disponible. Intenta de nuevo en unos segundos.',
+        action: 'GENERAL_RESPONSE',
+        error: true,
+      };
+    }
+    return {
+      message: 'No se pudo conectar con el servicio de IA. Verifica la clave API y vuelve a intentarlo.',
+      action: 'GENERAL_RESPONSE',
+      error: true,
+    };
+  }
+
   public static async processTextPrompt(
     prompt: string,
     currentDiagramContext?: any,
     model?: string
   ): Promise<AIServiceResponse> {
     try {
-      const ai = await this.getAIInstance();
       let contextStr = '';
       if (currentDiagramContext) {
         let cleanNodes = currentDiagramContext.nodes || currentDiagramContext;
@@ -151,19 +225,10 @@ CRITICAL RULES:
 
       const fullPrompt = `${this.getSystemInstruction()}\n${contextStr}\nUser Request: ${prompt}`;
 
-      const response = await ai.models.generateContent({
-        model: this.resolveModel(model),
-        contents: fullPrompt,
-      });
-
-      const text = response.text || '';
+      const text = await this.generateWithRetry(fullPrompt, undefined, model, 'Text');
       return this.parseJsonResponse(text);
     } catch (error: any) {
-      console.error('AI Text Error:', error?.message || error);
-      return {
-        message: 'No se pudo conectar con el servicio de IA. Verifica la clave API y vuelve a intentarlo.',
-        action: 'GENERAL_RESPONSE',
-      };
+      return this.buildFailureResponse(error, 'Text');
     }
   }
 
@@ -172,50 +237,22 @@ CRITICAL RULES:
     mimeType: string,
     model?: string
   ): Promise<AIServiceResponse> {
-    const ai = await this.getAIInstance();
-    const imageBytes = fs.readFileSync(filePath);
-    const base64Data = imageBytes.toString('base64');
-    const cleanMimeType = (mimeType && mimeType.startsWith('image/')) ? mimeType : 'image/png';
-    const promptText = `${this.getSystemInstruction()}\nAnalyze this whiteboard/notebook image of a UML software class diagram. Extract ALL detected classes with exact class names, stereotypes (Entity, Interface, Abstract, Enum), visibility (- private, + public, # protected), attribute names, attribute data types, method names, return types, AND spatial positionX/positionY coordinates.\nMANDATORY: You MUST detect and extract ALL connecting lines, arrows, and diamonds between classes into 'connectorsGenerated' specifying 'sourceTempId', 'targetTempId', 'sourceClassName', 'targetClassName', and 'type' (Association | Aggregation | Composition | Inheritance | Implementation | Dependency).\nSPECIAL ATTENTION: Verify BOTH endpoints of every line for multiplicities (e.g. '+*', '+1') and ensure ANY class (like 'Cliente') touching solid black diamonds to children (like 'comprador', 'Vendedor') has 'type': 'Composition' with targetTempId set to that parent class.\nCRITICAL: Respond ONLY with a valid JSON object matching the requested schema. Do not output any markdown text or conversational greeting outside the JSON object.`;
+    try {
+      const imageBytes = fs.readFileSync(filePath);
+      const base64Data = imageBytes.toString('base64');
+      const cleanMimeType = (mimeType && mimeType.startsWith('image/')) ? mimeType : 'image/png';
+      const promptText = `${this.getSystemInstruction()}\nAnalyze this whiteboard/notebook image of a UML software class diagram. Extract ALL detected classes with exact class names, stereotypes (Entity, Interface, Abstract, Enum), visibility (- private, + public, # protected), attribute names, attribute data types, method names, return types, AND spatial positionX/positionY coordinates.\nMANDATORY: You MUST detect and extract ALL connecting lines, arrows, and diamonds between classes into 'connectorsGenerated' specifying 'sourceTempId', 'targetTempId', 'sourceClassName', 'targetClassName', and 'type' (Association | Aggregation | Composition | Inheritance | Implementation | Dependency).\nSPECIAL ATTENTION: Verify BOTH endpoints of every line for multiplicities (e.g. '+*', '+1') and ensure ANY class (like 'Cliente') touching solid black diamonds to children (like 'comprador', 'Vendedor') has 'type': 'Composition' with targetTempId set to that parent class.\nCRITICAL: Respond ONLY with a valid JSON object matching the requested schema. Do not output any markdown text or conversational greeting outside the JSON object.`;
 
-    const primaryModel = this.resolveModel(model);
-    const modelsToTry = ['gemini-3.6-flash', primaryModel, 'gemini-3.1-pro-preview'].filter((v, i, a) => a.indexOf(v) === i);
-
-    for (const modName of modelsToTry) {
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          const response = await ai.models.generateContent({
-            model: modName,
-            contents: [
-              promptText,
-              { inlineData: { mimeType: cleanMimeType, data: base64Data } },
-            ],
-            config: {
-              responseMimeType: 'application/json',
-              temperature: 0.1,
-            },
-          });
-
-          const text = response.text || '';
-          const parsed = this.parseJsonResponse(text);
-          if (parsed && typeof parsed === 'object') {
-            return parsed;
-          }
-        } catch (err: any) {
-          console.warn(`Gemini Vision model ${modName} attempt ${attempt} failed:`, err?.message || err);
-          if (attempt < 3 && (err?.status === 'UNAVAILABLE' || err?.status === 'RESOURCE_EXHAUSTED' || err?.message?.includes('503') || err?.message?.includes('429'))) {
-            await new Promise(r => setTimeout(r, 2000));
-            continue;
-          }
-          break;
-        }
-      }
+      const text = await this.generateWithRetry(
+        [promptText, { inlineData: { mimeType: cleanMimeType, data: base64Data } }],
+        { responseMimeType: 'application/json', temperature: 0.1 },
+        model,
+        'Vision'
+      );
+      return this.parseJsonResponse(text);
+    } catch (error: any) {
+      return this.buildFailureResponse(error, 'Vision');
     }
-
-    return {
-      message: 'No se pudo procesar la imagen con los modelos de Gemini Vision disponibles.',
-      action: 'GENERAL_RESPONSE',
-    };
   }
 
   public static async processVoicePrompt(
