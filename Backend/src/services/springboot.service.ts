@@ -72,6 +72,50 @@ export class SpringBootGeneratorService {
     return name.endsWith('s') ? name : `${name}s`;
   }
 
+  /**
+   * Determina cuál de los dos extremos de un conector 1-a-muchos es el lado "muchos" (el que
+   * debe llevar la FK / @ManyToOne), en vez de asumir que siempre es el nodo "source" del
+   * conector (que solo refleja desde qué clase se arrastró la línea en el canvas, no la
+   * cardinalidad real). Prioriza la multiplicidad escrita en el diagrama; si no hay ninguna y
+   * el conector es Composición/Agregación, usa la convención del rombo: el rombo SIEMPRE se
+   * dibuja en el extremo "target" (ver getDiamondPoints/getTargetEndpoint en
+   * canvas.component.ts), así que ese lado es el "1" y la cola (source) es el lado "muchos".
+   * Devuelve null cuando no se puede determinar (Asociación simple sin multiplicidad
+   * declarada), y el llamador cae al comportamiento previo (source = muchos) como último recurso.
+   */
+  private static determineManySideNodeId(conn: UMLConnector): string | null {
+    const srcMult = (conn.sourceMultiplicity || '').replace(/\+/g, '').trim();
+    const tgtMult = (conn.targetMultiplicity || '').replace(/\+/g, '').trim();
+    const srcHasMany = srcMult.includes('*');
+    const tgtHasMany = tgtMult.includes('*');
+
+    if (srcHasMany && !tgtHasMany) return conn.sourceNodeId;
+    if (tgtHasMany && !srcHasMany) return conn.targetNodeId;
+
+    if (srcMult === '' && tgtMult === '' && (conn.type === 'Composition' || conn.type === 'Aggregation')) {
+      return conn.sourceNodeId;
+    }
+
+    return null;
+  }
+
+  /**
+   * Para relaciones 1-a-1, determina qué extremo debe llevar la FK: el lado marcado como
+   * opcional ("0..1") referencia al lado obligatorio ("1"), que es la convención estándar en
+   * JPA/Hibernate. Devuelve null si es ambiguo (ambos extremos iguales, p. ej. "1"/"1"), y el
+   * llamador cae al comportamiento previo (source = dueño) como último recurso.
+   */
+  private static determineOneToOneOwningNodeId(conn: UMLConnector): string | null {
+    const srcMult = (conn.sourceMultiplicity || '').replace(/\+/g, '').trim();
+    const tgtMult = (conn.targetMultiplicity || '').replace(/\+/g, '').trim();
+    const srcOptional = srcMult.startsWith('0');
+    const tgtOptional = tgtMult.startsWith('0');
+
+    if (srcOptional && !tgtOptional) return conn.sourceNodeId;
+    if (tgtOptional && !srcOptional) return conn.targetNodeId;
+    return null;
+  }
+
   private static mapToJavaType(typeStr: string): string {
     const t = (typeStr || 'String').toLowerCase().trim();
     if (t === 'int' || t === 'integer') return 'Integer';
@@ -325,71 +369,90 @@ export class SpringBootGeneratorService {
         const srcMult = conn.sourceMultiplicity || '';
         const tgtMult = conn.targetMultiplicity || '';
         const isManyToMany = srcMult.includes('*') && tgtMult.includes('*');
-        // Relación 1 a 1: ninguno de los dos extremos tiene multiplicidad "muchos" y ambos
-        // extremos declaran cardinalidad explícita (p. ej. "+1"/"+1" o "1"/"0..1").
+
+        // Lado "muchos" real (ver determineManySideNodeId): null si no se pudo determinar,
+        // en cuyo caso se cae al comportamiento previo (source = muchos) como último recurso.
+        const manySideNodeId = isManyToMany ? null : this.determineManySideNodeId(conn);
+        const effectiveManySideNodeId = manySideNodeId || conn.sourceNodeId;
+
+        // Relación 1 a 1: no es Many-to-Many y no se pudo determinar un lado "muchos" (ni por
+        // multiplicidad explícita ni por convención de rombo), pero ambos extremos SÍ declaran
+        // cardinalidad explícita (p. ej. "+1"/"+1" o "1"/"0..1").
         const isOneToOne =
-          !isManyToMany && srcMult.trim() !== '' && tgtMult.trim() !== '' &&
-          !srcMult.includes('*') && !tgtMult.includes('*');
+          !isManyToMany && !manySideNodeId && srcMult.trim() !== '' && tgtMult.trim() !== '';
+        const oneToOneOwningNodeId = isOneToOne
+          ? (this.determineOneToOneOwningNodeId(conn) || conn.sourceNodeId)
+          : null;
+
         const cascade =
           conn.type === 'Composition'
             ? 'CascadeType.ALL, orphanRemoval = true'
             : conn.type === 'Aggregation'
               ? '{CascadeType.PERSIST, CascadeType.MERGE}'
               : null;
+        // Composición implica que la parte no puede existir sin el todo ("1..*"): la FK del
+        // lado "muchos" queda obligatoria. Agregación/Asociación simple la dejan opcional.
+        const nullableFk = conn.type !== 'Composition';
 
-        if (conn.sourceNodeId === node.id) {
-          if (isManyToMany) {
+        const isThisSource = conn.sourceNodeId === node.id;
+        const isThisTarget = conn.targetNodeId === node.id;
+        if (!isThisSource && !isThisTarget) return;
+        const otherClass = isThisSource ? targetClass : sourceClass;
+
+        if (isManyToMany) {
+          if (isThisSource) {
             relationships.push({
               type: 'MANY_TO_MANY',
               owning: true,
-              targetEntity: targetClass,
-              fieldName: this.pluralizeField(this.sanitizeFieldName(targetClass)),
-              joinTable: `${tableName}_${this.toTableName(targetClass)}`,
+              targetEntity: otherClass,
+              fieldName: this.pluralizeField(this.sanitizeFieldName(otherClass)),
+              joinTable: `${tableName}_${this.toTableName(otherClass)}`,
               joinColumn: `${this.toSnakeSingular(className)}_id`,
-              inverseJoinColumn: `${this.toSnakeSingular(targetClass)}_id`,
-            });
-          } else if (isOneToOne) {
-            relationships.push({
-              type: 'ONE_TO_ONE',
-              owning: true,
-              targetEntity: targetClass,
-              fieldName: this.sanitizeFieldName(targetClass),
-              joinColumn: `${this.toSnakeSingular(targetClass)}_id`,
+              inverseJoinColumn: `${this.toSnakeSingular(otherClass)}_id`,
             });
           } else {
             relationships.push({
-              type: 'MANY_TO_ONE',
-              targetEntity: targetClass,
-              fieldName: this.sanitizeFieldName(targetClass),
-              joinColumn: `${this.toSnakeSingular(targetClass)}_id`,
-            });
-          }
-        } else if (conn.targetNodeId === node.id) {
-          if (isManyToMany) {
-            relationships.push({
               type: 'MANY_TO_MANY',
               owning: false,
-              targetEntity: sourceClass,
-              fieldName: this.pluralizeField(this.sanitizeFieldName(sourceClass)),
+              targetEntity: otherClass,
+              fieldName: this.pluralizeField(this.sanitizeFieldName(otherClass)),
               mappedBy: this.pluralizeField(this.sanitizeFieldName(className)),
             });
-          } else if (isOneToOne) {
+          }
+        } else if (isOneToOne) {
+          if (node.id === oneToOneOwningNodeId) {
             relationships.push({
               type: 'ONE_TO_ONE',
-              owning: false,
-              targetEntity: sourceClass,
-              fieldName: this.sanitizeFieldName(sourceClass),
-              mappedBy: this.sanitizeFieldName(className),
+              owning: true,
+              targetEntity: otherClass,
+              fieldName: this.sanitizeFieldName(otherClass),
+              joinColumn: `${this.toSnakeSingular(otherClass)}_id`,
             });
           } else {
             relationships.push({
-              type: 'ONE_TO_MANY',
-              targetEntity: sourceClass,
-              fieldName: this.pluralizeField(this.sanitizeFieldName(sourceClass)),
+              type: 'ONE_TO_ONE',
+              owning: false,
+              targetEntity: otherClass,
+              fieldName: this.sanitizeFieldName(otherClass),
               mappedBy: this.sanitizeFieldName(className),
-              cascade,
             });
           }
+        } else if (node.id === effectiveManySideNodeId) {
+          relationships.push({
+            type: 'MANY_TO_ONE',
+            targetEntity: otherClass,
+            fieldName: this.sanitizeFieldName(otherClass),
+            joinColumn: `${this.toSnakeSingular(otherClass)}_id`,
+            nullable: nullableFk,
+          });
+        } else {
+          relationships.push({
+            type: 'ONE_TO_MANY',
+            targetEntity: otherClass,
+            fieldName: this.pluralizeField(this.sanitizeFieldName(otherClass)),
+            mappedBy: this.sanitizeFieldName(className),
+            cascade,
+          });
         }
       });
 
@@ -766,7 +829,8 @@ public class ${className}${extendsClause}${implementsClause} {
         // Clase de Asociación: el campo de objeto comparte su parte de la PK compuesta con `id`.
         code += `    @ManyToOne\n    @MapsId("${rel.idField}")\n    @JoinColumn(name = "${rel.joinColumn}")\n    private ${rel.targetEntity} ${rel.fieldName};\n\n`;
       } else if (rel.type === 'MANY_TO_ONE') {
-        code += `    @ManyToOne\n    @JoinColumn(name = "${rel.joinColumn}")\n    private ${rel.targetEntity} ${rel.fieldName};\n\n`;
+        const nullableAttr = rel.nullable === false ? ', nullable = false' : '';
+        code += `    @ManyToOne\n    @JoinColumn(name = "${rel.joinColumn}"${nullableAttr})\n    private ${rel.targetEntity} ${rel.fieldName};\n\n`;
       } else if (rel.type === 'ONE_TO_MANY') {
         const cascadeAttr = rel.cascade ? `, cascade = ${rel.cascade}` : '';
         code += `    @OneToMany(mappedBy = "${rel.mappedBy}"${cascadeAttr})\n    @JsonIgnore\n    @Builder.Default\n    private List<${rel.targetEntity}> ${rel.fieldName} = new ArrayList<>();\n\n`;

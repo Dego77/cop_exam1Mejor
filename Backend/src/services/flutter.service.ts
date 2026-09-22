@@ -76,7 +76,7 @@ export class FlutterGeneratorService {
   private static generatePubspecYaml(projectName: string): string {
     const pkgName = `${this.toDartFileName(projectName)}_app`;
     return `name: ${pkgName}
-description: App Flutter generada automaticamente por ClassForge para "${projectName}": CRUD contra el backend Spring Boot generado, mas un agente de chat y voz con IA local (Gemma on-device).
+description: "App Flutter generada automaticamente por ClassForge para ${projectName}: CRUD contra el backend Spring Boot generado, mas un agente de chat y voz con IA local (Gemma on-device)."
 publish_to: 'none'
 version: 1.0.0+1
 
