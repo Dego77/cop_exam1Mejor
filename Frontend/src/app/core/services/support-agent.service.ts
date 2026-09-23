@@ -22,7 +22,7 @@ export interface SupportChatMessage {
 
 @Injectable({ providedIn: 'root' })
 export class SupportAgentService {
-  private readonly apiUrl = 'http://localhost:3000/api/ai/support';
+  private readonly apiUrl = 'http://3.138.124.211:3000/api/ai/support';
 
   // Toggle state: Interactive mode ON/OFF
   private interactiveModeSubject = new BehaviorSubject<boolean>(true);

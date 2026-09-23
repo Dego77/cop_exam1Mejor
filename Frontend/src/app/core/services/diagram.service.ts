@@ -50,7 +50,7 @@ export interface Diagram {
 
 @Injectable({ providedIn: 'root' })
 export class DiagramService {
-  private readonly apiUrl = 'http://localhost:3000/api/diagrams';
+  private readonly apiUrl = 'http://3.138.124.211:3000/api/diagrams';
   private nodesSubject = new BehaviorSubject<UMLNode[]>([]);
   private connectorsSubject = new BehaviorSubject<UMLConnector[]>([]);
   private selectedNodeSubject = new BehaviorSubject<UMLNode | null>(null);

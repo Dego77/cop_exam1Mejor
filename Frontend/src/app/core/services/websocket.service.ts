@@ -11,7 +11,7 @@ export interface CursorData {
 @Injectable({ providedIn: 'root' })
 export class WebSocketService {
   private socket: Socket | null = null;
-  private readonly serverUrl = 'http://localhost:3000';
+  private readonly serverUrl = 'http://3.138.124.211:3000';
 
   roomUsers$ = new Subject<any[]>();
   userJoined$ = new Subject<any>();

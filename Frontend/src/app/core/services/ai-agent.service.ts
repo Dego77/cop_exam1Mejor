@@ -14,7 +14,7 @@ export interface AIMessage {
 
 @Injectable({ providedIn: 'root' })
 export class AIAgentService {
-  private readonly apiUrl = 'http://localhost:3000/api/ai';
+  private readonly apiUrl = 'http://3.138.124.211:3000/api/ai';
 
   constructor(
     private http: HttpClient, 

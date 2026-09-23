@@ -15,7 +15,7 @@ export interface Project {
 
 @Injectable({ providedIn: 'root' })
 export class ProjectService {
-  private readonly apiUrl = 'http://localhost:3000/api/projects';
+  private readonly apiUrl = 'http://3.138.124.211:3000/api/projects';
 
   constructor(private http: HttpClient, private auth: AuthService) {}
 
@@ -63,7 +63,7 @@ export class ProjectService {
 
   generateSQL(projectId: string): Observable<{ sql: string }> {
     return this.http.post<{ sql: string }>(
-      `http://localhost:3000/api/sql/generate/${projectId}`,
+      `http://3.138.124.211:3000/api/sql/generate/${projectId}`,
       {},
       { headers: this.headers }
     );
@@ -71,14 +71,14 @@ export class ProjectService {
 
   exportXMI(projectId: string): Observable<{ xmi: string }> {
     return this.http.get<{ xmi: string }>(
-      `http://localhost:3000/api/architect/export/${projectId}`,
+      `http://3.138.124.211:3000/api/architect/export/${projectId}`,
       { headers: this.headers }
     );
   }
 
   importXMI(projectId: string, xmi: string): Observable<any> {
     return this.http.post(
-      `http://localhost:3000/api/architect/import/${projectId}`,
+      `http://3.138.124.211:3000/api/architect/import/${projectId}`,
       { xmi },
       { headers: this.headers }
     );
@@ -86,7 +86,7 @@ export class ProjectService {
 
   exportCanonicalJson(projectId: string, nodes?: any[], connectors?: any[], projectName?: string): Observable<any> {
     return this.http.post<any>(
-      `http://localhost:3000/api/architect/export-json`,
+      `http://3.138.124.211:3000/api/architect/export-json`,
       { projectId, nodes, connectors, projectName },
       { headers: this.headers }
     );
@@ -94,7 +94,7 @@ export class ProjectService {
 
   downloadSpringBootZip(projectId: string, nodes?: any[], connectors?: any[], projectName?: string): Observable<Blob> {
     return this.http.post(
-      `http://localhost:3000/api/architect/generate-springboot`,
+      `http://3.138.124.211:3000/api/architect/generate-springboot`,
       { projectId, nodes, connectors, projectName },
       {
         headers: new HttpHeaders({
