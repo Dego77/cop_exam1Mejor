@@ -63,10 +63,10 @@ setupCollaborationSockets(io);
 
 const PORT = process.env.PORT || 3000;
 
-server.listen(PORT, () => {
+server.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`=======================================================`);
   console.log(`🚀 Servidor ClassForge Backend corriendo en puerto ${PORT}`);
-  console.log(`🔗 API REST: http://localhost:${PORT}/api`);
-  console.log(`⚡ Sockets en vivo: ws://localhost:${PORT}`);
+  console.log(`🔗 API REST: http://3.138.124.211:${PORT}/api`);
+  console.log(`⚡ Sockets en vivo: ws://3.138.124.211:${PORT}`);
   console.log(`=======================================================`);
 });

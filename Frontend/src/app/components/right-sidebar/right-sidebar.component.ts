@@ -1076,6 +1076,15 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
               }
             });
           }
+          if (res?.deletedConnectorIds && res.deletedConnectorIds.length > 0) {
+            const current = this.diagramService.currentConnectors;
+            (this.diagramService as any).connectorsSubject.next(current.filter((c: any) => !res.deletedConnectorIds.includes(c.id)));
+          }
+          if (res?.updatedConnectors && res.updatedConnectors.length > 0) {
+            const current = this.diagramService.currentConnectors;
+            const updatedById = new Map(res.updatedConnectors.map((c: any) => [c.id, c]));
+            (this.diagramService as any).connectorsSubject.next(current.map((c: any) => updatedById.get(c.id) || c));
+          }
 
           const rawMsg = res?.aiResponse?.message || res?.message || 'Instrucción procesada exitosamente.';
 
@@ -1214,6 +1223,23 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
           }
           if (res?.deletedNodeIds && res.deletedNodeIds.length > 0) {
             res.deletedNodeIds.forEach((id: string) => this.diagramService.deleteNode(id));
+          }
+          if (res?.createdConnectors && res.createdConnectors.length > 0) {
+            res.createdConnectors.forEach((c: any) => {
+              const current = this.diagramService.currentConnectors;
+              if (!current.some(x => x.id === c.id)) {
+                (this.diagramService as any).connectorsSubject.next([...current, c]);
+              }
+            });
+          }
+          if (res?.deletedConnectorIds && res.deletedConnectorIds.length > 0) {
+            const current = this.diagramService.currentConnectors;
+            (this.diagramService as any).connectorsSubject.next(current.filter((c: any) => !res.deletedConnectorIds.includes(c.id)));
+          }
+          if (res?.updatedConnectors && res.updatedConnectors.length > 0) {
+            const current = this.diagramService.currentConnectors;
+            const updatedById = new Map(res.updatedConnectors.map((c: any) => [c.id, c]));
+            (this.diagramService as any).connectorsSubject.next(current.map((c: any) => updatedById.get(c.id) || c));
           }
 
           const rawMsg = res?.aiResponse?.message || res?.message || 'Nota de voz procesada. Clases generadas en el lienzo.';

@@ -19,6 +19,19 @@ export interface AIServiceResponse {
     label?: string;
     associationClassName?: string;
   }[];
+  connectorsToDelete?: {
+    sourceClassName: string;
+    targetClassName: string;
+    type?: 'Association' | 'Aggregation' | 'Composition' | 'Inheritance' | 'Implementation' | 'Dependency';
+  }[];
+  connectorsModified?: {
+    sourceClassName: string;
+    targetClassName: string;
+    newType?: 'Association' | 'Aggregation' | 'Composition' | 'Inheritance' | 'Implementation' | 'Dependency';
+    newSourceMultiplicity?: string;
+    newTargetMultiplicity?: string;
+    newLabel?: string;
+  }[];
 }
 
 export class AIAgentService {
@@ -84,6 +97,23 @@ When given a prompt (Text, Voice transcription, or Whiteboard photo image), resp
       "associationClassTempId": "cls_3",
       "associationClassName": "OptionalAssociationClassName"
     }
+  ],
+  "connectorsToDelete": [
+    {
+      "sourceClassName": "ClassNameA",
+      "targetClassName": "ClassNameB",
+      "type": "OptionalTypeToNarrowWhichRelationshipIfMultipleExistBetweenTheSamePair"
+    }
+  ],
+  "connectorsModified": [
+    {
+      "sourceClassName": "ClassNameA",
+      "targetClassName": "ClassNameB",
+      "newType": "Association | Aggregation | Composition | Inheritance | Implementation | Dependency",
+      "newSourceMultiplicity": "1",
+      "newTargetMultiplicity": "*",
+      "newLabel": ""
+    }
   ]
 }
 
@@ -92,10 +122,12 @@ CRITICAL RULES:
    - ALWAYS preserve Spanish special characters like 'ñ', 'Ñ', 'á', 'é', 'í', 'ó', 'ú', 'ü' in attribute names (e.g. "año", "diseño", "contraseña", "dirección"), class names, method names, and explanatory messages.
    - DO NOT strip, truncate, or sanitize 'ñ' into 'a' or ASCII. If the user asks for attribute "año", output attribute name EXACTLY as "año".
 
-2. ARCHITECTURAL ADVICE & NORMALIZATION (1NF, 2NF, 3NF):
+2. ARCHITECTURAL ADVICE & NORMALIZATION (1NF, 2NF, 3NF) - OPT-IN ONLY:
    - When the user asks for advice, tips, recommendations, or database normalization ("¿cómo puedo normalizar?", "¿qué atributos faltan?", "¿qué patrones puedo usar?"), provide an expert, articulate response in the "message" field in Spanish.
    - Explain the technical rationale (e.g. avoiding data redundancy, 3NF foreign key decomposition, applying Repository or Factory patterns).
-   - Whenever relevant, ALSO include the recommended normalized classes or attributes inside "classesGenerated" or "classesModified" so the canvas updates automatically with your expert recommendations!
+   - ONLY in that case (the user explicitly asked for advice/recommendations/normalization), ALSO include the recommended normalized classes or attributes inside "classesGenerated" or "classesModified" so the canvas updates automatically with your expert recommendations.
+   - STRICT SCOPE OTHERWISE (MANDATORY): for every other request (creating/describing/extracting classes from text, voice, or a whiteboard photo), output ONLY the attributes/methods/classes the user explicitly named or that are literally written/drawn in the image. NEVER invent, guess, or "helpfully" add extra attributes, methods, or classes the user did not ask for and that are not visibly present in the source. If a class or box has no attributes stated, leave "attributes" as an empty array - do not fill it in with attributes you think a class like that "should" have.
+   - THIS INCLUDES AUTO-GENERATED "id"/PRIMARY-KEY ATTRIBUTES (MANDATORY, no exception): do NOT add an "id", "id_<className>", or any other primary-key-looking attribute to a new class just because it "should" have one to be a valid entity. A request like "créame la clase Usuario" with nothing else specified means "classesGenerated" for "Usuario" with "attributes": [] (completely empty) - not even an id. Only add an id/pk attribute if the user explicitly asked for it by name or it is literally written/drawn in the source.
 
 3. CANVAS CONTEXT & MODIFICATION RULES:
    - ALWAYS inspect Current Canvas Diagram Context first.
@@ -104,6 +136,12 @@ CRITICAL RULES:
      * If deleting an entire class: put class name in "classesToDelete".
      * If deleting an attribute from a class: put item in "attributesToRemove".
      * If deleting a method from a class: put item in "methodsToRemove".
+   - FOR EDITING/CHANGING an attribute or method that ALREADY exists (rename it, change its type, change its visibility - e.g. "cambia el atributo precio de Rol a tipo Double", "renombra el método getTotal a calcularTotal"): this is NOT a new attribute, it's a replacement. In the SAME response, put the OLD one in "attributesToRemove"/"methodsToRemove" AND the NEW one in "classesModified" -> "attributesToAdd"/"methodsToAdd" for that class. Never leave both the old and the new version present at once.
+   - FOR RELATIONSHIP/CONNECTOR COMMANDS between two EXISTING classes already on the canvas (e.g. "relaciona Usuario con Rol", "elimina la relación entre Usuario y Rol", "cambia esa asociación a composición", "pon la multiplicidad de Usuario en 0..1"):
+     * Creating a NEW relationship that doesn't exist yet on the canvas: use "connectorsGenerated" (as described above).
+     * Deleting an EXISTING relationship shown in Current Canvas Diagram Context: use "connectorsToDelete" with the two class names (and "type" only if you need to disambiguate because more than one relationship connects that same pair).
+     * Changing the type and/or multiplicities of an EXISTING relationship without deleting it: use "connectorsModified" with the two class names and only the fields that actually change ("newType", "newSourceMultiplicity", "newTargetMultiplicity", "newLabel").
+     * NEVER use "connectorsGenerated" to modify a relationship that is already in Current Canvas Diagram Context - that would create a duplicate line instead of changing the existing one.
 
 4. SPEECH & CONVERSATIONAL FILTERS:
    - Ignore conversational fillers, stutters, hesitations (e.g. "eeh", "este", "o sea", "bueno", "mira", "sabes", "digo"). Extract ONLY the final core UML intention.
@@ -116,6 +154,7 @@ CRITICAL RULES:
     - MULTIPLICITIES AT BOTH ENDPOINTS (MANDATORY): Inspect BOTH endpoints of EVERY line for written text containing symbols (e.g. '+*', '+1', '+0..*', '1..*', '1', '*'). You MUST populate BOTH 'sourceMultiplicity' and 'targetMultiplicity'. If text like '+*' appears near the top box border ('Usuario'), set 'sourceMultiplicity': '+*'; if text like '+1' appears near the bottom box border ('Cliente'), set 'targetMultiplicity': '+1'. NEVER skip or leave symbols empty if written on the image!
     - EXHAUSTIVE DIAMOND SCAN (COMPOSITION & AGGREGATION): Perform a 360-degree scan around EVERY class box for solid black diamonds (Composition) or hollow white diamonds (Aggregation). If a class box (e.g. 'Cliente') connects to multiple children (e.g. 'comprador' AND 'Vendedor') with solid black diamonds on its border, EVERY SINGLE LINE MUST BE CATEGORIZED AS 'Composition'! THE CLASS BOX TOUCHING/HOLDING THE DIAMOND (e.g. 'Cliente') MUST ALWAYS BE SET AS 'targetTempId' / 'targetClassName'! The child class box (e.g. 'comprador', 'Vendedor') MUST BE SET AS 'sourceTempId' / 'sourceClassName'!
     - ASSOCIATION CLASS: If a class box (e.g. 'Detalle_Compra' or 'Detalle_Rol') is connected by a dashed line to the middle of a main relationship line between two classes (e.g. 'Usuario' and 'Compra' or 'Usuario' and 'Rol'), set 'associationClassTempId' (or 'associationClassName') inside that main relationship connector in 'connectorsGenerated'! DO NOT create a separate direct connector for the association class box.
+    - IMPLICIT ASSOCIATION CLASS FROM MANY-TO-MANY CARDINALITY (MANDATORY, even with NO third box drawn/mentioned): If a relationship's 'sourceMultiplicity' AND 'targetMultiplicity' are BOTH many-valued (each one is '*', '1..*', or '0..*', with or without a leading '+'/'-'/'#'), it is a many-to-many relationship and MUST be modeled as an association class, exactly like a real UML class diagram normalizes an M:N relation into a junction table/class - even if the whiteboard/text only shows a plain line with those cardinalities and no intermediate box. In that case you MUST: (1) add a new entry to 'classesGenerated' for the junction class named '{SourceClassName}_{TargetClassName}' (stereotype 'Entity', positioned roughly between the two related boxes) WITH AN EMPTY "attributes" ARRAY - do NOT invent typical join-table columns like "cantidad" or "precio_unitario" on your own; only add attributes to it if the user's text or the whiteboard image explicitly names attributes for that specific junction class, and (2) set 'associationClassName' (matching that exact new class name) on that connector in 'connectorsGenerated'. Do this even when action is otherwise just describing/extracting an existing diagram.
     - INHERITANCE / IMPLEMENTATION: A solid or hollow triangle arrowhead pointing to a class box indicates 'Inheritance' (or 'Implementation'). Set 'sourceTempId' / 'sourceClassName' to the child class and 'targetTempId' / 'targetClassName' to the parent/superclass receiving the triangle arrow head.
 
     6. Delete ONLY what is requested by the user. Do not remove unrequested items.
@@ -135,16 +174,27 @@ CRITICAL RULES:
       /503|429/.test(String(err?.message || ''));
   }
 
+  // "limit: 0" means this model has ZERO quota on the current plan/key (e.g. a pro-tier model on
+  // a free-tier key) - a permanent condition, not a transient rate limit. Retrying it wastes
+  // attempts/delay on a call that can never succeed, so it should be skipped immediately instead
+  // of going through the normal transient-error retry loop.
+  private static isZeroQuotaError(err: any): boolean {
+    return /limit:\s*0\b/i.test(String(err?.message || ''));
+  }
+
   private static isAuthError(err: any): boolean {
     return err?.status === 'UNAUTHENTICATED' || err?.status === 'PERMISSION_DENIED' ||
       /api key|401|403|unauthenticated|permission_denied/i.test(String(err?.message || ''));
   }
 
   /**
-   * Calls Gemini with up to 3 attempts per model, falling back through
-   * gemini-3.6-flash -> requested model -> gemini-3.1-pro-preview on transient
-   * errors (503/429). Used by both text and photo prompts so a flaky/overloaded
-   * model doesn't fail one entry point while the other silently recovers.
+   * Calls Gemini with up to 2 attempts per model, falling back through
+   * gemini-3.6-flash -> requested model -> gemini-3.5-flash -> gemini-flash-latest on transient
+   * errors (503/429). All three fallbacks are free-tier-accessible flash models (same working
+   * pattern already used by support-ai.service.ts) - gemini-3.1-pro-preview used to be the last
+   * fallback here, but it has ZERO quota on a free-tier key, so it was a guaranteed dead end that
+   * only added latency. Used by both text and photo prompts so a flaky/overloaded model doesn't
+   * fail one entry point while the other silently recovers.
    */
   private static async generateWithRetry(
     contents: any,
@@ -154,11 +204,14 @@ CRITICAL RULES:
   ): Promise<string> {
     const ai = await this.getAIInstance();
     const primaryModel = this.resolveModel(model);
-    const modelsToTry = ['gemini-3.6-flash', primaryModel, 'gemini-3.1-pro-preview'].filter((v, i, a) => a.indexOf(v) === i);
+    // gemini-2.5-flash goes last: an older, less-contended model kept as a final safety net for
+    // when the newer 3.x models are all shedding load under "high demand" (503) at once - which
+    // hits multimodal (photo/voice) requests hardest since they're heavier than plain text.
+    const modelsToTry = ['gemini-3.6-flash', primaryModel, 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash'].filter((v, i, a) => a.indexOf(v) === i);
 
     let lastError: any = null;
     for (const modName of modelsToTry) {
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
         try {
           const response = await ai.models.generateContent({
             model: modName,
@@ -169,8 +222,12 @@ CRITICAL RULES:
         } catch (err: any) {
           lastError = err;
           console.warn(`${logPrefix} model ${modName} attempt ${attempt} failed:`, err?.message || err);
-          if (attempt < 3 && this.isTransientError(err)) {
-            await new Promise(r => setTimeout(r, 2000));
+          if (this.isZeroQuotaError(err)) {
+            // Permanent for this model on this plan - move straight to the next model.
+            break;
+          }
+          if (attempt < 2 && this.isTransientError(err)) {
+            await new Promise(r => setTimeout(r, 1200));
             continue;
           }
           break;
@@ -220,7 +277,11 @@ CRITICAL RULES:
             methods: n.methods || []
           }));
         }
-        contextStr = `Current Canvas Diagram Context: ${JSON.stringify(cleanNodes)}`;
+        // Existing relationships (already resolved to class names, not DB ids) must be in the
+        // context too, otherwise the model can never correctly use connectorsToDelete /
+        // connectorsModified - it would have no way to know what relationships already exist.
+        const cleanConnectors = Array.isArray(currentDiagramContext.connectors) ? currentDiagramContext.connectors : [];
+        contextStr = `Current Canvas Diagram Context: ${JSON.stringify({ nodes: cleanNodes, connectors: cleanConnectors })}`;
       }
 
       const fullPrompt = `${this.getSystemInstruction()}\n${contextStr}\nUser Request: ${prompt}`;
@@ -262,7 +323,6 @@ CRITICAL RULES:
     model?: string
   ): Promise<AIServiceResponse> {
     try {
-      const ai = await this.getAIInstance();
       const audioBytes = fs.readFileSync(filePath);
       const base64Data = audioBytes.toString('base64');
       const contextStr = currentDiagramContext
@@ -271,9 +331,8 @@ CRITICAL RULES:
 
       const promptText = `${this.getSystemInstruction()}\n${contextStr}\nListen to this voice message audio. Transcribe the user command and perform the requested UML class diagram operations.`;
 
-      const response = await ai.models.generateContent({
-        model: this.resolveModel(model),
-        contents: [
+      const text = await this.generateWithRetry(
+        [
           promptText,
           {
             inlineData: {
@@ -282,16 +341,13 @@ CRITICAL RULES:
             },
           },
         ],
-      });
-
-      const text = response.text || '';
+        undefined,
+        model,
+        'Voice'
+      );
       return this.parseJsonResponse(text);
     } catch (error: any) {
-      console.error('AI Voice Error:', error);
-      return {
-        message: `Error al procesar el archivo de voz: ${error.message}`,
-        action: 'GENERAL_RESPONSE',
-      };
+      return this.buildFailureResponse(error, 'Voice');
     }
   }
 

@@ -99,6 +99,7 @@ export class DiagramService {
             }
           }
 
+          serverConnectors = this.repairAssociationClassLinks(serverConnectors, serverNodes);
           serverConnectors = this.deduplicateConnectors(serverConnectors);
 
           this.nodesSubject.next(serverNodes);
@@ -216,6 +217,44 @@ export class DiagramService {
     }
 
     return connectors;
+  }
+
+  // Self-heals a connector whose associationClassNodeId points at a client-side temp id
+  // (e.g. "node_assoc_...") that was never rewritten to the node's real UUID. This happens
+  // because addConnector() posts a new AssociationClass connector to the backend immediately,
+  // before its box node is necessarily persisted (see onCreateConnector in editor.component.ts),
+  // and the temp->real reconciliation in saveCurrentDiagram() below only fires when both the
+  // node save and the connector update land in the very same batch - anything that breaks that
+  // (a network hiccup, an edit going through the singular updateConnector() instead, etc.)
+  // leaves the connector permanently pointing at an id no node will ever have again. Runs on
+  // every project load: if associationClassNodeId doesn't match any current node, resolve it by
+  // the same "{source}_{target}" naming convention editor.component.ts uses when it
+  // auto-creates the association-class box (the same fallback canvas.component.ts's
+  // getAssocClassNode() already relies on to draw the dashed line), then persist the fix so the
+  // project self-repairs the first time anyone opens it after this change ships.
+  private repairAssociationClassLinks(connectors: UMLConnector[], nodes: UMLNode[]): UMLConnector[] {
+    if (!connectors || connectors.length === 0 || !nodes || nodes.length === 0) return connectors;
+    const nodeIds = new Set(nodes.map(n => n.id));
+
+    return connectors.map(c => {
+      if (!c.associationClassNodeId || nodeIds.has(c.associationClassNodeId)) return c;
+
+      const source = nodes.find(n => n.id === c.sourceNodeId);
+      const target = nodes.find(n => n.id === c.targetNodeId);
+      let resolved: UMLNode | undefined;
+      if (source && target) {
+        const name1 = `${source.name}_${target.name}`.toLowerCase();
+        const name2 = `${target.name}_${source.name}`.toLowerCase();
+        resolved = nodes.find(n =>
+          n.stereotype === 'AssociationClass' &&
+          (n.name?.toLowerCase() === name1 || n.name?.toLowerCase() === name2)
+        );
+      }
+      if (!resolved) return c;
+
+      this.updateConnector(c.id, { associationClassNodeId: resolved.id });
+      return { ...c, associationClassNodeId: resolved.id };
+    });
   }
 
   deduplicateConnectors(connectors: UMLConnector[]): UMLConnector[] {

@@ -8,15 +8,60 @@ export class EaExporterService {
 
   private toEaGuid(rawId: string): string {
     if (!rawId) return 'EAID_11111111_2222_3333_4444_555555555555';
-    let hashStr = '';
+
+    // Fold the WHOLE input through 4 independent rolling hashes so every
+    // character influences the output. A plain hex-concat + substring(0,32)
+    // (the old approach) only ever reflected the first ~16 characters of
+    // rawId, which made `toEaGuid(node.id)` collide with
+    // `toEaGuid(`${node.id}_attr_...`)` whenever node.id was already a
+    // 36-char UUID (real persisted nodes), because the "_attr_..." suffix
+    // fell entirely outside that 16-char window - producing an attribute
+    // with the SAME xmi:id as its own owning class.
+    let h1 = 0x811c9dc5, h2 = 0x01000193, h3 = 0x9e3779b9, h4 = 0x85ebca6b;
     for (let i = 0; i < rawId.length; i++) {
-      hashStr += rawId.charCodeAt(i).toString(16);
+      const c = rawId.charCodeAt(i);
+      h1 = ((h1 ^ c) * 0x01000193) >>> 0;
+      h2 = ((h2 + c) * 0x9e3779b9) >>> 0;
+      h3 = ((h3 ^ (c << (i % 24))) * 0x85ebca6b) >>> 0;
+      h4 = ((h4 + (c * (i + 1))) * 0xc2b2ae35) >>> 0;
     }
-    while (hashStr.length < 32) {
-      hashStr += '9a8b7c6d5e4f3a2b';
-    }
-    const clean = hashStr.substring(0, 32).toUpperCase();
+    const hex = (n: number) => (n >>> 0).toString(16).padStart(8, '0');
+    const clean = (hex(h1) + hex(h2) + hex(h3) + hex(h4)).substring(0, 32).toUpperCase();
     return `EAID_${clean.substring(0, 8)}_${clean.substring(8, 12)}_${clean.substring(12, 16)}_${clean.substring(16, 20)}_${clean.substring(20, 32)}`;
+  }
+
+  // Resolves the real node id an association-class connector's box belongs to. Normally
+  // conn.associationClassNodeId already points at a real, persisted node id - but for a
+  // connector saved through diagram.service.ts's optimistic "temp id first, reconcile later"
+  // flow, that field can be left holding a stale client-side temp id (e.g. "node_assoc_...")
+  // that was never rewritten to the node's real UUID once it got persisted (see
+  // diagram.service.ts's tempToRealIdMap / saveCurrentDiagram). When that happens, fall back to
+  // the same name-matching heuristic canvas.component.ts's getAssocClassNode() already uses to
+  // draw the dashed line on-screen, so the export matches what the user actually sees on canvas.
+  private resolveAssocClassNodeId(
+    conn: UMLConnector,
+    nodes: UMLNode[],
+    nodeMap: Map<string, { node: UMLNode; eaId: string; localId: number }>
+  ): string | undefined {
+    if (conn.associationClassNodeId && nodeMap.has(conn.associationClassNodeId)) {
+      return conn.associationClassNodeId;
+    }
+    if (conn.type === 'AssociationClass' || conn.associationClassNodeId) {
+      const source = nodeMap.get(conn.sourceNodeId)?.node;
+      const target = nodeMap.get(conn.targetNodeId)?.node;
+      if (source && target) {
+        const name1 = `${source.name}_${target.name}`.toLowerCase();
+        const name2 = `${target.name}_${source.name}`.toLowerCase();
+        const match = nodes.find(n =>
+          n.stereotype === 'AssociationClass' &&
+          (n.name?.toLowerCase() === name1 || n.name?.toLowerCase() === name2)
+        );
+        if (match) return match.id;
+      }
+      const anyAssoc = nodes.find(n => n.stereotype === 'AssociationClass');
+      if (anyAssoc) return anyAssoc.id;
+    }
+    return undefined;
   }
 
   private buildMultiplicityXml(multStr: string, idPrefix: string): { lowVal: string; uppVal: string; eaTypeMult: string } {
@@ -131,10 +176,17 @@ export class EaExporterService {
     // uml:Class, otherwise Enterprise Architect has no standard way to know the class is
     // tied to the many-to-many relation between the two real entities.
     const assocClassNodeIds = new Set<string>();
+    // Maps an association-class node id -> the EA id of the SEPARATE visual "link" connector
+    // (the plain Association line drawn between the two real entities). Enterprise Architect
+    // requires this to be a distinct element from the AssociationClass box itself; reusing the
+    // same id for both makes EA unable to place a diagram edge for the link (see below).
+    const assocClassLinkEaId = new Map<string, string>();
     if (connectors && connectors.length > 0) {
-      connectors.forEach(conn => {
-        if (conn.associationClassNodeId && nodeMap.has(conn.associationClassNodeId)) {
-          assocClassNodeIds.add(conn.associationClassNodeId);
+      connectors.forEach((conn, idx) => {
+        const resolvedId = this.resolveAssocClassNodeId(conn, nodes || [], nodeMap);
+        if (resolvedId) {
+          assocClassNodeIds.add(resolvedId);
+          assocClassLinkEaId.set(resolvedId, this.toEaGuid(conn.id || `conn_${idx}`));
         }
       });
     }
@@ -201,12 +253,17 @@ export class EaExporterService {
         </packagedElement>`;
         }
 
-        // Enterprise Architect Extension Element Definition
+        // Enterprise Architect Extension Element Definition. EA itself exports the box of an
+        // association class as xmi:type="uml:Class" (not uml:AssociationClass) with ntype="17"
+        // marking it, plus a conID pointing at the separate link connector below - mirroring
+        // real EA output here (verified against genuine EA-exported .xml samples) is what makes
+        // EA draw the dashed line back to this box on import.
+        const assocLinkId = isAssocClassNode ? assocClassLinkEaId.get(node.id) : undefined;
         elementsExtensionXml += `
-        <element xmi:idref="${nodeEaId}" xmi:type="${isAssocClassNode ? 'uml:AssociationClass' : 'uml:Class'}" name="${node.name}" scope="public">
+        <element xmi:idref="${nodeEaId}" xmi:type="uml:Class" name="${node.name}" scope="public">
           <model package="${packageEaId}" tpos="${idx}" ea_localid="${nodeInfo.localId}"/>
-          <properties stereotype="${node.stereotype || 'Entity'}" isSpecification="false" sType="Class" ntype="0"/>
-          <extendedProperties package_name="Logical View"/>
+          <properties stereotype="${node.stereotype || 'Entity'}" isSpecification="false" sType="Class" ntype="${isAssocClassNode ? '17' : '0'}"/>
+          <extendedProperties package_name="Logical View"${assocLinkId ? ` conID="${assocLinkId}"` : ''}/>
         </element>`;
 
         // Enterprise Architect Visual Geometry Diagram Placement
@@ -228,14 +285,17 @@ export class EaExporterService {
       connectors.forEach((conn, idx) => {
         const srcInfo = nodeMap.get(conn.sourceNodeId);
         const tgtInfo = nodeMap.get(conn.targetNodeId);
-        const assocInfo = conn.associationClassNodeId ? nodeMap.get(conn.associationClassNodeId) : undefined;
+        const resolvedAssocNodeId = this.resolveAssocClassNodeId(conn, nodes || [], nodeMap);
+        const assocInfo = resolvedAssocNodeId ? nodeMap.get(resolvedAssocNodeId) : undefined;
         const isAssocClassConn = !!(assocInfo && assocClassNodeIds.has(assocInfo.node.id));
 
-        // An association class is a SINGLE element in the UML metamodel (both the Association
-        // and the Class at once), so it must carry one shared xmi:id. Reuse the junction node's
-        // own eaId (the same id already used for its diagram box) instead of minting a separate
-        // id for "the connector", otherwise Enterprise Architect sees two disconnected elements.
-        const connEaId = isAssocClassConn ? assocInfo!.eaId : this.toEaGuid(conn.id || `conn_${idx}`);
+        // The AssociationClass box (assocInfo.eaId) and the plain Association LINE drawn between
+        // the two real entities are two distinct EA elements, verified against genuine
+        // Enterprise-Architect-exported .xml samples (scratch_xml/*.xml): the line carries its
+        // own id and an <extendedProperties associationclass="..."/> pointer back to the box.
+        // Reusing one id for both (as this used to do) leaves the line with no diagram geometry,
+        // so EA renders the box with nothing connecting it to the two classes.
+        const connEaId = this.toEaGuid(conn.id || `conn_${idx}`);
 
         const srcEaId = srcInfo ? srcInfo.eaId : this.toEaGuid(conn.sourceNodeId);
         const tgtEaId = tgtInfo ? tgtInfo.eaId : this.toEaGuid(conn.targetNodeId);
@@ -307,11 +367,17 @@ export class EaExporterService {
         // aggregation="shared"/"composite", while the "whole" end (target) stays "none".
         const srcAggAttr = aggregationValue ? ` aggregation="${aggregationValue}"` : '';
 
-        const assocClassAttr = assocInfo ? `associationClass="${assocInfo.eaId}"` : (conn.associationClassNodeId ? `associationClass="${conn.associationClassNodeId}"` : '');
+        // Real EA puts this on the LINE connector's <extendedProperties>, not on <properties>,
+        // and the attribute is lowercase "associationclass".
+        const assocClassExtProps = isAssocClassConn ? ` associationclass="${assocInfo!.eaId}"` : '';
+        const assocSubtypeAttr = isAssocClassConn ? 'subtype="Class"' : '';
 
-        // Standard UML 2.1 Association / AssociationClass in packagedElement (memberEnd & type xmi:idref)
+        // Standard UML 2.1 Association / AssociationClass in packagedElement (memberEnd & type xmi:idref).
+        // For an association class this packagedElement is the CLASS+ASSOCIATION itself, so it
+        // must use the box's own id (assocInfo.eaId), not the separate visual line's connEaId.
         if (conn.type !== 'Inheritance') {
           let assocClassMembersXml = '';
+          const pkgElId = isAssocClassConn ? assocInfo!.eaId : connEaId;
           if (isAssocClassConn) {
             const content = assocClassContentMap.get(assocInfo!.node.id);
             assocClassMembersXml = `
@@ -321,13 +387,13 @@ export class EaExporterService {
           }
 
           connectorsXml += `
-        <packagedElement xmi:type="${connUmlType}" xmi:id="${connEaId}" name="${isAssocClassConn ? assocInfo!.node.name : (conn.label || '')}" memberEnd="${connEaId}_src ${connEaId}_tgt">
-          <ownedEnd xmi:type="uml:Property" xmi:id="${connEaId}_src" visibility="public" association="${connEaId}"${srcAggAttr}>
+        <packagedElement xmi:type="${connUmlType}" xmi:id="${pkgElId}" name="${isAssocClassConn ? assocInfo!.node.name : (conn.label || '')}" memberEnd="${connEaId}_src ${connEaId}_tgt">
+          <ownedEnd xmi:type="uml:Property" xmi:id="${connEaId}_src" visibility="public" association="${pkgElId}"${srcAggAttr}>
             <type xmi:idref="${srcEaId}"/>
             ${srcMult.lowVal}
             ${srcMult.uppVal}
           </ownedEnd>
-          <ownedEnd xmi:type="uml:Property" xmi:id="${connEaId}_tgt" visibility="public" association="${connEaId}">
+          <ownedEnd xmi:type="uml:Property" xmi:id="${connEaId}_tgt" visibility="public" association="${pkgElId}">
             <type xmi:idref="${tgtEaId}"/>
             ${tgtMult.lowVal}
             ${tgtMult.uppVal}
@@ -335,7 +401,8 @@ export class EaExporterService {
         </packagedElement>`;
         }
 
-        // Enterprise Architect Extension Connector Definition with EXPLICIT <model type="Class"/>
+        // Enterprise Architect Extension Connector Definition with EXPLICIT <model type="Class"/>.
+        // This is always the separate visual LINE (own connEaId), even for an association class.
         connectorsExtensionXml += `
         <connector xmi:idref="${connEaId}" name="${isAssocClassConn ? assocInfo!.node.name : (conn.label || '')}">
           <source xmi:idref="${srcEaId}">
@@ -348,18 +415,16 @@ export class EaExporterService {
             <role visibility="Public"/>
             <type multiplicity="${tgtMult.eaTypeMult}"/>
           </target>
-          <properties ea_type="${eaType}" ${subTypeAttr} ${assocClassAttr} direction="${conn.type === 'Inheritance' ? 'Source -> Destination' : 'Unspecified'}"/>
+          <properties ea_type="${eaType}" ${subTypeAttr} ${assocSubtypeAttr} direction="${conn.type === 'Inheritance' ? 'Source -> Destination' : 'Unspecified'}"/>
+          <extendedProperties virtualInheritance="0"${assocClassExtProps}/>
           <appearance linemode="3" linecolor="-1" linewidth="0" seqno="0" headstyle="0" linestyle="0"/>
         </connector>`;
 
-        // Enterprise Architect Diagram Visual Line Link Placement. Skipped for an association
-        // class: its connEaId is the same id as its diagram box (see above), which already has
-        // its own geometry entry from the node loop - a second entry with the same subject would
-        // give the diagram two conflicting geometries for one element.
-        if (!isAssocClassConn) {
-          diagramElementsXml += `
+        // Enterprise Architect Diagram Visual Line Link Placement. Always emitted, including for
+        // an association class: the line (connEaId) and the box (assocInfo.eaId) are now distinct
+        // subjects, so this no longer collides with the box's own geometry entry from the node loop.
+        diagramElementsXml += `
           <element geometry="SX=0;SY=0;EX=0;EY=0;Path=;" subject="${connEaId}" style="LEStyle=3;BStyle=0;"/>`;
-        }
       });
     }
 
