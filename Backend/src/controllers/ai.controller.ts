@@ -17,6 +17,8 @@ function buildDiagramContext(diagram: any): { nodes: any[]; connectors: any[] } 
     stereotype: n.stereotype || 'Entity',
     attributes: n.attributes || [],
     methods: n.methods || [],
+    positionX: n.positionX,
+    positionY: n.positionY,
   }));
   const nodesById = new Map<string, any>((diagram?.nodes || []).map((n: any) => [n.id, n]));
   const connectors = (diagram?.connectors || [])
@@ -138,8 +140,20 @@ function findConnectorByNames(
     const cTgtName = (nodesById.get(c.targetNodeId)?.name || '').toLowerCase();
     const namesMatch = (cSrcName === a && cTgtName === b) || (cSrcName === b && cTgtName === a);
     if (!namesMatch) return false;
-    return !type || c.type === type;
+    // Case-insensitive: Gemini doesn't always reproduce the exact PascalCase enum value
+    // ("Association") it was given in the schema/context, especially reasoning from audio.
+    return !type || (c.type || '').toLowerCase() === type.toLowerCase();
   });
+}
+
+// Reads the first present key from `item`, tolerating the kind of field-name variance Gemini
+// sometimes introduces (especially transcribing+reasoning from audio in one pass) instead of
+// following the schema's exact property names for removal/deletion payloads.
+function resolveName(item: any, ...keys: string[]): string | undefined {
+  for (const k of keys) {
+    if (item && item[k]) return item[k];
+  }
+  return undefined;
 }
 
 // Shared by handleTextPrompt and handleVoicePrompt: deletes/edits an EXISTING relationship by
@@ -162,7 +176,9 @@ async function applyConnectorDeletionsAndEdits(
 
   if (aiResponse.connectorsToDelete && aiResponse.connectorsToDelete.length > 0) {
     for (const item of aiResponse.connectorsToDelete) {
-      const match = findConnectorByNames(existingConnectors, nodesById, item.sourceClassName, item.targetClassName, item.type);
+      const srcName = resolveName(item, 'sourceClassName', 'sourceNodeName', 'source');
+      const tgtName = resolveName(item, 'targetClassName', 'targetNodeName', 'target');
+      const match = findConnectorByNames(existingConnectors, nodesById, srcName, tgtName, item.type);
       if (match) {
         await prisma.connector.delete({ where: { id: match.id } }).catch(() => {});
         deletedConnectorIds.push(match.id);
@@ -174,7 +190,9 @@ async function applyConnectorDeletionsAndEdits(
 
   if (aiResponse.connectorsModified && aiResponse.connectorsModified.length > 0) {
     for (const item of aiResponse.connectorsModified) {
-      const match = findConnectorByNames(existingConnectors, nodesById, item.sourceClassName, item.targetClassName);
+      const srcName = resolveName(item, 'sourceClassName', 'sourceNodeName', 'source');
+      const tgtName = resolveName(item, 'targetClassName', 'targetNodeName', 'target');
+      const match = findConnectorByNames(existingConnectors, nodesById, srcName, tgtName);
       if (match) {
         const data: any = {};
         if (item.newType !== undefined) data.type = item.newType;
@@ -190,6 +208,210 @@ async function applyConnectorDeletionsAndEdits(
   }
 
   return { deletedConnectorIds, updatedConnectors };
+}
+
+// Shared by handleTextPrompt and handleVoicePrompt: applies classesToDelete, attributesToRemove,
+// methodsToRemove, classesModified and classesGenerated against the diagram's nodes, in that
+// order, within a single in-memory `existingNodes` snapshot that is kept up to date after every
+// write. Centralizing this (instead of duplicating it per-handler, as before) fixes two bugs at
+// once: (1) text and voice can no longer drift apart, since there is only one implementation left
+// to fix; (2) previously each handler re-read a STALE copy of a class's attributes/methods in
+// every one of these five blocks, so e.g. "editing" an attribute - which the AI expresses as
+// removing the old one in attributesToRemove AND adding the new one via classesModified in the
+// SAME response, per the system prompt - silently undid itself: the classesModified block still
+// saw the pre-removal attribute list and overwrote the DB with it, restoring the attribute the
+// attributesToRemove block had just deleted a moment earlier in the same request.
+async function applyClassMutations(
+  diagramId: string,
+  existingNodes: any[],
+  aiResponse: any
+): Promise<{ createdNodes: any[]; updatedNodes: any[]; deletedNodeIds: string[] }> {
+  const createdNodes: any[] = [];
+  const updatedNodes: any[] = [];
+  const deletedNodeIds: string[] = [];
+
+  // classesToDelete
+  if (aiResponse.classesToDelete && aiResponse.classesToDelete.length > 0) {
+    for (const clsName of aiResponse.classesToDelete) {
+      const matchNode = existingNodes.find(n => n.name.toLowerCase() === clsName?.toLowerCase());
+      if (matchNode) {
+        await prisma.node.delete({ where: { id: matchNode.id } });
+        deletedNodeIds.push(matchNode.id);
+        const idx = existingNodes.indexOf(matchNode);
+        if (idx !== -1) existingNodes.splice(idx, 1);
+      }
+    }
+  }
+
+  // attributesToRemove
+  if (aiResponse.attributesToRemove && aiResponse.attributesToRemove.length > 0) {
+    for (const item of aiResponse.attributesToRemove) {
+      const clsName = resolveName(item, 'className', 'class', 'name', 'entityName');
+      const attrName = resolveName(item, 'attributeName', 'attribute', 'name', 'fieldName');
+      const matchNode = existingNodes.find(n => n.name.toLowerCase() === clsName?.toLowerCase());
+      if (matchNode) {
+        const currentAttrs = (matchNode.attributes as any[]) || [];
+        const updatedAttrs = currentAttrs.filter(a => a.name?.toLowerCase() !== attrName?.toLowerCase());
+        const updated = await prisma.node.update({
+          where: { id: matchNode.id },
+          data: { attributes: updatedAttrs },
+        });
+        matchNode.attributes = updatedAttrs;
+        updatedNodes.push(updated);
+      }
+    }
+  }
+
+  // methodsToRemove
+  if (aiResponse.methodsToRemove && aiResponse.methodsToRemove.length > 0) {
+    for (const item of aiResponse.methodsToRemove) {
+      const clsName = resolveName(item, 'className', 'class', 'name', 'entityName');
+      const methName = resolveName(item, 'methodName', 'method', 'name', 'functionName');
+      const matchNode = existingNodes.find(n => n.name.toLowerCase() === clsName?.toLowerCase());
+      if (matchNode) {
+        const currentMeths = (matchNode.methods as any[]) || [];
+        const updatedMeths = currentMeths.filter(m => m.name?.toLowerCase() !== methName?.toLowerCase());
+        const updated = await prisma.node.update({
+          where: { id: matchNode.id },
+          data: { methods: updatedMeths },
+        });
+        matchNode.methods = updatedMeths;
+        updatedNodes.push(updated);
+      }
+    }
+  }
+
+  // classesModified (add attributes/methods to an existing class)
+  if (aiResponse.classesModified && aiResponse.classesModified.length > 0) {
+    for (const mod of aiResponse.classesModified) {
+      const matchNode = existingNodes.find(n => n.name.toLowerCase() === mod.name?.toLowerCase());
+      if (matchNode) {
+        const currentAttrs = (matchNode.attributes as any[]) || [];
+        const currentMeths = (matchNode.methods as any[]) || [];
+        const newAttrs = mod.attributesToAdd || mod.attributes || [];
+        const newMeths = mod.methodsToAdd || mod.methods || [];
+
+        const updatedAttrs = [...currentAttrs];
+        for (const a of newAttrs) {
+          if (!updatedAttrs.some(x => x.name?.toLowerCase() === a.name?.toLowerCase())) {
+            updatedAttrs.push(a);
+          }
+        }
+
+        const updatedMeths = [...currentMeths];
+        for (const m of newMeths) {
+          if (!updatedMeths.some(x => x.name?.toLowerCase() === m.name?.toLowerCase())) {
+            updatedMeths.push(m);
+          }
+        }
+
+        const updated = await prisma.node.update({
+          where: { id: matchNode.id },
+          data: { attributes: updatedAttrs, methods: updatedMeths },
+        });
+        matchNode.attributes = updatedAttrs;
+        matchNode.methods = updatedMeths;
+        updatedNodes.push(updated);
+      }
+    }
+  }
+
+  // classesGenerated (create a new class, or merge into an existing same-named one)
+  if (aiResponse.classesGenerated && aiResponse.classesGenerated.length > 0) {
+    let currentX = 100;
+    let currentY = 150;
+
+    for (const cls of aiResponse.classesGenerated) {
+      const matchNode = existingNodes.find(n => n.name.toLowerCase() === cls.name?.toLowerCase());
+      if (matchNode) {
+        const currentAttrs = (matchNode.attributes as any[]) || [];
+        const currentMeths = (matchNode.methods as any[]) || [];
+        const newAttrs = cls.attributes || [];
+        const newMeths = cls.methods || [];
+
+        const updatedAttrs = [...currentAttrs];
+        for (const a of newAttrs) {
+          if (!updatedAttrs.some(x => x.name?.toLowerCase() === a.name?.toLowerCase())) {
+            updatedAttrs.push(a);
+          }
+        }
+
+        const updatedMeths = [...currentMeths];
+        for (const m of newMeths) {
+          if (!updatedMeths.some(x => x.name?.toLowerCase() === m.name?.toLowerCase())) {
+            updatedMeths.push(m);
+          }
+        }
+
+        const updated = await prisma.node.update({
+          where: { id: matchNode.id },
+          data: { attributes: updatedAttrs, methods: updatedMeths },
+        });
+        matchNode.attributes = updatedAttrs;
+        matchNode.methods = updatedMeths;
+        updatedNodes.push(updated);
+      } else {
+        const node = await prisma.node.create({
+          data: {
+            diagramId,
+            name: cls.name,
+            stereotype: cls.stereotype || 'Entity',
+            attributes: cls.attributes || [],
+            methods: cls.methods || [],
+            positionX: currentX,
+            positionY: currentY,
+          },
+        });
+        createdNodes.push(node);
+        existingNodes.push(node);
+        currentX += 250;
+      }
+    }
+  }
+
+  // classesToRename - processed LAST so any attribute/method/merge operation earlier in this same
+  // response (which necessarily still refers to the class by its pre-rename name, since that's
+  // what Current Canvas Diagram Context showed the model) resolves correctly before the name
+  // changes. Relationships are unaffected: connectors reference nodes by DB id, not by name.
+  if (aiResponse.classesToRename && aiResponse.classesToRename.length > 0) {
+    for (const item of aiResponse.classesToRename) {
+      const oldName = resolveName(item, 'oldName', 'currentName', 'from', 'className');
+      const newName = resolveName(item, 'newName', 'to');
+      const matchNode = existingNodes.find(n => n.name.toLowerCase() === oldName?.toLowerCase());
+      if (matchNode && newName) {
+        const updated = await prisma.node.update({
+          where: { id: matchNode.id },
+          data: { name: newName },
+        });
+        matchNode.name = newName;
+        updatedNodes.push(updated);
+      }
+    }
+  }
+
+  // classesToReposition - moves an existing class to new canvas coordinates. Gemini computes
+  // positionX/positionY using the current positions already included in Current Canvas Diagram
+  // Context (see buildDiagramContext), so it can reason about relative moves ("ponla a la derecha
+  // de Y") as well as absolute ones ("colócala en x:400, y:300").
+  if (aiResponse.classesToReposition && aiResponse.classesToReposition.length > 0) {
+    for (const item of aiResponse.classesToReposition) {
+      const clsName = resolveName(item, 'className', 'class', 'name');
+      const matchNode = existingNodes.find(n => n.name.toLowerCase() === clsName?.toLowerCase());
+      const posX = item.positionX;
+      const posY = item.positionY;
+      if (matchNode && posX !== undefined && posX !== null && !isNaN(posX) && posY !== undefined && posY !== null && !isNaN(posY)) {
+        const updated = await prisma.node.update({
+          where: { id: matchNode.id },
+          data: { positionX: Number(posX), positionY: Number(posY) },
+        });
+        matchNode.positionX = Number(posX);
+        matchNode.positionY = Number(posY);
+        updatedNodes.push(updated);
+      }
+    }
+  }
+
+  return { createdNodes, updatedNodes, deletedNodeIds };
 }
 
 export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -250,131 +472,10 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
     if (diagram) {
       const existingNodes = diagram.nodes || [];
 
-      // Process classesToDelete
-      if (aiResponse.classesToDelete && aiResponse.classesToDelete.length > 0) {
-        for (const clsName of aiResponse.classesToDelete) {
-          const matchNode = existingNodes.find(n => n.name.toLowerCase() === clsName.toLowerCase());
-          if (matchNode) {
-            await prisma.node.delete({ where: { id: matchNode.id } });
-            deletedNodeIds.push(matchNode.id);
-          }
-        }
-      }
-
-      // Process attributesToRemove
-      if (aiResponse.attributesToRemove && aiResponse.attributesToRemove.length > 0) {
-        for (const item of aiResponse.attributesToRemove) {
-          const matchNode = existingNodes.find(n => n.name.toLowerCase() === item.className?.toLowerCase());
-          if (matchNode) {
-            const currentAttrs = (matchNode.attributes as any[]) || [];
-            const updatedAttrs = currentAttrs.filter(a => a.name?.toLowerCase() !== item.attributeName?.toLowerCase());
-            const updated = await prisma.node.update({
-              where: { id: matchNode.id },
-              data: { attributes: updatedAttrs },
-            });
-            updatedNodes.push(updated);
-          }
-        }
-      }
-
-      // Process methodsToRemove
-      if (aiResponse.methodsToRemove && aiResponse.methodsToRemove.length > 0) {
-        for (const item of aiResponse.methodsToRemove) {
-          const matchNode = existingNodes.find(n => n.name.toLowerCase() === item.className?.toLowerCase());
-          if (matchNode) {
-            const currentMeths = (matchNode.methods as any[]) || [];
-            const updatedMeths = currentMeths.filter(m => m.name?.toLowerCase() !== item.methodName?.toLowerCase());
-            const updated = await prisma.node.update({
-              where: { id: matchNode.id },
-              data: { methods: updatedMeths },
-            });
-            updatedNodes.push(updated);
-          }
-        }
-      }
-
-      // Process classesModified if returned
-      if (aiResponse.classesModified && aiResponse.classesModified.length > 0) {
-        for (const mod of aiResponse.classesModified) {
-          const matchNode = existingNodes.find(n => n.name.toLowerCase() === mod.name?.toLowerCase());
-          if (matchNode) {
-            const currentAttrs = (matchNode.attributes as any[]) || [];
-            const currentMeths = (matchNode.methods as any[]) || [];
-            const newAttrs = mod.attributesToAdd || mod.attributes || [];
-            const newMeths = mod.methodsToAdd || mod.methods || [];
-
-            const updatedAttrs = [...currentAttrs];
-            for (const a of newAttrs) {
-              if (!updatedAttrs.some(x => x.name?.toLowerCase() === a.name?.toLowerCase())) {
-                updatedAttrs.push(a);
-              }
-            }
-
-            const updatedMeths = [...currentMeths];
-            for (const m of newMeths) {
-              if (!updatedMeths.some(x => x.name?.toLowerCase() === m.name?.toLowerCase())) {
-                updatedMeths.push(m);
-              }
-            }
-
-            const updated = await prisma.node.update({
-              where: { id: matchNode.id },
-              data: { attributes: updatedAttrs, methods: updatedMeths },
-            });
-            updatedNodes.push(updated);
-          }
-        }
-      }
-
-      // Process classesGenerated with smart existing-check
-      if (aiResponse.classesGenerated && aiResponse.classesGenerated.length > 0) {
-        let currentX = 100;
-        let currentY = 150;
-
-        for (const cls of aiResponse.classesGenerated) {
-          const matchNode = existingNodes.find(n => n.name.toLowerCase() === cls.name?.toLowerCase());
-          if (matchNode) {
-            const currentAttrs = (matchNode.attributes as any[]) || [];
-            const currentMeths = (matchNode.methods as any[]) || [];
-            const newAttrs = cls.attributes || [];
-            const newMeths = cls.methods || [];
-
-            const updatedAttrs = [...currentAttrs];
-            for (const a of newAttrs) {
-              if (!updatedAttrs.some(x => x.name?.toLowerCase() === a.name?.toLowerCase())) {
-                updatedAttrs.push(a);
-              }
-            }
-
-            const updatedMeths = [...currentMeths];
-            for (const m of newMeths) {
-              if (!updatedMeths.some(x => x.name?.toLowerCase() === m.name?.toLowerCase())) {
-                updatedMeths.push(m);
-              }
-            }
-
-            const updated = await prisma.node.update({
-              where: { id: matchNode.id },
-              data: { attributes: updatedAttrs, methods: updatedMeths },
-            });
-            updatedNodes.push(updated);
-          } else {
-            const node = await prisma.node.create({
-              data: {
-                diagramId: diagram.id,
-                name: cls.name,
-                stereotype: cls.stereotype || 'Entity',
-                attributes: cls.attributes || [],
-                methods: cls.methods || [],
-                positionX: currentX,
-                positionY: currentY,
-              },
-            });
-            createdNodes.push(node);
-            currentX += 250;
-          }
-        }
-      }
+      const mutationResult = await applyClassMutations(diagram.id, existingNodes, aiResponse);
+      createdNodes = mutationResult.createdNodes;
+      updatedNodes = mutationResult.updatedNodes;
+      deletedNodeIds = mutationResult.deletedNodeIds;
 
       // Process connectorsGenerated (create), then connectorsToDelete/connectorsModified (edit
       // existing relationships) - both via the shared helpers so text and voice stay in sync.
@@ -626,10 +727,17 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
       return;
     }
 
-    const diagram = await prisma.diagram.findFirst({
+    let diagram = await prisma.diagram.findFirst({
       where: { projectId },
       include: { nodes: true, connectors: true },
     });
+
+    if (!diagram) {
+      diagram = await prisma.diagram.create({
+        data: { projectId, name: 'Main Diagram' },
+        include: { nodes: true, connectors: true },
+      });
+    }
 
     const contextToUse = buildDiagramContext(diagram);
     const aiResponse = await AIAgentService.processVoicePrompt(file.path, file.mimetype, contextToUse, model);
@@ -668,131 +776,10 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
     if (diagram) {
       const existingNodes = diagram.nodes || [];
 
-      // Process classesToDelete
-      if (aiResponse.classesToDelete && aiResponse.classesToDelete.length > 0) {
-        for (const clsName of aiResponse.classesToDelete) {
-          const matchNode = existingNodes.find(n => n.name.toLowerCase() === clsName.toLowerCase());
-          if (matchNode) {
-            await prisma.node.delete({ where: { id: matchNode.id } });
-            deletedNodeIds.push(matchNode.id);
-          }
-        }
-      }
-
-      // Process attributesToRemove
-      if (aiResponse.attributesToRemove && aiResponse.attributesToRemove.length > 0) {
-        for (const item of aiResponse.attributesToRemove) {
-          const matchNode = existingNodes.find(n => n.name.toLowerCase() === item.className?.toLowerCase());
-          if (matchNode) {
-            const currentAttrs = (matchNode.attributes as any[]) || [];
-            const updatedAttrs = currentAttrs.filter(a => a.name?.toLowerCase() !== item.attributeName?.toLowerCase());
-            const updated = await prisma.node.update({
-              where: { id: matchNode.id },
-              data: { attributes: updatedAttrs },
-            });
-            updatedNodes.push(updated);
-          }
-        }
-      }
-
-      // Process methodsToRemove
-      if (aiResponse.methodsToRemove && aiResponse.methodsToRemove.length > 0) {
-        for (const item of aiResponse.methodsToRemove) {
-          const matchNode = existingNodes.find(n => n.name.toLowerCase() === item.className?.toLowerCase());
-          if (matchNode) {
-            const currentMeths = (matchNode.methods as any[]) || [];
-            const updatedMeths = currentMeths.filter(m => m.name?.toLowerCase() !== item.methodName?.toLowerCase());
-            const updated = await prisma.node.update({
-              where: { id: matchNode.id },
-              data: { methods: updatedMeths },
-            });
-            updatedNodes.push(updated);
-          }
-        }
-      }
-
-      // Process classesModified
-      if (aiResponse.classesModified && aiResponse.classesModified.length > 0) {
-        for (const mod of aiResponse.classesModified) {
-          const matchNode = existingNodes.find(n => n.name.toLowerCase() === mod.name?.toLowerCase());
-          if (matchNode) {
-            const currentAttrs = (matchNode.attributes as any[]) || [];
-            const currentMeths = (matchNode.methods as any[]) || [];
-            const newAttrs = mod.attributesToAdd || mod.attributes || [];
-            const newMeths = mod.methodsToAdd || mod.methods || [];
-
-            const updatedAttrs = [...currentAttrs];
-            for (const a of newAttrs) {
-              if (!updatedAttrs.some(x => x.name?.toLowerCase() === a.name?.toLowerCase())) {
-                updatedAttrs.push(a);
-              }
-            }
-
-            const updatedMeths = [...currentMeths];
-            for (const m of newMeths) {
-              if (!updatedMeths.some(x => x.name?.toLowerCase() === m.name?.toLowerCase())) {
-                updatedMeths.push(m);
-              }
-            }
-
-            const updated = await prisma.node.update({
-              where: { id: matchNode.id },
-              data: { attributes: updatedAttrs, methods: updatedMeths },
-            });
-            updatedNodes.push(updated);
-          }
-        }
-      }
-
-      // Process classesGenerated
-      if (aiResponse.classesGenerated && aiResponse.classesGenerated.length > 0) {
-        let currentX = 120;
-        let currentY = 120;
-
-        for (const cls of aiResponse.classesGenerated) {
-          const matchNode = existingNodes.find(n => n.name.toLowerCase() === cls.name?.toLowerCase());
-          if (matchNode) {
-            const currentAttrs = (matchNode.attributes as any[]) || [];
-            const currentMeths = (matchNode.methods as any[]) || [];
-            const newAttrs = cls.attributes || [];
-            const newMeths = cls.methods || [];
-
-            const updatedAttrs = [...currentAttrs];
-            for (const a of newAttrs) {
-              if (!updatedAttrs.some(x => x.name?.toLowerCase() === a.name?.toLowerCase())) {
-                updatedAttrs.push(a);
-              }
-            }
-
-            const updatedMeths = [...currentMeths];
-            for (const m of newMeths) {
-              if (!updatedMeths.some(x => x.name?.toLowerCase() === m.name?.toLowerCase())) {
-                updatedMeths.push(m);
-              }
-            }
-
-            const updated = await prisma.node.update({
-              where: { id: matchNode.id },
-              data: { attributes: updatedAttrs, methods: updatedMeths },
-            });
-            updatedNodes.push(updated);
-          } else {
-            const node = await prisma.node.create({
-              data: {
-                diagramId: diagram.id,
-                name: cls.name,
-                stereotype: cls.stereotype || 'Entity',
-                attributes: cls.attributes || [],
-                methods: cls.methods || [],
-                positionX: currentX,
-                positionY: currentY,
-              },
-            });
-            createdNodes.push(node);
-            currentX += 260;
-          }
-        }
-      }
+      const mutationResult = await applyClassMutations(diagram.id, existingNodes, aiResponse);
+      createdNodes = mutationResult.createdNodes;
+      updatedNodes = mutationResult.updatedNodes;
+      deletedNodeIds = mutationResult.deletedNodeIds;
 
       // Process connectorsGenerated (create), then connectorsToDelete/connectorsModified (edit
       // existing relationships) - same shared helpers handleTextPrompt uses, so voice gets the

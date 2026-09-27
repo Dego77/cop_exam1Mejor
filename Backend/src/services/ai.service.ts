@@ -8,6 +8,8 @@ export interface AIServiceResponse {
   classesGenerated?: any[];
   classesModified?: any[];
   classesToDelete?: string[];
+  classesToRename?: { oldName: string; newName: string }[];
+  classesToReposition?: { className: string; positionX: number; positionY: number }[];
   attributesToRemove?: { className: string; attributeName: string }[];
   methodsToRemove?: { className: string; methodName: string }[];
   connectorsGenerated?: {
@@ -78,6 +80,12 @@ When given a prompt (Text, Voice transcription, or Whiteboard photo image), resp
     }
   ],
   "classesToDelete": ["ClassNameToDelete"],
+  "classesToRename": [
+    { "oldName": "CurrentExistingClassName", "newName": "NewClassName" }
+  ],
+  "classesToReposition": [
+    { "className": "ExistingClassName", "positionX": 400, "positionY": 300 }
+  ],
   "attributesToRemove": [
     { "className": "TargetClassName", "attributeName": "attributeToDelete" }
   ],
@@ -137,11 +145,14 @@ CRITICAL RULES:
      * If deleting an attribute from a class: put item in "attributesToRemove".
      * If deleting a method from a class: put item in "methodsToRemove".
    - FOR EDITING/CHANGING an attribute or method that ALREADY exists (rename it, change its type, change its visibility - e.g. "cambia el atributo precio de Rol a tipo Double", "renombra el método getTotal a calcularTotal"): this is NOT a new attribute, it's a replacement. In the SAME response, put the OLD one in "attributesToRemove"/"methodsToRemove" AND the NEW one in "classesModified" -> "attributesToAdd"/"methodsToAdd" for that class. Never leave both the old and the new version present at once.
+   - FOR RENAMING THE CLASS ITSELF (e.g. "cambiale el nombre a la clase Usuario por Cliente", "renombra la clase Rol a Perfil"): this is a DIFFERENT operation from renaming an attribute/method above. Use "classesToRename" with "oldName" (copied exactly as it appears in Current Canvas Diagram Context) and "newName". NEVER express a class rename as "classesToDelete" + "classesGenerated" - that would delete the class and destroy every relationship already connected to it instead of preserving them under the new name.
+   - FOR MOVING/REPOSITIONING AN EXISTING CLASS (e.g. "mueve la clase Usuario a la derecha", "pon Cliente debajo de Ventas", "colocala en x:400 y:300"): use "classesToReposition" with the exact class name and the NEW "positionX"/"positionY". Current Canvas Diagram Context includes each existing class's current "positionX"/"positionY" - use those real coordinates to compute a sensible new position (for a relative move like "a la derecha de Y", read Y's current positionX and offset from it; for an absolute request, use the exact numbers given). This only changes position, never attributes/methods/relationships of that class.
    - FOR RELATIONSHIP/CONNECTOR COMMANDS between two EXISTING classes already on the canvas (e.g. "relaciona Usuario con Rol", "elimina la relación entre Usuario y Rol", "cambia esa asociación a composición", "pon la multiplicidad de Usuario en 0..1"):
      * Creating a NEW relationship that doesn't exist yet on the canvas: use "connectorsGenerated" (as described above).
      * Deleting an EXISTING relationship shown in Current Canvas Diagram Context: use "connectorsToDelete" with the two class names (and "type" only if you need to disambiguate because more than one relationship connects that same pair).
      * Changing the type and/or multiplicities of an EXISTING relationship without deleting it: use "connectorsModified" with the two class names and only the fields that actually change ("newType", "newSourceMultiplicity", "newTargetMultiplicity", "newLabel").
      * NEVER use "connectorsGenerated" to modify a relationship that is already in Current Canvas Diagram Context - that would create a duplicate line instead of changing the existing one.
+   - EXACT FIELD NAMES ARE MANDATORY for every deletion/removal payload ("classesToDelete", "attributesToRemove", "methodsToRemove", "connectorsToDelete", "connectorsModified"): use precisely "className", "attributeName", "methodName", "sourceClassName", "targetClassName", "type" as shown in the schema above - never rename, abbreviate, or nest these under different keys, or the operation will not be found and will silently fail.
 
 4. SPEECH & CONVERSATIONAL FILTERS:
    - Ignore conversational fillers, stutters, hesitations (e.g. "eeh", "este", "o sea", "bueno", "mira", "sabes", "digo"). Extract ONLY the final core UML intention.
@@ -286,7 +297,7 @@ CRITICAL RULES:
 
       const fullPrompt = `${this.getSystemInstruction()}\n${contextStr}\nUser Request: ${prompt}`;
 
-      const text = await this.generateWithRetry(fullPrompt, undefined, model, 'Text');
+      const text = await this.generateWithRetry(fullPrompt, { responseMimeType: 'application/json' }, model, 'Text');
       return this.parseJsonResponse(text);
     } catch (error: any) {
       return this.buildFailureResponse(error, 'Text');
@@ -341,7 +352,7 @@ CRITICAL RULES:
             },
           },
         ],
-        undefined,
+        { responseMimeType: 'application/json' },
         model,
         'Voice'
       );

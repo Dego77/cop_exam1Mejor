@@ -404,7 +404,7 @@ export class EaExporterService {
         // Enterprise Architect Extension Connector Definition with EXPLICIT <model type="Class"/>.
         // This is always the separate visual LINE (own connEaId), even for an association class.
         connectorsExtensionXml += `
-        <connector xmi:idref="${connEaId}" name="${isAssocClassConn ? assocInfo!.node.name : (conn.label || '')}">
+        <connector xmi:idref="${connEaId}" name="${isAssocClassConn ? '' : (conn.label || '')}">
           <source xmi:idref="${srcEaId}">
             <model type="Class" name="${srcName}" ea_localid="${srcLocalId}"/>
             <role visibility="Public"/>
