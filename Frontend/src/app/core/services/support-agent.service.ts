@@ -1,3 +1,4 @@
+import { API_BASE } from '../config/api.config';
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { BehaviorSubject, Observable, of } from 'rxjs';
@@ -22,7 +23,7 @@ export interface SupportChatMessage {
 
 @Injectable({ providedIn: 'root' })
 export class SupportAgentService {
-  private readonly apiUrl = 'http://3.138.124.211:3000/api/ai/support';
+  private readonly apiUrl = `${API_BASE}/api/ai/support`;
 
   // Toggle state: Interactive mode ON/OFF
   private interactiveModeSubject = new BehaviorSubject<boolean>(true);

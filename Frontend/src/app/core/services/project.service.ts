@@ -1,3 +1,4 @@
+import { API_BASE } from '../config/api.config';
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Observable } from 'rxjs';
@@ -15,7 +16,7 @@ export interface Project {
 
 @Injectable({ providedIn: 'root' })
 export class ProjectService {
-  private readonly apiUrl = 'http://3.138.124.211:3000/api/projects';
+  private readonly apiUrl = `${API_BASE}/api/projects`;
 
   constructor(private http: HttpClient, private auth: AuthService) {}
 
@@ -63,7 +64,7 @@ export class ProjectService {
 
   generateSQL(projectId: string): Observable<{ sql: string }> {
     return this.http.post<{ sql: string }>(
-      `http://3.138.124.211:3000/api/sql/generate/${projectId}`,
+      `${API_BASE}/api/sql/generate/${projectId}`,
       {},
       { headers: this.headers }
     );
@@ -71,14 +72,14 @@ export class ProjectService {
 
   exportXMI(projectId: string): Observable<{ xmi: string }> {
     return this.http.get<{ xmi: string }>(
-      `http://3.138.124.211:3000/api/architect/export/${projectId}`,
+      `${API_BASE}/api/architect/export/${projectId}`,
       { headers: this.headers }
     );
   }
 
   importXMI(projectId: string, xmi: string): Observable<any> {
     return this.http.post(
-      `http://3.138.124.211:3000/api/architect/import/${projectId}`,
+      `${API_BASE}/api/architect/import/${projectId}`,
       { xmi },
       { headers: this.headers }
     );
@@ -86,7 +87,7 @@ export class ProjectService {
 
   exportCanonicalJson(projectId: string, nodes?: any[], connectors?: any[], projectName?: string): Observable<any> {
     return this.http.post<any>(
-      `http://3.138.124.211:3000/api/architect/export-json`,
+      `${API_BASE}/api/architect/export-json`,
       { projectId, nodes, connectors, projectName },
       { headers: this.headers }
     );
@@ -94,7 +95,7 @@ export class ProjectService {
 
   downloadSpringBootZip(projectId: string, nodes?: any[], connectors?: any[], projectName?: string): Observable<Blob> {
     return this.http.post(
-      `http://3.138.124.211:3000/api/architect/generate-springboot`,
+      `${API_BASE}/api/architect/generate-springboot`,
       { projectId, nodes, connectors, projectName },
       {
         headers: new HttpHeaders({

@@ -1,3 +1,4 @@
+import { API_BASE } from '../config/api.config';
 import { Injectable } from '@angular/core';
 import { io, Socket } from 'socket.io-client';
 import { Subject } from 'rxjs';
@@ -11,7 +12,7 @@ export interface CursorData {
 @Injectable({ providedIn: 'root' })
 export class WebSocketService {
   private socket: Socket | null = null;
-  private readonly serverUrl = 'http://3.138.124.211:3000';
+  private readonly serverUrl = `${API_BASE}`;
 
   roomUsers$ = new Subject<any[]>();
   userJoined$ = new Subject<any>();
@@ -24,6 +25,8 @@ export class WebSocketService {
   connectorCreated$ = new Subject<any>();
   connectorDeleted$ = new Subject<string>();
   diagramReloaded$ = new Subject<any>();
+  aiChatMessage$ = new Subject<any>();
+  aiChatThinking$ = new Subject<{ projectId: string; userId: number; fullName: string; thinking: boolean }>();
 
   private activeProjectRoom: string | null = null;
   private activeUser: any = null;
@@ -49,6 +52,8 @@ export class WebSocketService {
     this.socket.on('connector-created', (data: any) => this.connectorCreated$.next(data.connector));
     this.socket.on('connector-deleted', (data: any) => this.connectorDeleted$.next(data.connectorId));
     this.socket.on('diagram-reloaded', (data: any) => this.diagramReloaded$.next(data));
+    this.socket.on('ai-chat-message', (data: any) => this.aiChatMessage$.next(data));
+    this.socket.on('ai-chat-thinking', (data: any) => this.aiChatThinking$.next(data));
   }
 
 

@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, ViewChild, ElementRef } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges, ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -79,13 +79,20 @@ import { AuthService } from '../../core/services/auth.service';
             </div>
 
 
-            <div 
-              *ngFor="let msg of chatHistory" 
+            <div
+              *ngFor="let msg of chatHistory"
               class="message-bubble"
-              [ngClass]="msg.sender === 'USER' ? 'user-msg' : 'ai-msg'"
+              [ngClass]="msg.sender === 'AI' ? 'ai-msg' : (isOwnMessage(msg) ? 'user-msg' : 'user-msg peer-msg')"
             >
               <div class="msg-header">
-                <span class="msg-sender">{{ msg.sender === 'USER' ? 'Tú' : 'Agente IA' }}</span>
+                <span class="msg-sender" *ngIf="msg.sender === 'USER'" [style.color]="isOwnMessage(msg) ? null : authorColor(msg)">
+                  <span class="msg-avatar" *ngIf="!isOwnMessage(msg)" [style.background]="authorColor(msg)">{{ authorInitial(msg) }}</span>
+                  {{ isOwnMessage(msg) ? 'Tú' : msg.user?.fullName }}
+                </span>
+                <span class="msg-sender" *ngIf="msg.sender === 'AI'">
+                  Agente IA
+                  <span class="msg-reply-to" *ngIf="msg.user && !isOwnMessage(msg)">· respondiendo a {{ msg.user.fullName }}</span>
+                </span>
                 <span class="msg-time" *ngIf="msg.timestamp">{{ msg.timestamp | date:'HH:mm' }}</span>
               </div>
               <div class="msg-text">{{ msg.content }}</div>
@@ -94,6 +101,11 @@ import { AuthService } from '../../core/services/auth.service';
             <div class="ai-loading" *ngIf="isProcessing">
               <span class="dot animate-pulse">●</span>
               <span>Generando arquitectura UML...</span>
+            </div>
+
+            <div class="ai-loading" *ngFor="let peer of peersWaitingAI">
+              <span class="dot animate-pulse">●</span>
+              <span>La IA está respondiendo a {{ peer.fullName }}...</span>
             </div>
           </div>
 
@@ -388,11 +400,39 @@ import { AuthService } from '../../core/services/auth.service';
       border: 1px solid var(--border);
       color: var(--text-primary);
     }
+    .peer-msg {
+      align-self: flex-start;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+    }
     .msg-header {
       display: flex;
       justify-content: space-between;
+      gap: 8px;
       font-size: 10px;
       margin-bottom: 2px;
+      opacity: 0.8;
+    }
+    .peer-msg .msg-header { opacity: 1; }
+    .msg-sender {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-weight: 600;
+    }
+    .msg-avatar {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      color: #fff;
+      font-size: 9px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .msg-reply-to {
+      font-weight: 400;
       opacity: 0.8;
     }
     .ai-loading {
@@ -847,7 +887,7 @@ import { AuthService } from '../../core/services/auth.service';
 
   `]
 })
-export class RightSidebarComponent implements OnInit, OnDestroy {
+export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   @Input() projectId = '';
   @Input() projectName = '';
   @Input() sidebarWidth = 320;
@@ -886,6 +926,7 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.stopResizing();
     this.diagramChangeSub?.unsubscribe();
+    this.chatSocketSub?.unsubscribe();
   }
 
   activeTab: 'AI' | 'CODE' = 'AI';
@@ -894,6 +935,10 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
   chatHistory: AIMessage[] = [];
   textPrompt = '';
   isProcessing = false;
+  // Collaborators whose AI request is still being processed (shared group chat)
+  peersWaitingAI: { userId: number; fullName: string }[] = [];
+  private chatSocketSub?: Subscription;
+  @ViewChild('chatScroll') chatScroll?: ElementRef<HTMLDivElement>;
 
   isRecording = false;
   mediaRecorder: any = null;
@@ -994,10 +1039,34 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
     private router: Router
   ) { }
 
+  ngOnChanges(changes: SimpleChanges): void {
+    // projectId arrives asynchronously from the editor - (re)load the shared chat whenever it changes
+    if (changes['projectId'] && !changes['projectId'].firstChange && this.projectId) {
+      this.chatHistory = [];
+      this.peersWaitingAI = [];
+      this.loadHistory();
+    }
+  }
+
   ngOnInit(): void {
     if (this.projectId) {
       this.loadHistory();
     }
+
+    // Shared AI chat: messages and "AI is answering X" indicators from other collaborators.
+    // Own messages are already rendered optimistically by sendTextPrompt/voice/photo.
+    this.chatSocketSub = this.wsService.aiChatMessage$.subscribe((raw) => {
+      if (!raw || raw.projectId !== this.projectId || this.isOwnMessage(raw)) return;
+      if (raw.id && this.chatHistory.some(m => m.id === raw.id)) return;
+      this.chatHistory.push(this.aiService.normalizeChatMessage(raw));
+      this.scrollChatToBottom();
+    });
+    this.chatSocketSub.add(this.wsService.aiChatThinking$.subscribe((evt) => {
+      if (!evt || evt.projectId !== this.projectId || this.isOwnMessage({ userId: evt.userId } as AIMessage)) return;
+      this.peersWaitingAI = this.peersWaitingAI.filter(p => p.userId !== evt.userId);
+      if (evt.thinking) this.peersWaitingAI.push({ userId: evt.userId, fullName: evt.fullName });
+      this.scrollChatToBottom();
+    }));
 
     this.diagramChangeSub = combineLatest([
       this.diagramService.nodes$,
@@ -1010,9 +1079,40 @@ export class RightSidebarComponent implements OnInit, OnDestroy {
   }
 
   loadHistory(): void {
-    this.aiService.getChatHistory(this.projectId).subscribe({
-      next: (history) => this.chatHistory = history || [],
+    const projectId = this.projectId;
+    this.aiService.getChatHistory(projectId).subscribe({
+      next: (history) => {
+        if (projectId !== this.projectId) return;
+        this.chatHistory = history || [];
+        this.scrollChatToBottom();
+      },
       error: () => { }
+    });
+  }
+
+  // Messages without an author were pushed locally by this user; otherwise compare with the logged-in user
+  isOwnMessage(msg: AIMessage): boolean {
+    const authorId = msg.user?.id ?? msg.userId;
+    if (authorId === undefined || authorId === null) return true;
+    return String(authorId) === String(this.auth.currentUser?.id);
+  }
+
+  authorInitial(msg: AIMessage): string {
+    return (msg.user?.fullName || '?').trim().charAt(0).toUpperCase();
+  }
+
+  // Stable per-user color so each collaborator is easy to tell apart, like a group chat
+  authorColor(msg: AIMessage): string {
+    const key = String(msg.user?.id ?? msg.userId ?? '');
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) | 0;
+    return `hsl(${Math.abs(hash) % 360}, 65%, 50%)`;
+  }
+
+  private scrollChatToBottom(): void {
+    setTimeout(() => {
+      const el = this.chatScroll?.nativeElement;
+      if (el) el.scrollTop = el.scrollHeight;
     });
   }
 

@@ -1,8 +1,36 @@
 import { Response } from 'express';
 import { prisma } from '../config/prisma';
 import { AuthRequest } from '../middlewares/auth.middleware';
-import { AIAgentService } from '../services/ai.service';
+import { AIAgentService, AIServiceResponse } from '../services/ai.service';
 import { SupportAIAgentService } from '../services/support-ai.service';
+
+const CHAT_AUTHOR_SELECT = { id: true, fullName: true, avatarUrl: true };
+
+type ChatMessageData = {
+  projectId: string;
+  userId: number;
+  sender: 'USER' | 'AI';
+  mode: 'CHAT' | 'VOICE' | 'PHOTO';
+  content: string;
+  mediaUrl?: string;
+};
+
+// Persists one AI chat message and broadcasts it (with its author) to everyone in the project
+// room, so collaborators see who asked the AI what - and its reply - in real time, like a group chat.
+async function saveAndBroadcastChat(req: AuthRequest, data: ChatMessageData) {
+  const message = await prisma.aIChatHistory.create({
+    data,
+    include: { user: { select: CHAT_AUTHOR_SELECT } },
+  });
+  req.app.get('io')?.to(data.projectId).emit('ai-chat-message', message);
+  return message;
+}
+
+type ChatMessageRecord = Awaited<ReturnType<typeof saveAndBroadcastChat>>;
+
+function emitAIThinking(req: AuthRequest, projectId: string, user: { id: number; fullName: string }, thinking: boolean) {
+  req.app.get('io')?.to(projectId).emit('ai-chat-thinking', { projectId, userId: user.id, fullName: user.fullName, thinking });
+}
 
 // Builds the "Current Canvas Diagram Context" sent to Gemini, resolving each connector's
 // sourceNodeId/targetNodeId (meaningless DB ids to the model) into class names, and including
@@ -437,29 +465,19 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
       });
     }
 
+    // Save & broadcast the prompt first so collaborators see it right away
+    const userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'CHAT', content: prompt });
+    emitAIThinking(req, projectId, userMessage.user, true);
+
     const contextToUse = buildDiagramContext(diagram);
-    const aiResponse = await AIAgentService.processTextPrompt(prompt, contextToUse, model);
+    let aiResponse: AIServiceResponse;
+    try {
+      aiResponse = await AIAgentService.processTextPrompt(prompt, contextToUse, model);
+    } finally {
+      emitAIThinking(req, projectId, userMessage.user, false);
+    }
 
-    // Save prompt & response to AI chat history
-    await prisma.aIChatHistory.create({
-      data: {
-        projectId,
-        userId,
-        sender: 'USER',
-        mode: 'CHAT',
-        content: prompt,
-      },
-    });
-
-    await prisma.aIChatHistory.create({
-      data: {
-        projectId,
-        userId,
-        sender: 'AI',
-        mode: 'CHAT',
-        content: aiResponse.message,
-      },
-    });
+    const aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'CHAT', content: aiResponse.message });
 
     // Auto-create, update, or delete classes in diagram
     let createdNodes: any[] = [];
@@ -499,6 +517,8 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
       createdConnectors,
       deletedConnectorIds,
       updatedConnectors,
+      userMessage,
+      aiMessage,
     });
   } catch (error: any) {
     res.status(500).json({ error: 'Error al procesar prompt de IA: ' + error.message });
@@ -529,29 +549,17 @@ export const handlePhotoPrompt = async (req: AuthRequest, res: Response): Promis
       });
     }
 
-    const aiResponse = await AIAgentService.processPhotoPrompt(file.path, file.mimetype, model);
+    const userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'PHOTO', content: 'Imagen de boceto subida', mediaUrl: file.path });
+    emitAIThinking(req, projectId, userMessage.user, true);
 
-    // Save history
-    await prisma.aIChatHistory.create({
-      data: {
-        projectId,
-        userId,
-        sender: 'USER',
-        mode: 'PHOTO',
-        content: 'Imagen de boceto subida',
-        mediaUrl: file.path,
-      },
-    });
+    let aiResponse: AIServiceResponse;
+    try {
+      aiResponse = await AIAgentService.processPhotoPrompt(file.path, file.mimetype, model);
+    } finally {
+      emitAIThinking(req, projectId, userMessage.user, false);
+    }
 
-    await prisma.aIChatHistory.create({
-      data: {
-        projectId,
-        userId,
-        sender: 'AI',
-        mode: 'PHOTO',
-        content: aiResponse.message,
-      },
-    });
+    const aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'PHOTO', content: aiResponse.message });
 
     // Auto-create nodes and connectors from whiteboard photo recognition
     let createdNodes: any[] = [];
@@ -710,6 +718,8 @@ export const handlePhotoPrompt = async (req: AuthRequest, res: Response): Promis
       aiResponse,
       createdNodes,
       createdConnectors,
+      userMessage,
+      aiMessage,
     });
   } catch (error: any) {
     res.status(500).json({ error: 'Error al procesar imagen en IA: ' + error.message });
@@ -739,31 +749,23 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
       });
     }
 
-    const contextToUse = buildDiagramContext(diagram);
-    const aiResponse = await AIAgentService.processVoicePrompt(file.path, file.mimetype, contextToUse, model);
-
-    // Save history
+    let userMessage: ChatMessageRecord | null = null;
     if (userId) {
-      await prisma.aIChatHistory.create({
-        data: {
-          projectId,
-          userId,
-          sender: 'USER',
-          mode: 'VOICE',
-          content: 'Nota de voz enviada',
-          mediaUrl: file.path,
-        },
-      });
+      userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'VOICE', content: 'Nota de voz enviada', mediaUrl: file.path });
+      emitAIThinking(req, projectId, userMessage.user, true);
+    }
 
-      await prisma.aIChatHistory.create({
-        data: {
-          projectId,
-          userId,
-          sender: 'AI',
-          mode: 'VOICE',
-          content: aiResponse.message,
-        },
-      });
+    const contextToUse = buildDiagramContext(diagram);
+    let aiResponse: AIServiceResponse;
+    try {
+      aiResponse = await AIAgentService.processVoicePrompt(file.path, file.mimetype, contextToUse, model);
+    } finally {
+      if (userMessage) emitAIThinking(req, projectId, userMessage.user, false);
+    }
+
+    let aiMessage: ChatMessageRecord | null = null;
+    if (userId) {
+      aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'VOICE', content: aiResponse.message });
     }
 
     let createdNodes: any[] = [];
@@ -804,6 +806,8 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
       createdConnectors,
       deletedConnectorIds,
       updatedConnectors,
+      userMessage,
+      aiMessage,
     });
   } catch (error: any) {
     res.status(500).json({ error: 'Error al procesar nota de voz: ' + error.message });
@@ -813,9 +817,28 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
 export const getAIChatHistory = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const projectId = req.params.projectId as string;
+    const userId = req.user!.id;
+
+    // Only the owner or collaborators of the project can read its shared AI chat
+    const project = await prisma.project.findFirst({
+      where: {
+        id: projectId,
+        OR: [
+          { ownerId: userId },
+          { collaborators: { some: { userId } } },
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (!project) {
+      res.status(403).json({ error: 'No tienes acceso al historial de este proyecto.' });
+      return;
+    }
 
     const history = await prisma.aIChatHistory.findMany({
       where: { projectId },
+      include: { user: { select: CHAT_AUTHOR_SELECT } },
       orderBy: { createdAt: 'asc' },
     });
 

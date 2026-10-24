@@ -26,6 +26,9 @@ const io = new Server(server, {
   },
 });
 
+// Lets HTTP controllers broadcast to project rooms (e.g. shared AI chat messages)
+app.set('io', io);
+
 // Middleware
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors());

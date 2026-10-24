@@ -1,20 +1,34 @@
+import { API_BASE } from '../config/api.config';
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
 import { AuthService } from './auth.service';
 import { DiagramService, UMLNode, UMLConnector } from './diagram.service';
 
+export interface AIChatAuthor {
+  id: number | string;
+  fullName: string;
+  avatarUrl?: string | null;
+}
+
 export interface AIMessage {
+  id?: string;
+  projectId?: string;
+  userId?: number | string;
+  // For USER messages: who wrote it. For AI messages: who the AI is answering.
+  user?: AIChatAuthor;
   sender: 'USER' | 'AI';
   mode: 'CHAT' | 'VOICE' | 'PHOTO';
   content: string;
   mediaUrl?: string;
   timestamp?: Date;
+  createdAt?: string;
 }
 
 @Injectable({ providedIn: 'root' })
 export class AIAgentService {
-  private readonly apiUrl = 'http://3.138.124.211:3000/api/ai';
+  private readonly apiUrl = `${API_BASE}/api/ai`;
 
   constructor(
     private http: HttpClient, 
@@ -52,7 +66,14 @@ export class AIAgentService {
   }
 
   getChatHistory(projectId: string): Observable<AIMessage[]> {
-    return this.http.get<AIMessage[]>(`${this.apiUrl}/history/${projectId}`, { headers: this.headers });
+    return this.http.get<AIMessage[]>(`${this.apiUrl}/history/${projectId}`, { headers: this.headers }).pipe(
+      map(history => (history || []).map(msg => this.normalizeChatMessage(msg)))
+    );
+  }
+
+  // Backend rows carry `createdAt`; the chat UI renders `timestamp`
+  normalizeChatMessage(msg: AIMessage): AIMessage {
+    return { ...msg, timestamp: msg.timestamp || (msg.createdAt ? new Date(msg.createdAt) : undefined) };
   }
 
   /**
