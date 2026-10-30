@@ -73,14 +73,19 @@ import { AuthService } from '../../core/services/auth.service';
         <!-- CHAT SUB-MODE -->
         <div class="chat-container" *ngIf="aiMode === 'CHAT'">
           <div class="chat-messages" #chatScroll>
-            <div class="chat-welcome" *ngIf="chatHistory.length === 0">
+            <div class="chat-welcome" *ngIf="visibleChat.length === 0 && !isPrivateChat">
               <p>Hola, soy tu <strong>Agente IA de Arquitectura</strong>.</p>
               <p>Describe las clases o relaciones que deseas crear en lenguaje natural.</p>
             </div>
 
+            <div class="chat-welcome" *ngIf="visibleChat.length === 0 && isPrivateChat">
+              <p>🔒 <strong>Chat privado</strong></p>
+              <p>Solo tú verás estos mensajes. Los colaboradores no podrán verlos.</p>
+            </div>
+
 
             <div
-              *ngFor="let msg of chatHistory"
+              *ngFor="let msg of visibleChat"
               class="message-bubble"
               [ngClass]="msg.sender === 'AI' ? 'ai-msg' : (isOwnMessage(msg) ? 'user-msg' : 'user-msg peer-msg')"
             >
@@ -103,7 +108,7 @@ import { AuthService } from '../../core/services/auth.service';
               <span>Generando arquitectura UML...</span>
             </div>
 
-            <div class="ai-loading" *ngFor="let peer of peersWaitingAI">
+            <div class="ai-loading" *ngFor="let peer of (isPrivateChat ? [] : peersWaitingAI)">
               <span class="dot animate-pulse">●</span>
               <span>La IA está respondiendo a {{ peer.fullName }}...</span>
             </div>
@@ -146,6 +151,16 @@ import { AuthService } from '../../core/services/auth.service';
             />
             <button class="btn btn-primary" (click)="sendTextPrompt()" [disabled]="isProcessing">
               <span>Enviar</span>
+            </button>
+          </div>
+
+          <div class="chat-actions-row">
+            <button class="btn btn-primary" [class.active]="isPrivateChat" (click)="onPrivateChat()"
+              [title]="isPrivateChat ? 'Volver al chat grupal' : 'Abrir un chat privado (solo tú lo verás)'">
+              <span>Chat Privado</span>
+            </button>
+            <button class="btn btn-primary" (click)="onNewChat()">
+              <span>New Chat</span>
             </button>
           </div>
         </div>
@@ -538,6 +553,21 @@ import { AuthService } from '../../core/services/auth.service';
     }
     .chat-input-row input {
       flex: 1;
+    }
+    .chat-actions-row {
+      display: flex;
+      gap: 6px;
+      width: 100%;
+    }
+    .chat-actions-row .btn {
+      flex: 1;
+      justify-content: center;
+    }
+    .chat-actions-row .btn.active {
+      background: #00e6ff;
+      box-shadow: 0 0 16px rgba(0, 212, 255, 0.7);
+      outline: 2px solid #fff;
+      outline-offset: -2px;
     }
     .voice-container {
       padding: 12px 0;
@@ -933,6 +963,8 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   aiMode: 'CHAT' | 'VOICE' | 'PHOTO' = 'CHAT';
 
   chatHistory: AIMessage[] = [];
+  isPrivateChat = false;
+  privateChatHistory: AIMessage[] = [];
   textPrompt = '';
   isProcessing = false;
   // Collaborators whose AI request is still being processed (shared group chat)
@@ -1044,6 +1076,8 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     if (changes['projectId'] && !changes['projectId'].firstChange && this.projectId) {
       this.chatHistory = [];
       this.peersWaitingAI = [];
+      this.isPrivateChat = false;
+      this.privateChatHistory = [];
       this.loadHistory();
     }
   }
@@ -1131,7 +1165,10 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   sendTextPrompt(): void {
     if (!this.textPrompt.trim()) return;
     const prompt = this.textPrompt;
-    this.chatHistory.push({ sender: 'USER', mode: 'CHAT', content: prompt, timestamp: new Date() });
+    // Fixed at send time so a late AI reply stays in the chat it was asked from
+    const isPrivate = this.isPrivateChat;
+    const target = this.activeChatTarget();
+    target.push({ sender: 'USER', mode: 'CHAT', content: prompt, timestamp: new Date() });
     this.textPrompt = '';
     this.isProcessing = true;
 
@@ -1139,13 +1176,13 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     const currentConnectors = this.diagramService.currentConnectors;
 
     if (this.projectId) {
-      this.aiService.sendTextPrompt(this.projectId, prompt, this.selectedAgent.id, currentNodes).subscribe({
+      this.aiService.sendTextPrompt(this.projectId, prompt, this.selectedAgent.id, currentNodes, isPrivate).subscribe({
         next: (res) => {
           this.isProcessing = false;
 
           if (res?.aiResponse?.error === true) {
             const localResult = this.aiService.processSmartPromptLocally(prompt, currentNodes, currentConnectors);
-            this.chatHistory.push({
+            target.push({
               sender: 'AI',
               mode: 'CHAT',
               content: `${res.aiResponse.message}\n\n${localResult.message}`,
@@ -1188,7 +1225,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
 
           const rawMsg = res?.aiResponse?.message || res?.message || 'Instrucción procesada exitosamente.';
 
-          this.chatHistory.push({
+          target.push({
             sender: 'AI',
             mode: 'CHAT',
             content: rawMsg,
@@ -1203,7 +1240,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
         error: () => {
           this.isProcessing = false;
           const localResult = this.aiService.processSmartPromptLocally(prompt, currentNodes, currentConnectors);
-          this.chatHistory.push({
+          target.push({
             sender: 'AI',
             mode: 'CHAT',
             content: localResult.message,
@@ -1219,7 +1256,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     } else {
       this.isProcessing = false;
       const localResult = this.aiService.processSmartPromptLocally(prompt, currentNodes, currentConnectors);
-      this.chatHistory.push({
+      target.push({
         sender: 'AI',
         mode: 'CHAT',
         content: localResult.message,
@@ -1228,6 +1265,26 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
       this.speakText(localResult.message);
       this.diagramUpdated.emit();
     }
+  }
+
+  // Toggles a temporary private chat: starts empty every time, is never stored nor shared,
+  // and turning it off shows the group chat again (kept up to date in the background)
+  onPrivateChat(): void {
+    this.isPrivateChat = !this.isPrivateChat;
+    this.privateChatHistory = [];
+    this.scrollChatToBottom();
+  }
+
+  get visibleChat(): AIMessage[] {
+    return this.isPrivateChat ? this.privateChatHistory : this.chatHistory;
+  }
+
+  private activeChatTarget(): AIMessage[] {
+    return this.isPrivateChat ? this.privateChatHistory : this.chatHistory;
+  }
+
+  onNewChat(): void {
+    // TODO: behavior to be defined
   }
 
   sendQuickPrompt(prompt: string): void {
@@ -1299,8 +1356,10 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
 
   uploadVoice(blob: Blob, transcriptText: string = ''): void {
     this.isProcessing = true;
+    const isPrivate = this.isPrivateChat;
+    const target = this.activeChatTarget();
     if (transcriptText.trim()) {
-      this.chatHistory.push({
+      target.push({
         sender: 'USER',
         mode: 'VOICE',
         content: `🎙️ "${transcriptText}"`,
@@ -1312,7 +1371,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     const currentConnectors = this.diagramService.currentConnectors;
 
     if (this.projectId) {
-      this.aiService.sendVoice(this.projectId, blob, this.selectedAgent.id, currentNodes).subscribe({
+      this.aiService.sendVoice(this.projectId, blob, this.selectedAgent.id, currentNodes, isPrivate).subscribe({
         next: (res) => {
           this.isProcessing = false;
           if (res?.createdNodes && res.createdNodes.length > 0) {
@@ -1343,7 +1402,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
           }
 
           const rawMsg = res?.aiResponse?.message || res?.message || 'Nota de voz procesada. Clases generadas en el lienzo.';
-          this.chatHistory.push({
+          target.push({
             sender: 'AI',
             mode: 'VOICE',
             content: rawMsg,
@@ -1362,7 +1421,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
             const localResult = this.aiService.processSmartPromptLocally(transcriptText, currentNodes, currentConnectors);
             fallbackMsg = localResult.message;
           }
-          this.chatHistory.push({
+          target.push({
             sender: 'AI',
             mode: 'VOICE',
             content: fallbackMsg,
@@ -1382,7 +1441,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
         const localResult = this.aiService.processSmartPromptLocally(transcriptText, currentNodes, currentConnectors);
         fallbackMsg = localResult.message;
       }
-      this.chatHistory.push({
+      target.push({
         sender: 'AI',
         mode: 'VOICE',
         content: fallbackMsg,
@@ -1431,9 +1490,11 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   uploadPhoto(): void {
     if (!this.selectedFile) return;
     this.isProcessing = true;
+    const isPrivate = this.isPrivateChat;
+    const target = this.activeChatTarget();
 
     if (this.projectId) {
-      this.aiService.sendPhoto(this.projectId, this.selectedFile, this.selectedAgent.id).subscribe({
+      this.aiService.sendPhoto(this.projectId, this.selectedFile, this.selectedAgent.id, isPrivate).subscribe({
         next: (res) => {
           this.isProcessing = false;
           if (res?.createdNodes && res.createdNodes.length > 0) {
@@ -1446,7 +1507,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
           }
 
           const msg = res?.aiResponse?.message || 'Foto analizada: Clases y conexiones importadas al lienzo exitosamente.';
-          this.chatHistory.push({
+          target.push({
             sender: 'AI',
             mode: 'PHOTO',
             content: `📷 ${msg}`,
@@ -1465,7 +1526,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
         error: (err) => {
           this.isProcessing = false;
           const errorMsg = `⚠️ No se pudo procesar la imagen: ${err?.error?.error || err?.message || 'Error en el servicio de IA.'}`;
-          this.chatHistory.push({
+          target.push({
             sender: 'AI',
             mode: 'PHOTO',
             content: errorMsg,
@@ -1480,7 +1541,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     } else {
       this.isProcessing = false;
       const errorMsg = '⚠️ Debes seleccionar o crear un proyecto primero para escanear la imagen.';
-      this.chatHistory.push({
+      target.push({
         sender: 'AI',
         mode: 'PHOTO',
         content: errorMsg,

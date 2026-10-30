@@ -28,6 +28,12 @@ async function saveAndBroadcastChat(req: AuthRequest, data: ChatMessageData) {
 
 type ChatMessageRecord = Awaited<ReturnType<typeof saveAndBroadcastChat>>;
 
+// Private chat: the AI works exactly the same, but the conversation is neither stored nor
+// broadcast to collaborators (arrives as boolean in JSON or 'true' in multipart FormData).
+function isPrivateRequest(req: AuthRequest): boolean {
+  return req.body?.isPrivate === true || req.body?.isPrivate === 'true';
+}
+
 function emitAIThinking(req: AuthRequest, projectId: string, user: { id: number; fullName: string }, thinking: boolean) {
   req.app.get('io')?.to(projectId).emit('ai-chat-thinking', { projectId, userId: user.id, fullName: user.fullName, thinking });
 }
@@ -465,19 +471,27 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
       });
     }
 
+    const isPrivate = isPrivateRequest(req);
+
     // Save & broadcast the prompt first so collaborators see it right away
-    const userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'CHAT', content: prompt });
-    emitAIThinking(req, projectId, userMessage.user, true);
+    let userMessage: ChatMessageRecord | null = null;
+    if (!isPrivate) {
+      userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'CHAT', content: prompt });
+      emitAIThinking(req, projectId, userMessage.user, true);
+    }
 
     const contextToUse = buildDiagramContext(diagram);
     let aiResponse: AIServiceResponse;
     try {
       aiResponse = await AIAgentService.processTextPrompt(prompt, contextToUse, model);
     } finally {
-      emitAIThinking(req, projectId, userMessage.user, false);
+      if (userMessage) emitAIThinking(req, projectId, userMessage.user, false);
     }
 
-    const aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'CHAT', content: aiResponse.message });
+    let aiMessage: ChatMessageRecord | null = null;
+    if (!isPrivate) {
+      aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'CHAT', content: aiResponse.message });
+    }
 
     // Auto-create, update, or delete classes in diagram
     let createdNodes: any[] = [];
@@ -549,17 +563,25 @@ export const handlePhotoPrompt = async (req: AuthRequest, res: Response): Promis
       });
     }
 
-    const userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'PHOTO', content: 'Imagen de boceto subida', mediaUrl: file.path });
-    emitAIThinking(req, projectId, userMessage.user, true);
+    const isPrivate = isPrivateRequest(req);
+
+    let userMessage: ChatMessageRecord | null = null;
+    if (!isPrivate) {
+      userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'PHOTO', content: 'Imagen de boceto subida', mediaUrl: file.path });
+      emitAIThinking(req, projectId, userMessage.user, true);
+    }
 
     let aiResponse: AIServiceResponse;
     try {
       aiResponse = await AIAgentService.processPhotoPrompt(file.path, file.mimetype, model);
     } finally {
-      emitAIThinking(req, projectId, userMessage.user, false);
+      if (userMessage) emitAIThinking(req, projectId, userMessage.user, false);
     }
 
-    const aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'PHOTO', content: aiResponse.message });
+    let aiMessage: ChatMessageRecord | null = null;
+    if (!isPrivate) {
+      aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'PHOTO', content: aiResponse.message });
+    }
 
     // Auto-create nodes and connectors from whiteboard photo recognition
     let createdNodes: any[] = [];
@@ -749,8 +771,10 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
       });
     }
 
+    const isPrivate = isPrivateRequest(req);
+
     let userMessage: ChatMessageRecord | null = null;
-    if (userId) {
+    if (userId && !isPrivate) {
       userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'VOICE', content: 'Nota de voz enviada', mediaUrl: file.path });
       emitAIThinking(req, projectId, userMessage.user, true);
     }
@@ -764,7 +788,7 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
     }
 
     let aiMessage: ChatMessageRecord | null = null;
-    if (userId) {
+    if (userId && !isPrivate) {
       aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'VOICE', content: aiResponse.message });
     }
 
