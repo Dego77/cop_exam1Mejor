@@ -27,9 +27,13 @@ export class WebSocketService {
   diagramReloaded$ = new Subject<any>();
   aiChatMessage$ = new Subject<any>();
   aiChatThinking$ = new Subject<{ projectId: string; userId: number; fullName: string; thinking: boolean }>();
+  joinDenied$ = new Subject<{ projectId: string; reason: string }>();
+  aiChatCleared$ = new Subject<{ projectId: string; by: { id: number; fullName: string } | null }>();
 
   private activeProjectRoom: string | null = null;
   private activeUser: any = null;
+  private activeMode: 'edit' | 'view' = 'edit';
+  private activeToken: string | undefined;
 
   connect(): void {
     if (this.socket?.connected) return;
@@ -37,7 +41,7 @@ export class WebSocketService {
 
     this.socket.on('connect', () => {
       if (this.activeProjectRoom && this.activeUser) {
-        this.socket?.emit('join-project', { projectId: this.activeProjectRoom, user: this.activeUser });
+        this.socket?.emit('join-project', { projectId: this.activeProjectRoom, user: this.activeUser, mode: this.activeMode, token: this.activeToken });
       }
     });
 
@@ -54,13 +58,18 @@ export class WebSocketService {
     this.socket.on('diagram-reloaded', (data: any) => this.diagramReloaded$.next(data));
     this.socket.on('ai-chat-message', (data: any) => this.aiChatMessage$.next(data));
     this.socket.on('ai-chat-thinking', (data: any) => this.aiChatThinking$.next(data));
+    this.socket.on('ai-chat-cleared', (data: any) => this.aiChatCleared$.next(data));
+    this.socket.on('join-denied', (data: any) => this.joinDenied$.next(data));
   }
 
 
-  joinProject(projectId: string, user: any): void {
+  // mode 'view' (mobile "Modo Ver"): read-only membership, verified on the server with the JWT
+  joinProject(projectId: string, user: any, mode: 'edit' | 'view' = 'edit', token?: string): void {
     this.activeProjectRoom = projectId;
     this.activeUser = user;
-    this.socket?.emit('join-project', { projectId, user });
+    this.activeMode = mode;
+    this.activeToken = token;
+    this.socket?.emit('join-project', { projectId, user, mode, token });
   }
 
   emitCursorMove(projectId: string, cursor: { x: number; y: number }, user: any): void {

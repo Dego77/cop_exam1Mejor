@@ -74,6 +74,11 @@ export class AIAgentService {
     );
   }
 
+  // New Chat: 'me' resets only this user's view, 'all' wipes the project's chat for everyone
+  clearChatHistory(projectId: string, scope: 'me' | 'all'): Observable<any> {
+    return this.http.delete(`${this.apiUrl}/history/${projectId}?scope=${scope}`, { headers: this.headers });
+  }
+
   // Backend rows carry `createdAt`; the chat UI renders `timestamp`
   normalizeChatMessage(msg: AIMessage): AIMessage {
     return { ...msg, timestamp: msg.timestamp || (msg.createdAt ? new Date(msg.createdAt) : undefined) };

@@ -1,7 +1,7 @@
 import { Component, ElementRef, ViewChild, AfterViewInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, ActivatedRoute } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 
 interface UmlNode {
@@ -322,7 +322,17 @@ export class LoginComponent implements AfterViewInit, OnDestroy {
   private resizeHandler: (() => void) | null = null;
   private nodes: UmlNode[] = [];
 
-  constructor(private auth: AuthService, private router: Router) {}
+  constructor(private auth: AuthService, private router: Router, private route: ActivatedRoute) {}
+
+  // After login go back to where the user came from (e.g. the mobile "Modo Ver" at /view)
+  private navigateAfterAuth(): void {
+    const returnUrl = this.route.snapshot.queryParamMap.get('returnUrl');
+    if (returnUrl && returnUrl.startsWith('/view')) {
+      this.router.navigateByUrl(returnUrl);
+    } else {
+      this.router.navigate(['/editor']);
+    }
+  }
 
   ngAfterViewInit(): void {
     this.initCanvasAnimation();
@@ -461,7 +471,7 @@ export class LoginComponent implements AfterViewInit, OnDestroy {
       this.auth.login(this.email, this.password).subscribe({
         next: () => {
           this.loading = false;
-          this.router.navigate(['/editor']);
+          this.navigateAfterAuth();
         },
         error: (err) => {
           this.loading = false;
@@ -472,7 +482,7 @@ export class LoginComponent implements AfterViewInit, OnDestroy {
       this.auth.register(this.email, this.password, this.fullName || 'Usuario ClassForge').subscribe({
         next: () => {
           this.loading = false;
-          this.router.navigate(['/editor']);
+          this.navigateAfterAuth();
         },
         error: (err) => {
           this.loading = false;

@@ -10,9 +10,10 @@ import { MinimapComponent } from '../minimap/minimap.component';
   imports: [CommonModule, FormsModule, MinimapComponent],
   template: `
 
-    <div 
-      class="canvas-container" 
+    <div
+      class="canvas-container"
       [class.grid-active]="showGrid"
+      [class.read-only]="readOnly"
       (dragover)="onDragOver($event)"
       (drop)="onDrop($event)"
       (mousemove)="onMouseMove($event)"
@@ -668,6 +669,11 @@ import { MinimapComponent } from '../minimap/minimap.component';
       position: relative;
       min-width: 0;
     }
+    /* Modo Ver: every node, connector and label ignores clicks/drags; the zoom controls still work */
+    .canvas-container.read-only .canvas-viewport,
+    .canvas-container.read-only .canvas-viewport * {
+      pointer-events: none !important;
+    }
     .canvas-container {
       flex: 1;
       width: 100%;
@@ -1218,6 +1224,8 @@ export class CanvasComponent {
   @Input() selectedNode: UMLNode | null = null;
   @Input() activeConnectorType: string | null = null;
   @Input() remoteCursors: any[] = [];
+  // "Modo Ver" (mobile viewer): diagram is visible and zoomable, but nothing can be edited
+  @Input() readOnly = false;
 
   @Output() nodeMoved = new EventEmitter<UMLNode>();
   @Output() selectNode = new EventEmitter<UMLNode | null>();
@@ -1275,6 +1283,7 @@ export class CanvasComponent {
   constructor(public diagramService: DiagramService) {}
 
   onCanvasDblClick(event: MouseEvent): void {
+    if (this.readOnly) return;
     const targetElem = event.target as HTMLElement;
     const targetTag = targetElem.tagName.toUpperCase();
 
@@ -1675,6 +1684,7 @@ export class CanvasComponent {
 
   onDrop(event: DragEvent): void {
     event.preventDefault();
+    if (this.readOnly) return;
     const type = event.dataTransfer?.getData('text/plain');
     if (type) {
       const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();

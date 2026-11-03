@@ -28,6 +28,21 @@ async function saveAndBroadcastChat(req: AuthRequest, data: ChatMessageData) {
 
 type ChatMessageRecord = Awaited<ReturnType<typeof saveAndBroadcastChat>>;
 
+// Owner or collaborator of the project
+async function userCanAccessProject(projectId: string, userId: number): Promise<boolean> {
+  const project = await prisma.project.findFirst({
+    where: {
+      id: projectId,
+      OR: [
+        { ownerId: userId },
+        { collaborators: { some: { userId } } },
+      ],
+    },
+    select: { id: true },
+  });
+  return !!project;
+}
+
 // Private chat: the AI works exactly the same, but the conversation is neither stored nor
 // broadcast to collaborators (arrives as boolean in JSON or 'true' in multipart FormData).
 function isPrivateRequest(req: AuthRequest): boolean {
@@ -844,24 +859,18 @@ export const getAIChatHistory = async (req: AuthRequest, res: Response): Promise
     const userId = req.user!.id;
 
     // Only the owner or collaborators of the project can read its shared AI chat
-    const project = await prisma.project.findFirst({
-      where: {
-        id: projectId,
-        OR: [
-          { ownerId: userId },
-          { collaborators: { some: { userId } } },
-        ],
-      },
-      select: { id: true },
-    });
-
-    if (!project) {
+    if (!(await userCanAccessProject(projectId, userId))) {
       res.status(403).json({ error: 'No tienes acceso al historial de este proyecto.' });
       return;
     }
 
+    // "New Chat → Para mí": hide everything before this user's own reset
+    const clear = await prisma.aIChatClear.findUnique({
+      where: { projectId_userId: { projectId, userId } },
+    });
+
     const history = await prisma.aIChatHistory.findMany({
-      where: { projectId },
+      where: { projectId, ...(clear ? { createdAt: { gt: clear.clearedAt } } : {}) },
       include: { user: { select: CHAT_AUTHOR_SELECT } },
       orderBy: { createdAt: 'asc' },
     });
@@ -869,6 +878,39 @@ export const getAIChatHistory = async (req: AuthRequest, res: Response): Promise
     res.json(history);
   } catch (error: any) {
     res.status(500).json({ error: 'Error al obtener historial IA: ' + error.message });
+  }
+};
+
+// New Chat: scope=me resets the chat only for the requesting user; scope=all wipes the
+// project's AI chat history for every member and notifies the connected collaborators.
+export const clearAIChatHistory = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const projectId = req.params.projectId as string;
+    const userId = req.user!.id;
+    const scope = req.query.scope === 'me' ? 'me' : 'all';
+
+    if (!(await userCanAccessProject(projectId, userId))) {
+      res.status(403).json({ error: 'No tienes acceso al historial de este proyecto.' });
+      return;
+    }
+
+    if (scope === 'me') {
+      await prisma.aIChatClear.upsert({
+        where: { projectId_userId: { projectId, userId } },
+        create: { projectId, userId },
+        update: { clearedAt: new Date() },
+      });
+    } else {
+      await prisma.aIChatHistory.deleteMany({ where: { projectId } });
+      await prisma.aIChatClear.deleteMany({ where: { projectId } });
+
+      const by = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, fullName: true } });
+      req.app.get('io')?.to(projectId).emit('ai-chat-cleared', { projectId, by });
+    }
+
+    res.json({ ok: true, scope });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Error al reiniciar el chat IA: ' + error.message });
   }
 };
 

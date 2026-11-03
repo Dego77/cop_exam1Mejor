@@ -154,12 +154,27 @@ import { AuthService } from '../../core/services/auth.service';
             </button>
           </div>
 
+          <div class="chat-notice" *ngIf="chatNotice">{{ chatNotice }}</div>
+
+          <!-- New Chat options (only in collaborative projects) -->
+          <div class="chat-actions-row" *ngIf="showNewChatOptions">
+            <button class="btn btn-primary" (click)="resetChat('me')" [disabled]="isResettingChat"
+              title="Empezar un chat nuevo solo para ti; los demás conservan su historial">
+              <span>Para mí</span>
+            </button>
+            <button class="btn btn-primary" (click)="resetChat('all')" [disabled]="isResettingChat"
+              title="Borrar el historial del chat para todos los del proyecto">
+              <span>Para Todos</span>
+            </button>
+          </div>
+
           <div class="chat-actions-row">
             <button class="btn btn-primary" [class.active]="isPrivateChat" (click)="onPrivateChat()"
               [title]="isPrivateChat ? 'Volver al chat grupal' : 'Abrir un chat privado (solo tú lo verás)'">
               <span>Chat Privado</span>
             </button>
-            <button class="btn btn-primary" (click)="onNewChat()">
+            <button class="btn btn-primary" [class.active]="showNewChatOptions" (click)="onNewChat()"
+              [disabled]="isResettingChat" title="Empezar un chat nuevo con la IA">
               <span>New Chat</span>
             </button>
           </div>
@@ -563,6 +578,11 @@ import { AuthService } from '../../core/services/auth.service';
       flex: 1;
       justify-content: center;
     }
+    .chat-notice {
+      font-size: 11px;
+      color: var(--cyan);
+      text-align: center;
+    }
     .chat-actions-row .btn.active {
       background: #00e6ff;
       box-shadow: 0 0 16px rgba(0, 212, 255, 0.7);
@@ -920,6 +940,7 @@ import { AuthService } from '../../core/services/auth.service';
 export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   @Input() projectId = '';
   @Input() projectName = '';
+  @Input() hasCollaborators = false;
   @Input() sidebarWidth = 320;
   @Output() diagramUpdated = new EventEmitter<void>();
   @Output() sidebarWidthChange = new EventEmitter<number>();
@@ -957,6 +978,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     this.stopResizing();
     this.diagramChangeSub?.unsubscribe();
     this.chatSocketSub?.unsubscribe();
+    clearTimeout(this.chatNoticeTimer);
   }
 
   activeTab: 'AI' | 'CODE' = 'AI';
@@ -965,6 +987,10 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   chatHistory: AIMessage[] = [];
   isPrivateChat = false;
   privateChatHistory: AIMessage[] = [];
+  showNewChatOptions = false;
+  isResettingChat = false;
+  chatNotice = '';
+  private chatNoticeTimer: any;
   textPrompt = '';
   isProcessing = false;
   // Collaborators whose AI request is still being processed (shared group chat)
@@ -1078,6 +1104,8 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
       this.peersWaitingAI = [];
       this.isPrivateChat = false;
       this.privateChatHistory = [];
+      this.showNewChatOptions = false;
+      this.chatNotice = '';
       this.loadHistory();
     }
   }
@@ -1100,6 +1128,15 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
       this.peersWaitingAI = this.peersWaitingAI.filter(p => p.userId !== evt.userId);
       if (evt.thinking) this.peersWaitingAI.push({ userId: evt.userId, fullName: evt.fullName });
       this.scrollChatToBottom();
+    }));
+    // "New Chat → Para Todos" from any member wipes the group chat for everyone
+    this.chatSocketSub.add(this.wsService.aiChatCleared$.subscribe((evt) => {
+      if (!evt || evt.projectId !== this.projectId) return;
+      this.chatHistory = [];
+      this.peersWaitingAI = [];
+      if (evt.by && !this.isOwnMessage({ userId: evt.by.id } as AIMessage)) {
+        this.showChatNotice(`${evt.by.fullName} inició un chat nuevo para todos`);
+      }
     }));
 
     this.diagramChangeSub = combineLatest([
@@ -1283,8 +1320,46 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     return this.isPrivateChat ? this.privateChatHistory : this.chatHistory;
   }
 
+  // New Chat: in the private chat it just empties it; alone in the project it wipes the history;
+  // in a collaborative project it asks "Para mí" / "Para Todos" (owner and collaborators alike)
   onNewChat(): void {
-    // TODO: behavior to be defined
+    if (this.isPrivateChat) {
+      this.privateChatHistory = [];
+      return;
+    }
+    if (!this.projectId) {
+      this.chatHistory = [];
+      return;
+    }
+    if (!this.hasCollaborators) {
+      this.resetChat('all');
+      return;
+    }
+    this.showNewChatOptions = !this.showNewChatOptions;
+  }
+
+  resetChat(scope: 'me' | 'all'): void {
+    if (!this.projectId || this.isResettingChat) return;
+    this.isResettingChat = true;
+    this.aiService.clearChatHistory(this.projectId, scope).subscribe({
+      next: () => {
+        this.isResettingChat = false;
+        this.showNewChatOptions = false;
+        this.chatHistory = [];
+        this.peersWaitingAI = [];
+        this.showChatNotice(scope === 'me' ? 'Nuevo chat iniciado solo para ti' : 'Nuevo chat iniciado');
+      },
+      error: () => {
+        this.isResettingChat = false;
+        this.showChatNotice('No se pudo iniciar un chat nuevo. Intenta de nuevo.');
+      }
+    });
+  }
+
+  private showChatNotice(text: string): void {
+    this.chatNotice = text;
+    clearTimeout(this.chatNoticeTimer);
+    this.chatNoticeTimer = setTimeout(() => this.chatNotice = '', 4000);
   }
 
   sendQuickPrompt(prompt: string): void {

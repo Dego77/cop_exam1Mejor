@@ -18,6 +18,7 @@ model User {
   projects       Project[]             @relation("ProjectOwner")
   collaborations ProjectCollaborator[]
   aiChats        AIChatHistory[]
+  aiChatClears   AIChatClear[]
   workSessions   WorkSession[]
 }
 
@@ -32,6 +33,7 @@ model Project {
   collaborators  ProjectCollaborator[]
   diagrams       Diagram[]
   aiChats        AIChatHistory[]
+  aiChatClears   AIChatClear[]
   architectSyncs ArchitectSync[]
   workSessions   WorkSession[]
 }
@@ -107,6 +109,18 @@ model AIChatHistory {
   content   String
   mediaUrl  String?
   createdAt DateTime @default(now())
+}
+
+// "New Chat → Para mí": the user only sees AI chat messages created after clearedAt
+model AIChatClear {
+  id        String   @id @default(uuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clearedAt DateTime @default(now())
+
+  @@unique([projectId, userId])
 }
 
 model ArchitectSync {

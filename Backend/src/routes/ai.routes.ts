@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { handleTextPrompt, handlePhotoPrompt, handleVoicePrompt, getAIChatHistory, handleSupportPrompt } from '../controllers/ai.controller';
+import { handleTextPrompt, handlePhotoPrompt, handleVoicePrompt, getAIChatHistory, clearAIChatHistory, handleSupportPrompt } from '../controllers/ai.controller';
 import { authenticateToken } from '../middlewares/auth.middleware';
 import { upload } from '../middlewares/upload.middleware';
 
@@ -12,6 +12,7 @@ router.post('/photo', upload.single('photo'), handlePhotoPrompt);
 router.post('/voice', upload.single('voice'), handleVoicePrompt);
 router.post('/support', handleSupportPrompt);
 router.get('/history/:projectId', getAIChatHistory);
+router.delete('/history/:projectId', clearAIChatHistory);
 
 export default router;
 

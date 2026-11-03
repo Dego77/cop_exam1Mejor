@@ -1,16 +1,68 @@
 import { Server, Socket } from 'socket.io';
+import jwt from 'jsonwebtoken';
 import { prisma } from '../config/prisma';
 
 // Map of projectId -> Map<socketId, user>
 const roomUsers = new Map<string, Map<string, any>>();
+
+// "Modo Ver" (mobile app): the user is taken from the verified JWT - never from the payload - and
+// must be the owner or a collaborator of the project. Returns the user, or null if not allowed.
+async function resolveViewer(projectId: string, token: string | undefined) {
+  if (!token) return null;
+  try {
+    const secret = process.env.JWT_SECRET || 'classforge_super_secret_jwt_key_2026_antigravity';
+    const decoded = jwt.verify(token, secret) as { id: number };
+    const userId = Number(decoded.id);
+    const project = await prisma.project.findFirst({
+      where: {
+        id: projectId,
+        OR: [
+          { ownerId: userId },
+          { collaborators: { some: { userId } } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (!project) return null;
+    return prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, fullName: true, email: true, avatarUrl: true },
+    });
+  } catch {
+    return null;
+  }
+}
 
 export const setupCollaborationSockets = (io: Server) => {
   io.on('connection', (socket: Socket) => {
     console.log(`[Socket] Cliente conectado: ${socket.id}`);
 
     // Join collaborative project room
-    socket.on('join-project', async ({ projectId, user }) => {
+    socket.on('join-project', async ({ projectId, user, mode, token }) => {
       if (!projectId) return;
+
+      // Read-only viewer: strict auth, no work session, and every edit event from it is ignored
+      if (mode === 'view') {
+        const viewer = await resolveViewer(projectId, token);
+        if (!viewer) {
+          socket.emit('join-denied', { projectId, reason: 'No tienes acceso a este proyecto.' });
+          return;
+        }
+
+        socket.data.viewOnly = true;
+        socket.join(projectId);
+
+        if (!roomUsers.has(projectId)) {
+          roomUsers.set(projectId, new Map());
+        }
+        const viewerData = { ...viewer, socketId: socket.id, joinedAt: new Date().toISOString(), viewOnly: true };
+        roomUsers.get(projectId)!.set(socket.id, viewerData);
+
+        console.log(`[Socket] Usuario ${viewer.fullName} se unió en MODO VER al proyecto ${projectId}`);
+        io.to(projectId).emit('room-users', Array.from(roomUsers.get(projectId)!.values()));
+        socket.to(projectId).emit('user-joined', { user: viewerData, socketId: socket.id });
+        return;
+      }
 
       // Validate user authorization for project if it exists in database
       try {
@@ -73,6 +125,7 @@ export const setupCollaborationSockets = (io: Server) => {
 
     // Realtime cursor tracking
     socket.on('cursor-move', ({ projectId, cursor, user }) => {
+      if (socket.data.viewOnly) return; // Modo Ver: read-only
       socket.to(projectId).emit('cursor-moved', {
         socketId: socket.id,
         cursor,
@@ -82,6 +135,7 @@ export const setupCollaborationSockets = (io: Server) => {
 
     // Realtime node dragging / auto-saving
     socket.on('node-dragged', async ({ projectId, nodeId, positionX, positionY }) => {
+      if (socket.data.viewOnly) return; // Modo Ver: read-only
       // Broadcast to room immediately for smooth 60fps rendering
       socket.to(projectId).emit('node-dragged', { nodeId, positionX, positionY });
 
@@ -98,6 +152,7 @@ export const setupCollaborationSockets = (io: Server) => {
 
     // Realtime node content update (attributes/methods)
     socket.on('node-updated', async ({ projectId, node }) => {
+      if (socket.data.viewOnly) return; // Modo Ver: read-only
       socket.to(projectId).emit('node-updated', { node });
 
       try {
@@ -117,26 +172,31 @@ export const setupCollaborationSockets = (io: Server) => {
 
     // Realtime node creation
     socket.on('node-created', async ({ projectId, node }) => {
+      if (socket.data.viewOnly) return; // Modo Ver: read-only
       socket.to(projectId).emit('node-created', { node });
     });
 
     // Realtime node deletion
     socket.on('node-deleted', async ({ projectId, nodeId }) => {
+      if (socket.data.viewOnly) return; // Modo Ver: read-only
       socket.to(projectId).emit('node-deleted', { nodeId });
     });
 
     // Realtime connector creation
     socket.on('connector-created', async ({ projectId, connector }) => {
+      if (socket.data.viewOnly) return; // Modo Ver: read-only
       socket.to(projectId).emit('connector-created', { connector });
     });
 
     // Realtime connector deletion
     socket.on('connector-deleted', async ({ projectId, connectorId }) => {
+      if (socket.data.viewOnly) return; // Modo Ver: read-only
       socket.to(projectId).emit('connector-deleted', { connectorId });
     });
 
     // Realtime full diagram reloaded (AI operations, bulk updates)
     socket.on('diagram-reloaded', async ({ projectId, payload }) => {
+      if (socket.data.viewOnly) return; // Modo Ver: read-only
       socket.to(projectId).emit('diagram-reloaded', { projectId, payload });
     });
 

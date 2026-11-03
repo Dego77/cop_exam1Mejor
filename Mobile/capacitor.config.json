@@ -1,0 +1,12 @@
+{
+  "appId": "com.classforge.viewer",
+  "appName": "ClassForge Viewer",
+  "webDir": "www",
+  "server": {
+    "url": "http://3.138.124.211:4200/view",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}
