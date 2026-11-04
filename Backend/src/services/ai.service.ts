@@ -34,6 +34,65 @@ export interface AIServiceResponse {
     newTargetMultiplicity?: string;
     newLabel?: string;
   }[];
+  proposals?: AIDiagramProposal[];
+}
+
+export interface AIDiagramProposal {
+  id: string;
+  label: string;
+  askedBy: string;
+  classesGenerated?: any[];
+  classesModified?: any[];
+  classesToDelete?: string[];
+  classesToRename?: { oldName: string; newName: string }[];
+  classesToReposition?: { className: string; positionX: number; positionY: number }[];
+  attributesToRemove?: { className: string; attributeName: string }[];
+  methodsToRemove?: { className: string; methodName: string }[];
+  connectorsGenerated?: AIServiceResponse['connectorsGenerated'];
+  connectorsToDelete?: AIServiceResponse['connectorsToDelete'];
+  connectorsModified?: AIServiceResponse['connectorsModified'];
+}
+
+export interface AIConversationTurn {
+  authorName: string;
+  sender: 'USER' | 'AI';
+  content: string;
+}
+
+export function addressMessage(message: string, askerName?: string): string {
+  const name = (askerName || '').trim();
+  const text = (message || '').trim();
+  if (!name) return text;
+  const first = name.split(/\s+/)[0];
+  const lower = text.toLowerCase();
+  if (lower.startsWith(name.toLowerCase()) || lower.startsWith(first.toLowerCase())) return text;
+  return `${first}, ${text}`;
+}
+
+export function formatConversationHistory(history?: AIConversationTurn[]): string {
+  if (!history?.length) return '';
+  const lines = history.map((turn) => {
+    const who = turn.sender === 'AI'
+      ? `IA, respondiendo a ${turn.authorName || 'un compañero'}`
+      : (turn.authorName || 'Usuario');
+    const text = (turn.content || '').replace(/\s+/g, ' ').trim();
+    return `[${who}]: ${text}`;
+  });
+  const MAX = 28000;
+  const joined = lines.join('\n');
+  if (joined.length <= MAX) {
+    return `Historial del equipo en este proyecto:\n${joined}`;
+  }
+  const kept: string[] = [];
+  let size = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (size + lines[i].length + 1 > MAX - 800) break;
+    kept.push(lines[i]);
+    size += lines[i].length + 1;
+  }
+  kept.reverse();
+  const omitted = lines.slice(0, lines.length - kept.length).map((line) => line.slice(0, 140));
+  return `Mensajes anteriores del equipo, resumidos porque el hilo es largo. Siguen guardados en el chat:\n${omitted.join(' | ')}\n\nHistorial reciente completo:\n${kept.join('\n')}`;
 }
 
 export class AIAgentService {
@@ -124,6 +183,19 @@ When given a prompt (Text, Voice transcription, or Whiteboard photo image), resp
       "newTargetMultiplicity": "*",
       "newLabel": ""
     }
+  ],
+  "proposals": [
+    {
+      "id": "alt-ana",
+      "label": "Frase corta de esta alternativa",
+      "askedBy": "Nombre de quien la propuso, o IA si es tu sugerencia",
+      "classesGenerated": [],
+      "classesModified": [],
+      "classesToDelete": [],
+      "connectorsGenerated": [],
+      "connectorsToDelete": [],
+      "connectorsModified": []
+    }
   ]
 }
 
@@ -135,7 +207,7 @@ CRITICAL RULES:
 2. ARCHITECTURAL ADVICE & NORMALIZATION (1NF, 2NF, 3NF) - OPT-IN ONLY:
    - When the user asks for advice, tips, recommendations, or database normalization ("¿cómo puedo normalizar?", "¿qué atributos faltan?", "¿qué patrones puedo usar?"), provide an expert, articulate response in the "message" field in Spanish.
    - Explain the technical rationale (e.g. avoiding data redundancy, 3NF foreign key decomposition, applying Repository or Factory patterns).
-   - ONLY in that case (the user explicitly asked for advice/recommendations/normalization), ALSO include the recommended normalized classes or attributes inside "classesGenerated" or "classesModified" so the canvas updates automatically with your expert recommendations.
+   - ONLY in that case (the user explicitly asked for advice/recommendations/normalization), ALSO include the recommended normalized classes or attributes inside a separate "proposals" entry askedBy "IA". Nothing is drawn until a developer allows that proposal.
    - STRICT SCOPE OTHERWISE (MANDATORY): for every other request (creating/describing/extracting classes from text, voice, or a whiteboard photo), output ONLY the attributes/methods/classes the user explicitly named or that are literally written/drawn in the image. NEVER invent, guess, or "helpfully" add extra attributes, methods, or classes the user did not ask for and that are not visibly present in the source. If a class or box has no attributes stated, leave "attributes" as an empty array - do not fill it in with attributes you think a class like that "should" have.
    - THIS INCLUDES AUTO-GENERATED "id"/PRIMARY-KEY ATTRIBUTES (MANDATORY, no exception): do NOT add an "id", "id_<className>", or any other primary-key-looking attribute to a new class just because it "should" have one to be a valid entity. A request like "créame la clase Usuario" with nothing else specified means "classesGenerated" for "Usuario" with "attributes": [] (completely empty) - not even an id. Only add an id/pk attribute if the user explicitly asked for it by name or it is literally written/drawn in the source.
 
@@ -172,6 +244,17 @@ CRITICAL RULES:
 
     6. Delete ONLY what is requested by the user. Do not remove unrequested items.
     7. Plain JSON output only without markdown code block formatting like \`\`\`json.
+
+    8. SENIOR MODERATOR, NAME, AND PERMISSION (TEXT AND VOICE):
+    - You are a senior developer sitting with the team. You guide and moderate. You do not silently obey, and you do not pick a winner.
+    - The prompt names the person who just wrote. "message" MUST start with that person's name. Answer only that message. If another person writes later, they get their own reply.
+    - Read the team history. If another teammate already proposed a design, repeat that alternative in "message" with their name. Do not erase it or merge it away.
+    - Then add YOUR suggestion separately, with the reason and one concrete example. If the current diagram already has classes, the example must use those classes. A theoretical question such as "qué es un atributo derivado" gets a short definition plus an example, and "proposals" stays empty when nothing should be drawn.
+    - Your suggestion may match one alternative, combine them, or be a third design. The user's own alternative contains ONLY what they asked. Your suggestion, if it adds a class or relationship they did not name, goes in a DIFFERENT proposal with askedBy "IA".
+    - End "message" by asking which option may be drawn, only when there is something new to draw. Never say the diagram was already changed.
+    - LENGTH: write like a group chat, not a report. At most 4 short sentences. No greetings, no "quedo a tu disposición", no repeating the whole history. One sentence per alternative, one for your suggestion and its reason. If the person only declines ("no gracias", "no haré cambios"), answer in 2 sentences: confirm that nothing will be drawn, and name the suggestion that remains available. Do not explain it again. If they only acknowledge ("ok", "gracias", "entendido"), answer with their name and "listo." and nothing else.
+    - Each drawable option is one item in "proposals" (id, label, askedBy, and only that option's classes and connectors).
+    - WHITEBOARD PHOTO: ignore this senior-alternative rule. Copy only what is drawn. Still start "message" with the person's name and do not say the canvas was already replaced.
   `;
   }
 
@@ -276,7 +359,8 @@ CRITICAL RULES:
   public static async processTextPrompt(
     prompt: string,
     currentDiagramContext?: any,
-    model?: string
+    model?: string,
+    options?: { askerName?: string; history?: AIConversationTurn[] }
   ): Promise<AIServiceResponse> {
     try {
       let contextStr = '';
@@ -297,25 +381,40 @@ CRITICAL RULES:
         contextStr = `Current Canvas Diagram Context: ${JSON.stringify({ nodes: cleanNodes, connectors: cleanConnectors })}`;
       }
 
-      const fullPrompt = `${this.getSystemInstruction()}\n${contextStr}\nUser Request: ${prompt}`;
+      const fullPrompt = this.composePrompt(prompt, contextStr, options);
 
       const text = await this.generateWithRetry(fullPrompt, { responseMimeType: 'application/json' }, model, 'Text');
-      return this.parseJsonResponse(text);
+      const parsed = this.parseJsonResponse(text);
+      parsed.message = addressMessage(parsed.message, options?.askerName);
+      return parsed;
     } catch (error: any) {
       return this.buildFailureResponse(error, 'Text');
     }
   }
 
+  private static composePrompt(
+    prompt: string,
+    contextStr: string,
+    options?: { askerName?: string; history?: AIConversationTurn[] }
+  ): string {
+    const nameLine = options?.askerName
+      ? `La persona que acaba de escribir se llama ${options.askerName}. El campo message debe empezar con ese nombre.`
+      : '';
+    const historyStr = formatConversationHistory(options?.history);
+    return `${this.getSystemInstruction()}\n${nameLine}\n${historyStr}\n${contextStr}\nUser Request: ${prompt}`;
+  }
+
   public static async processPhotoPrompt(
     filePath: string,
     mimeType: string,
-    model?: string
+    model?: string,
+    options?: { askerName?: string; history?: AIConversationTurn[] }
   ): Promise<AIServiceResponse> {
     try {
       const imageBytes = fs.readFileSync(filePath);
       const base64Data = imageBytes.toString('base64');
       const cleanMimeType = (mimeType && mimeType.startsWith('image/')) ? mimeType : 'image/png';
-      const promptText = `${this.getSystemInstruction()}\nAnalyze this whiteboard/notebook image of a UML software class diagram. Extract ALL detected classes with exact class names, stereotypes (Entity, Interface, Abstract, Enum), visibility (- private, + public, # protected), attribute names, attribute data types, method names, return types, AND spatial positionX/positionY coordinates.\nMANDATORY: You MUST detect and extract ALL connecting lines, arrows, and diamonds between classes into 'connectorsGenerated' specifying 'sourceTempId', 'targetTempId', 'sourceClassName', 'targetClassName', and 'type' (Association | Aggregation | Composition | Inheritance | Implementation | Dependency).\nSPECIAL ATTENTION: Verify BOTH endpoints of every line for multiplicities (e.g. '+*', '+1') and ensure ANY class (like 'Cliente') touching solid black diamonds to children (like 'comprador', 'Vendedor') has 'type': 'Composition' with targetTempId set to that parent class.\nCRITICAL: Respond ONLY with a valid JSON object matching the requested schema. Do not output any markdown text or conversational greeting outside the JSON object.`;
+      const promptText = `${this.composePrompt('Analiza la foto del pizarrón y copia solo lo que está dibujado. No rediseñes el diagrama y no digas que ya se reemplazó el lienzo.', '', options)}\nAnalyze this whiteboard/notebook image of a UML software class diagram. Extract ALL detected classes with exact class names, stereotypes (Entity, Interface, Abstract, Enum), visibility (- private, + public, # protected), attribute names, attribute data types, method names, return types, AND spatial positionX/positionY coordinates.\nMANDATORY: You MUST detect and extract ALL connecting lines, arrows, and diamonds between classes into 'connectorsGenerated' specifying 'sourceTempId', 'targetTempId', 'sourceClassName', 'targetClassName', and 'type' (Association | Aggregation | Composition | Inheritance | Implementation | Dependency).\nSPECIAL ATTENTION: Verify BOTH endpoints of every line for multiplicities (e.g. '+*', '+1') and ensure ANY class (like 'Cliente') touching solid black diamonds to children (like 'comprador', 'Vendedor') has 'type': 'Composition' with targetTempId set to that parent class.\nCRITICAL: Respond ONLY with a valid JSON object matching the requested schema. Do not output any markdown text or conversational greeting outside the JSON object. Do not add senior alternatives on a photo copy.`;
 
       const text = await this.generateWithRetry(
         [promptText, { inlineData: { mimeType: cleanMimeType, data: base64Data } }],
@@ -323,7 +422,9 @@ CRITICAL RULES:
         model,
         'Vision'
       );
-      return this.parseJsonResponse(text);
+      const parsed = this.parseJsonResponse(text);
+      parsed.message = addressMessage(parsed.message, options?.askerName);
+      return parsed;
     } catch (error: any) {
       return this.buildFailureResponse(error, 'Vision');
     }
@@ -333,7 +434,8 @@ CRITICAL RULES:
     filePath: string,
     mimeType: string,
     currentDiagramContext?: any,
-    model?: string
+    model?: string,
+    options?: { askerName?: string; history?: AIConversationTurn[] }
   ): Promise<AIServiceResponse> {
     try {
       const audioBytes = fs.readFileSync(filePath);
@@ -342,7 +444,7 @@ CRITICAL RULES:
         ? `Current Canvas Diagram Context: ${JSON.stringify(currentDiagramContext)}`
         : '';
 
-      const promptText = `${this.getSystemInstruction()}\n${contextStr}\nListen to this voice message audio. Transcribe the user command and perform the requested UML class diagram operations.`;
+      const promptText = `${this.composePrompt('Escucha el audio y responde ese pedido.', contextStr, options)}\nListen to this voice message audio. Transcribe the user command and answer as the senior moderator. Do not say the diagram was already changed.`;
 
       const text = await this.generateWithRetry(
         [
@@ -358,7 +460,9 @@ CRITICAL RULES:
         model,
         'Voice'
       );
-      return this.parseJsonResponse(text);
+      const parsed = this.parseJsonResponse(text);
+      parsed.message = addressMessage(parsed.message, options?.askerName);
+      return parsed;
     } catch (error: any) {
       return this.buildFailureResponse(error, 'Voice');
     }

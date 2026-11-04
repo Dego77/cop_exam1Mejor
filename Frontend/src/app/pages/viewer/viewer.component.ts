@@ -63,6 +63,7 @@ import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service'
               <span class="vc-time" *ngIf="msg.timestamp">{{ msg.timestamp | date:'HH:mm' }}</span>
             </div>
             <div class="vc-text">{{ msg.content }}</div>
+            <div class="vc-text" *ngFor="let proposal of msg.proposals">{{ proposal.label }} · {{ proposal.status === 'applied' ? 'aplicado' : (proposal.status === 'rejected' ? 'no permitido' : 'pendiente') }}</div>
           </div>
         </div>
       </aside>
@@ -360,8 +361,12 @@ export class ViewerComponent implements OnInit, OnDestroy {
 
     this.subs.add(this.wsService.aiChatMessage$.subscribe(raw => {
       if (!raw || raw.projectId !== this.projectId) return;
-      if (raw.id && this.chatMessages.some(m => m.id === raw.id)) return;
-      this.chatMessages = [...this.chatMessages, this.aiService.normalizeChatMessage(raw)];
+      const msg = this.aiService.normalizeChatMessage(raw);
+      if (msg.id && this.chatMessages.some(m => m.id === msg.id)) {
+        this.chatMessages = this.chatMessages.map(m => m.id === msg.id ? msg : m);
+        return;
+      }
+      this.chatMessages = [...this.chatMessages, msg];
     }));
     this.subs.add(this.wsService.aiChatCleared$.subscribe(evt => {
       if (evt?.projectId === this.projectId) this.chatMessages = [];

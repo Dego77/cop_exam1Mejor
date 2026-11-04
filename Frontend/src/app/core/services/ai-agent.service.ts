@@ -12,6 +12,16 @@ export interface AIChatAuthor {
   avatarUrl?: string | null;
 }
 
+export interface AIDiagramProposal {
+  id: string;
+  label: string;
+  askedBy: string;
+  status?: 'pending' | 'applied' | 'rejected';
+  decidedBy?: string;
+  replaceDiagram?: boolean;
+  payload?: any;
+}
+
 export interface AIMessage {
   id?: string;
   projectId?: string;
@@ -22,6 +32,7 @@ export interface AIMessage {
   mode: 'CHAT' | 'VOICE' | 'PHOTO';
   content: string;
   mediaUrl?: string;
+  proposals?: AIDiagramProposal[];
   timestamp?: Date;
   createdAt?: string;
 }
@@ -41,27 +52,33 @@ export class AIAgentService {
   }
 
   // isPrivate: the AI behaves the same, but the conversation is not stored nor shared with collaborators
-  sendTextPrompt(projectId: string, prompt: string, model?: string, diagramContext?: any, isPrivate = false): Observable<any> {
-    return this.http.post(`${this.apiUrl}/chat`, { projectId, prompt, model, diagramContext, isPrivate }, { headers: this.headers });
+  sendTextPrompt(projectId: string, prompt: string, model?: string, diagramContext?: any, isPrivate = false, history?: any[]): Observable<any> {
+    return this.http.post(`${this.apiUrl}/chat`, { projectId, prompt, model, diagramContext, isPrivate, history }, { headers: this.headers });
   }
 
-  sendPhoto(projectId: string, file: File, model?: string, isPrivate = false): Observable<any> {
+  decideProposal(projectId: string, decision: 'apply' | 'reject', messageId?: string, proposalId?: string, proposal?: AIDiagramProposal): Observable<any> {
+    return this.http.post(`${this.apiUrl}/decide`, { projectId, decision, messageId, proposalId, proposal }, { headers: this.headers });
+  }
+
+  sendPhoto(projectId: string, file: File, model?: string, isPrivate = false, history?: any[]): Observable<any> {
     const formData = new FormData();
     formData.append('photo', file);
     formData.append('projectId', projectId);
     if (model) formData.append('model', model);
     if (isPrivate) formData.append('isPrivate', 'true');
+    if (history) formData.append('history', JSON.stringify(history));
     return this.http.post(`${this.apiUrl}/photo`, formData, {
       headers: new HttpHeaders({ Authorization: `Bearer ${this.auth.token}` })
     });
   }
 
-  sendVoice(projectId: string, blob: Blob, model?: string, diagramContext?: any, isPrivate = false): Observable<any> {
+  sendVoice(projectId: string, blob: Blob, model?: string, diagramContext?: any, isPrivate = false, history?: any[]): Observable<any> {
     const formData = new FormData();
     formData.append('voice', blob, 'voice-note.webm');
     formData.append('projectId', projectId);
     if (model) formData.append('model', model);
     if (isPrivate) formData.append('isPrivate', 'true');
+    if (history) formData.append('history', JSON.stringify(history));
     if (diagramContext) formData.append('diagramContext', JSON.stringify(diagramContext));
     return this.http.post(`${this.apiUrl}/voice`, formData, {
       headers: new HttpHeaders({ Authorization: `Bearer ${this.auth.token}` })

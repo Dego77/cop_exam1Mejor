@@ -108,6 +108,8 @@ model AIChatHistory {
   mode      String
   content   String
   mediaUrl  String?
+  // Pending, applied, or rejected diagram options for this AI reply. Null on user messages.
+  proposals Json?
   createdAt DateTime @default(now())
 }
 

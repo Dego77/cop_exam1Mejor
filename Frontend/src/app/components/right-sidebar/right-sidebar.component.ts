@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { Subscription, combineLatest } from 'rxjs';
 import { debounceTime } from 'rxjs/operators';
-import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service';
+import { AIAgentService, AIDiagramProposal, AIMessage } from '../../core/services/ai-agent.service';
 import { ProjectService } from '../../core/services/project.service';
 import { DiagramService } from '../../core/services/diagram.service';
 import { WebSocketService } from '../../core/services/websocket.service';
@@ -96,11 +96,20 @@ import { AuthService } from '../../core/services/auth.service';
                 </span>
                 <span class="msg-sender" *ngIf="msg.sender === 'AI'">
                   Agente IA
-                  <span class="msg-reply-to" *ngIf="msg.user && !isOwnMessage(msg)">· respondiendo a {{ msg.user.fullName }}</span>
+                  <span class="msg-reply-to" *ngIf="msg.user">· respondiendo a {{ msg.user.fullName }}</span>
                 </span>
                 <span class="msg-time" *ngIf="msg.timestamp">{{ msg.timestamp | date:'HH:mm' }}</span>
               </div>
               <div class="msg-text">{{ msg.content }}</div>
+              <div class="proposal" *ngFor="let proposal of msg.proposals">
+                <div class="proposal-label">{{ proposal.label }}</div>
+                <div class="proposal-actions" *ngIf="!proposal.status || proposal.status === 'pending'">
+                  <button class="btn btn-primary btn-sm" (click)="decideProposal(msg, proposal, 'apply')" [disabled]="isDeciding">Permitir</button>
+                  <button class="btn btn-ghost btn-sm" (click)="decideProposal(msg, proposal, 'reject')" [disabled]="isDeciding">No permitir</button>
+                </div>
+                <div class="proposal-state" *ngIf="proposal.status === 'applied'">Aplicado por {{ proposal.decidedBy }}</div>
+                <div class="proposal-state" *ngIf="proposal.status === 'rejected'">No permitido por {{ proposal.decidedBy }}</div>
+              </div>
             </div>
 
             <div class="ai-loading" *ngIf="isProcessing">
@@ -419,6 +428,14 @@ import { AuthService } from '../../core/services/auth.service';
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .proposal {
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px solid var(--border);
+    }
+    .proposal-label { font-weight: 600; margin-bottom: 4px; }
+    .proposal-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .proposal-state { color: var(--text-secondary); }
     .user-msg {
       align-self: flex-end;
       background: var(--violet);
@@ -993,6 +1010,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   private chatNoticeTimer: any;
   textPrompt = '';
   isProcessing = false;
+  isDeciding = false;
   // Collaborators whose AI request is still being processed (shared group chat)
   peersWaitingAI: { userId: number; fullName: string }[] = [];
   private chatSocketSub?: Subscription;
@@ -1014,9 +1032,6 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   availableAgents = [
     { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', provider: 'Google GenAI (Predeterminado)' },
     { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', provider: 'Google High-Reasoning' },
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'OpenAI Architect' },
-    { id: 'deepseek-v3', name: 'DeepSeek V3', provider: 'DeepSeek Code Architect' },
-    { id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'Anthropic Architect' }
   ];
   selectedAgent = this.availableAgents[0];
   showAgentMenu = false;
@@ -1118,9 +1133,16 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     // Shared AI chat: messages and "AI is answering X" indicators from other collaborators.
     // Own messages are already rendered optimistically by sendTextPrompt/voice/photo.
     this.chatSocketSub = this.wsService.aiChatMessage$.subscribe((raw) => {
-      if (!raw || raw.projectId !== this.projectId || this.isOwnMessage(raw)) return;
-      if (raw.id && this.chatHistory.some(m => m.id === raw.id)) return;
-      this.chatHistory.push(this.aiService.normalizeChatMessage(raw));
+      if (!raw || raw.projectId !== this.projectId) return;
+      const msg = this.aiService.normalizeChatMessage(raw);
+      const idx = msg.id ? this.chatHistory.findIndex(m => m.id === msg.id) : -1;
+      if (idx >= 0) {
+        this.chatHistory[idx] = msg;
+        this.scrollChatToBottom();
+        return;
+      }
+      if (this.isOwnMessage(raw)) return;
+      this.chatHistory.push(msg);
       this.scrollChatToBottom();
     });
     this.chatSocketSub.add(this.wsService.aiChatThinking$.subscribe((evt) => {
@@ -1173,6 +1195,92 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   // Stable per-user color so each collaborator is easy to tell apart, like a group chat
+  private priorHistory(isPrivate: boolean, target: AIMessage[]): any[] | undefined {
+    if (!isPrivate) return undefined;
+    const name = this.auth.currentUser?.fullName || 'Usuario';
+    return target.slice(0, -1).map((msg) => ({
+      authorName: msg.sender === 'AI' ? (msg.user?.fullName || name) : name,
+      sender: msg.sender,
+      content: msg.content,
+    }));
+  }
+
+  private serverAiMessage(res: any, mode: 'CHAT' | 'VOICE' | 'PHOTO'): AIMessage {
+    if (res?.aiMessage) return this.aiService.normalizeChatMessage(res.aiMessage);
+    const content = res?.aiResponse?.message || 'No se pudo preparar una respuesta.';
+    return {
+      sender: 'AI',
+      mode,
+      content,
+      proposals: res?.proposals || [],
+      timestamp: new Date(),
+    };
+  }
+
+  decideProposal(msg: AIMessage, proposal: AIDiagramProposal, decision: 'apply' | 'reject'): void {
+    if (!this.projectId || this.isDeciding) return;
+    this.isDeciding = true;
+    this.aiService.decideProposal(
+      this.projectId,
+      decision,
+      msg.id,
+      proposal.id,
+      msg.id ? undefined : proposal
+    ).subscribe({
+      next: (res) => {
+        this.isDeciding = false;
+        if (res?.aiMessage) {
+          const updated = this.aiService.normalizeChatMessage(res.aiMessage);
+          this.replaceMessage(this.chatHistory, updated);
+          this.replaceMessage(this.privateChatHistory, updated);
+        } else {
+          proposal.status = decision === 'apply' ? 'applied' : 'rejected';
+          proposal.decidedBy = this.auth.currentUser?.fullName;
+        }
+        if (decision === 'apply') this.applyDiagramResult(res);
+      },
+      error: () => { this.isDeciding = false; }
+    });
+  }
+
+  private replaceMessage(list: AIMessage[], updated: AIMessage): void {
+    const idx = list.findIndex((item) => item.id && item.id === updated.id);
+    if (idx >= 0) list[idx] = updated;
+  }
+
+  private applyDiagramResult(res: any): void {
+    if (!res) return;
+    if (res.replaced) {
+      this.diagramService.clearLocalSnapshot(this.projectId);
+      (this.diagramService as any).nodesSubject.next(res.createdNodes || []);
+      (this.diagramService as any).connectorsSubject.next(res.createdConnectors || []);
+      this.diagramService.saveDiagramLocalSnapshot(this.projectId, res.createdNodes || [], res.createdConnectors || []);
+    } else {
+      if (res.createdNodes?.length) res.createdNodes.forEach((n: any) => this.diagramService.addLocalNode(n));
+      if (res.updatedNodes?.length) res.updatedNodes.forEach((n: any) => this.diagramService.updateLocalNode(n));
+      if (res.deletedNodeIds?.length) res.deletedNodeIds.forEach((id: string) => this.diagramService.deleteNode(id));
+      if (res.createdConnectors?.length) {
+        res.createdConnectors.forEach((c: any) => {
+          const current = this.diagramService.currentConnectors;
+          if (!current.some(x => x.id === c.id)) {
+            (this.diagramService as any).connectorsSubject.next([...current, c]);
+          }
+        });
+      }
+      if (res.deletedConnectorIds?.length) {
+        const current = this.diagramService.currentConnectors;
+        (this.diagramService as any).connectorsSubject.next(current.filter((c: any) => !res.deletedConnectorIds.includes(c.id)));
+      }
+      if (res.updatedConnectors?.length) {
+        const current = this.diagramService.currentConnectors;
+        const updatedById = new Map(res.updatedConnectors.map((c: any) => [c.id, c]));
+        (this.diagramService as any).connectorsSubject.next(current.map((c: any) => updatedById.get(c.id) || c));
+      }
+    }
+    this.diagramUpdated.emit();
+    if (this.projectId) this.wsService.emitDiagramReloaded(this.projectId);
+  }
+
   authorColor(msg: AIMessage): string {
     const key = String(msg.user?.id ?? msg.userId ?? '');
     let hash = 0;
@@ -1209,98 +1317,34 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     this.textPrompt = '';
     this.isProcessing = true;
 
-    const currentNodes = this.diagramService.currentNodes;
-    const currentConnectors = this.diagramService.currentConnectors;
-
     if (this.projectId) {
-      this.aiService.sendTextPrompt(this.projectId, prompt, this.selectedAgent.id, currentNodes, isPrivate).subscribe({
+      const history = this.priorHistory(isPrivate, target);
+      this.aiService.sendTextPrompt(this.projectId, prompt, this.selectedAgent.id, undefined, isPrivate, history).subscribe({
         next: (res) => {
           this.isProcessing = false;
-
-          if (res?.aiResponse?.error === true) {
-            const localResult = this.aiService.processSmartPromptLocally(prompt, currentNodes, currentConnectors);
-            target.push({
-              sender: 'AI',
-              mode: 'CHAT',
-              content: `${res.aiResponse.message}\n\n${localResult.message}`,
-              timestamp: new Date()
-            });
-            this.speakText(localResult.message);
-            this.diagramUpdated.emit();
-            if (this.projectId) {
-              this.wsService.emitDiagramReloaded(this.projectId);
-            }
-            return;
-          }
-
-          if (res?.createdNodes && res.createdNodes.length > 0) {
-            res.createdNodes.forEach((n: any) => this.diagramService.addLocalNode(n));
-          }
-          if (res?.updatedNodes && res.updatedNodes.length > 0) {
-            res.updatedNodes.forEach((n: any) => this.diagramService.updateLocalNode(n));
-          }
-          if (res?.deletedNodeIds && res.deletedNodeIds.length > 0) {
-            res.deletedNodeIds.forEach((id: string) => this.diagramService.deleteNode(id));
-          }
-          if (res?.createdConnectors && res.createdConnectors.length > 0) {
-            res.createdConnectors.forEach((c: any) => {
-              const current = this.diagramService.currentConnectors;
-              if (!current.some(x => x.id === c.id)) {
-                (this.diagramService as any).connectorsSubject.next([...current, c]);
-              }
-            });
-          }
-          if (res?.deletedConnectorIds && res.deletedConnectorIds.length > 0) {
-            const current = this.diagramService.currentConnectors;
-            (this.diagramService as any).connectorsSubject.next(current.filter((c: any) => !res.deletedConnectorIds.includes(c.id)));
-          }
-          if (res?.updatedConnectors && res.updatedConnectors.length > 0) {
-            const current = this.diagramService.currentConnectors;
-            const updatedById = new Map(res.updatedConnectors.map((c: any) => [c.id, c]));
-            (this.diagramService as any).connectorsSubject.next(current.map((c: any) => updatedById.get(c.id) || c));
-          }
-
-          const rawMsg = res?.aiResponse?.message || res?.message || 'Instrucción procesada exitosamente.';
-
-          target.push({
-            sender: 'AI',
-            mode: 'CHAT',
-            content: rawMsg,
-            timestamp: new Date()
-          });
-          this.speakText(rawMsg);
-          this.diagramUpdated.emit();
-          if (this.projectId) {
-            this.wsService.emitDiagramReloaded(this.projectId);
-          }
+          const reply = this.serverAiMessage(res, 'CHAT');
+          target.push(reply);
+          this.speakText(reply.content);
+          this.scrollChatToBottom();
         },
         error: () => {
           this.isProcessing = false;
-          const localResult = this.aiService.processSmartPromptLocally(prompt, currentNodes, currentConnectors);
           target.push({
             sender: 'AI',
             mode: 'CHAT',
-            content: localResult.message,
+            content: 'No se pudo conectar con el servicio de IA. El diagrama no cambió.',
             timestamp: new Date()
           });
-          this.speakText(localResult.message);
-          this.diagramUpdated.emit();
-          if (this.projectId) {
-            this.wsService.emitDiagramReloaded(this.projectId);
-          }
         }
       });
     } else {
       this.isProcessing = false;
-      const localResult = this.aiService.processSmartPromptLocally(prompt, currentNodes, currentConnectors);
       target.push({
         sender: 'AI',
         mode: 'CHAT',
-        content: localResult.message,
+        content: 'Abre un proyecto para hablar con el agente.',
         timestamp: new Date()
       });
-      this.speakText(localResult.message);
-      this.diagramUpdated.emit();
     }
   }
 
@@ -1442,80 +1486,29 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
       });
     }
 
-    const currentNodes = this.diagramService.currentNodes;
-    const currentConnectors = this.diagramService.currentConnectors;
-
     if (this.projectId) {
-      this.aiService.sendVoice(this.projectId, blob, this.selectedAgent.id, currentNodes, isPrivate).subscribe({
+      const history = this.priorHistory(isPrivate, target);
+      this.aiService.sendVoice(this.projectId, blob, this.selectedAgent.id, undefined, isPrivate, history).subscribe({
         next: (res) => {
           this.isProcessing = false;
-          if (res?.createdNodes && res.createdNodes.length > 0) {
-            res.createdNodes.forEach((n: any) => this.diagramService.addLocalNode(n));
-          }
-          if (res?.updatedNodes && res.updatedNodes.length > 0) {
-            res.updatedNodes.forEach((n: any) => this.diagramService.updateLocalNode(n));
-          }
-          if (res?.deletedNodeIds && res.deletedNodeIds.length > 0) {
-            res.deletedNodeIds.forEach((id: string) => this.diagramService.deleteNode(id));
-          }
-          if (res?.createdConnectors && res.createdConnectors.length > 0) {
-            res.createdConnectors.forEach((c: any) => {
-              const current = this.diagramService.currentConnectors;
-              if (!current.some(x => x.id === c.id)) {
-                (this.diagramService as any).connectorsSubject.next([...current, c]);
-              }
-            });
-          }
-          if (res?.deletedConnectorIds && res.deletedConnectorIds.length > 0) {
-            const current = this.diagramService.currentConnectors;
-            (this.diagramService as any).connectorsSubject.next(current.filter((c: any) => !res.deletedConnectorIds.includes(c.id)));
-          }
-          if (res?.updatedConnectors && res.updatedConnectors.length > 0) {
-            const current = this.diagramService.currentConnectors;
-            const updatedById = new Map(res.updatedConnectors.map((c: any) => [c.id, c]));
-            (this.diagramService as any).connectorsSubject.next(current.map((c: any) => updatedById.get(c.id) || c));
-          }
-
-          const rawMsg = res?.aiResponse?.message || res?.message || 'Nota de voz procesada. Clases generadas en el lienzo.';
-          target.push({
-            sender: 'AI',
-            mode: 'VOICE',
-            content: rawMsg,
-            timestamp: new Date()
-          });
-          this.speakText(rawMsg);
-          this.diagramUpdated.emit();
-          if (this.projectId) {
-            this.wsService.emitDiagramReloaded(this.projectId);
-          }
+          const reply = this.serverAiMessage(res, 'VOICE');
+          target.push(reply);
+          this.speakText(reply.content);
+          this.scrollChatToBottom();
         },
         error: () => {
           this.isProcessing = false;
-          let fallbackMsg = 'Error al procesar la nota de voz.';
-          if (transcriptText.trim()) {
-            const localResult = this.aiService.processSmartPromptLocally(transcriptText, currentNodes, currentConnectors);
-            fallbackMsg = localResult.message;
-          }
           target.push({
             sender: 'AI',
             mode: 'VOICE',
-            content: fallbackMsg,
+            content: 'No se pudo procesar la nota de voz. El diagrama no cambió.',
             timestamp: new Date()
           });
-          this.speakText(fallbackMsg);
-          this.diagramUpdated.emit();
-          if (this.projectId) {
-            this.wsService.emitDiagramReloaded(this.projectId);
-          }
         }
       });
     } else {
       this.isProcessing = false;
-      let fallbackMsg = 'Debes seleccionar o crear un proyecto primero.';
-      if (transcriptText.trim()) {
-        const localResult = this.aiService.processSmartPromptLocally(transcriptText, currentNodes, currentConnectors);
-        fallbackMsg = localResult.message;
-      }
+      const fallbackMsg = 'Debes seleccionar o crear un proyecto primero.';
       target.push({
         sender: 'AI',
         mode: 'VOICE',
@@ -1569,34 +1562,17 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     const target = this.activeChatTarget();
 
     if (this.projectId) {
-      this.aiService.sendPhoto(this.projectId, this.selectedFile, this.selectedAgent.id, isPrivate).subscribe({
+      const history = this.priorHistory(isPrivate, target);
+      this.aiService.sendPhoto(this.projectId, this.selectedFile, this.selectedAgent.id, isPrivate, history).subscribe({
         next: (res) => {
           this.isProcessing = false;
-          if (res?.createdNodes && res.createdNodes.length > 0) {
-            this.diagramService.clearLocalSnapshot(this.projectId);
-            (this.diagramService as any).nodesSubject.next(res.createdNodes);
-            (this.diagramService as any).connectorsSubject.next(res.createdConnectors || []);
-            this.diagramService.saveDiagramLocalSnapshot(this.projectId, res.createdNodes, res.createdConnectors || []);
-          } else if (res?.createdConnectors && res.createdConnectors.length > 0) {
-            (this.diagramService as any).connectorsSubject.next(res.createdConnectors);
-          }
-
-          const msg = res?.aiResponse?.message || 'Foto analizada: Clases y conexiones importadas al lienzo exitosamente.';
-          target.push({
-            sender: 'AI',
-            mode: 'PHOTO',
-            content: `📷 ${msg}`,
-            timestamp: new Date()
-          });
-          this.speakText(msg);
+          const reply = this.serverAiMessage(res, 'PHOTO');
+          target.push(reply);
+          this.speakText(reply.content);
           this.lastUploadedPhotoUrl = this.photoPreview;
           this.photoPreview = null;
           this.selectedFile = null;
-
-          this.diagramUpdated.emit();
-          if (this.projectId) {
-            this.wsService.emitDiagramReloaded(this.projectId);
-          }
+          this.scrollChatToBottom();
         },
         error: (err) => {
           this.isProcessing = false;

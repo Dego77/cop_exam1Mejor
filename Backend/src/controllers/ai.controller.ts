@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { prisma } from '../config/prisma';
 import { AuthRequest } from '../middlewares/auth.middleware';
-import { AIAgentService, AIServiceResponse } from '../services/ai.service';
+import { AIAgentService, AIConversationTurn, AIServiceResponse, addressMessage } from '../services/ai.service';
 import { SupportAIAgentService } from '../services/support-ai.service';
 
 const CHAT_AUTHOR_SELECT = { id: true, fullName: true, avatarUrl: true };
@@ -13,6 +13,7 @@ type ChatMessageData = {
   mode: 'CHAT' | 'VOICE' | 'PHOTO';
   content: string;
   mediaUrl?: string;
+  proposals?: any;
 };
 
 // Persists one AI chat message and broadcasts it (with its author) to everyone in the project
@@ -47,6 +48,126 @@ async function userCanAccessProject(projectId: string, userId: number): Promise<
 // broadcast to collaborators (arrives as boolean in JSON or 'true' in multipart FormData).
 function isPrivateRequest(req: AuthRequest): boolean {
   return req.body?.isPrivate === true || req.body?.isPrivate === 'true';
+}
+
+const MUTATION_KEYS = [
+  'classesGenerated', 'classesModified', 'classesToDelete', 'classesToRename',
+  'classesToReposition', 'attributesToRemove', 'methodsToRemove',
+  'connectorsGenerated', 'connectorsToDelete', 'connectorsModified',
+];
+
+function payloadFrom(source: any): any {
+  const payload: any = {};
+  for (const key of MUTATION_KEYS) {
+    if (Array.isArray(source?.[key]) && source[key].length > 0) payload[key] = source[key];
+  }
+  return payload;
+}
+
+function payloadHasWork(payload: any): boolean {
+  return MUTATION_KEYS.some((key) => Array.isArray(payload?.[key]) && payload[key].length > 0);
+}
+
+function clientHistory(req: AuthRequest): AIConversationTurn[] {
+  const raw = req.body?.history;
+  if (typeof raw === 'string') {
+    try { return clientHistory({ body: { history: JSON.parse(raw) } } as AuthRequest); } catch { return []; }
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(-80).map((turn: any) => ({
+    authorName: String(turn?.authorName || turn?.fullName || 'Usuario'),
+    sender: turn?.sender === 'AI' ? 'AI' as const : 'USER' as const,
+    content: String(turn?.content || ''),
+  }));
+}
+
+async function promptContext(req: AuthRequest, projectId: string, userId: number, isPrivate: boolean, excludeMessageId?: string) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } });
+  const askerName = user?.fullName?.trim() || 'Usuario';
+  if (isPrivate) return { askerName, history: clientHistory(req) };
+  const rows = await prisma.aIChatHistory.findMany({
+    where: { projectId },
+    include: { user: { select: { fullName: true } } },
+    orderBy: { createdAt: 'asc' },
+  });
+  const history: AIConversationTurn[] = rows
+    .filter((row) => row.id !== excludeMessageId)
+    .map((row) => ({
+      authorName: row.user?.fullName || 'Usuario',
+      sender: row.sender === 'AI' ? 'AI' : 'USER',
+      content: row.content,
+    }));
+  return { askerName, history };
+}
+
+function buildStoredProposals(ai: any, askerName: string, replaceDiagram = false) {
+  if (replaceDiagram) {
+    const payload = payloadFrom(ai);
+    if (!payloadHasWork(payload)) return [];
+    return [{
+      id: 'foto',
+      label: 'Importar el pizarrón detectado',
+      askedBy: askerName,
+      status: 'pending',
+      replaceDiagram: true,
+      payload,
+    }];
+  }
+
+  const incoming = Array.isArray(ai?.proposals) ? ai.proposals : [];
+  const stored = incoming.map((item: any, index: number) => {
+    const direct = payloadFrom(item);
+    const nested = payloadFrom(item?.payload || {});
+    return {
+      id: String(item?.id || `opcion-${index + 1}`).slice(0, 40),
+      label: String(item?.label || `Opción ${index + 1}`).slice(0, 180),
+      askedBy: String(item?.askedBy || askerName).slice(0, 80),
+      status: 'pending',
+      replaceDiagram: false,
+      payload: payloadHasWork(direct) ? direct : nested,
+    };
+  }).filter((item: any) => payloadHasWork(item.payload));
+
+  const seen = new Set<string>();
+  const unique = stored.map((item: any) => {
+    let id = item.id;
+    while (seen.has(id)) id = `${id}-2`;
+    seen.add(id);
+    return { ...item, id };
+  });
+  if (unique.length) return unique;
+
+  const top = payloadFrom(ai);
+  if (!payloadHasWork(top)) return [];
+  return [{
+    id: 'pedido',
+    label: `Cambio pedido por ${askerName}`,
+    askedBy: askerName,
+    status: 'pending',
+    replaceDiagram: false,
+    payload: top,
+  }];
+}
+
+async function applyMutationPayload(diagramId: string, payload: any) {
+  const existingNodes = await prisma.node.findMany({ where: { diagramId } });
+  const mutationResult = await applyClassMutations(diagramId, existingNodes, payload || {});
+  const allDiagramNodes = await prisma.node.findMany({ where: { diagramId } });
+  let createdConnectors: any[] = [];
+  if (payload?.connectorsGenerated?.length) {
+    const result = await applyConnectorsGenerated(diagramId, allDiagramNodes, payload.connectorsGenerated);
+    createdConnectors = result.createdConnectors;
+    mutationResult.createdNodes.push(...result.createdAssocNodes);
+  }
+  const editResult = await applyConnectorDeletionsAndEdits(diagramId, allDiagramNodes, payload || {});
+  return {
+    createdNodes: mutationResult.createdNodes,
+    updatedNodes: mutationResult.updatedNodes,
+    deletedNodeIds: mutationResult.deletedNodeIds,
+    createdConnectors,
+    deletedConnectorIds: editResult.deletedConnectorIds,
+    updatedConnectors: editResult.updatedConnectors,
+  };
 }
 
 function emitAIThinking(req: AuthRequest, projectId: string, user: { id: number; fullName: string }, thinking: boolean) {
@@ -495,57 +616,26 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
       emitAIThinking(req, projectId, userMessage.user, true);
     }
 
+    const { askerName, history } = await promptContext(req, projectId, userId, isPrivate, userMessage?.id);
     const contextToUse = buildDiagramContext(diagram);
     let aiResponse: AIServiceResponse;
     try {
-      aiResponse = await AIAgentService.processTextPrompt(prompt, contextToUse, model);
+      aiResponse = await AIAgentService.processTextPrompt(prompt, contextToUse, model, { askerName, history });
     } finally {
       if (userMessage) emitAIThinking(req, projectId, userMessage.user, false);
     }
 
+    aiResponse.message = addressMessage(aiResponse.message, askerName);
+    const proposals = aiResponse.error ? [] : buildStoredProposals(aiResponse, askerName);
+
     let aiMessage: ChatMessageRecord | null = null;
     if (!isPrivate) {
-      aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'CHAT', content: aiResponse.message });
-    }
-
-    // Auto-create, update, or delete classes in diagram
-    let createdNodes: any[] = [];
-    let updatedNodes: any[] = [];
-    let deletedNodeIds: string[] = [];
-    let createdConnectors: any[] = [];
-    let deletedConnectorIds: string[] = [];
-    let updatedConnectors: any[] = [];
-
-    if (diagram) {
-      const existingNodes = diagram.nodes || [];
-
-      const mutationResult = await applyClassMutations(diagram.id, existingNodes, aiResponse);
-      createdNodes = mutationResult.createdNodes;
-      updatedNodes = mutationResult.updatedNodes;
-      deletedNodeIds = mutationResult.deletedNodeIds;
-
-      // Process connectorsGenerated (create), then connectorsToDelete/connectorsModified (edit
-      // existing relationships) - both via the shared helpers so text and voice stay in sync.
-      const allDiagramNodes = await prisma.node.findMany({ where: { diagramId: diagram.id } });
-      if (aiResponse.connectorsGenerated && aiResponse.connectorsGenerated.length > 0) {
-        const result = await applyConnectorsGenerated(diagram.id, allDiagramNodes, aiResponse.connectorsGenerated);
-        createdConnectors = result.createdConnectors;
-        createdNodes.push(...result.createdAssocNodes);
-      }
-
-      const editResult = await applyConnectorDeletionsAndEdits(diagram.id, allDiagramNodes, aiResponse);
-      deletedConnectorIds = editResult.deletedConnectorIds;
-      updatedConnectors = editResult.updatedConnectors;
+      aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'CHAT', content: aiResponse.message, proposals });
     }
 
     res.json({
       aiResponse,
-      createdNodes,
-      updatedNodes,
-      deletedNodeIds,
-      createdConnectors,
-      deletedConnectorIds,
-      updatedConnectors,
+      proposals,
       userMessage,
       aiMessage,
     });
@@ -586,175 +676,27 @@ export const handlePhotoPrompt = async (req: AuthRequest, res: Response): Promis
       emitAIThinking(req, projectId, userMessage.user, true);
     }
 
+    const { askerName, history } = await promptContext(req, projectId, userId, isPrivate, userMessage?.id);
     let aiResponse: AIServiceResponse;
     try {
-      aiResponse = await AIAgentService.processPhotoPrompt(file.path, file.mimetype, model);
+      aiResponse = await AIAgentService.processPhotoPrompt(file.path, file.mimetype, model, { askerName, history });
     } finally {
       if (userMessage) emitAIThinking(req, projectId, userMessage.user, false);
     }
 
+    aiResponse.message = addressMessage(aiResponse.message, askerName);
+    const proposals = aiResponse.error ? [] : buildStoredProposals(aiResponse, askerName, true);
+
     let aiMessage: ChatMessageRecord | null = null;
     if (!isPrivate) {
-      aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'PHOTO', content: aiResponse.message });
-    }
-
-    // Auto-create nodes and connectors from whiteboard photo recognition
-    let createdNodes: any[] = [];
-    let createdConnectors: any[] = [];
-
-    const detectedClasses = aiResponse.classesGenerated || (aiResponse as any).classes || (aiResponse as any).nodes || (aiResponse as any).classesCreated || [];
-    const detectedConnectors = aiResponse.connectorsGenerated || (aiResponse as any).connectors || (aiResponse as any).relationships || [];
-
-    if (diagram && detectedClasses && detectedClasses.length > 0) {
-      // Purge previous nodes and connectors for a 100% clean import of the photo diagram
-      await prisma.connector.deleteMany({ where: { diagramId: diagram.id } }).catch(() => {});
-      await prisma.node.deleteMany({ where: { diagramId: diagram.id } }).catch(() => {});
-
-      let startX = 80;
-      let startY = 80;
-      let colIndex = 0;
-
-      // Prepare node creation payloads
-      const nodeCreationPromises = detectedClasses.map((cls: any, idx: number) => {
-        const posX = (cls.positionX !== undefined && cls.positionX !== null && !isNaN(cls.positionX))
-          ? Number(cls.positionX)
-          : startX + (idx % 3) * 320;
-        const posY = (cls.positionY !== undefined && cls.positionY !== null && !isNaN(cls.positionY))
-          ? Number(cls.positionY)
-          : startY + Math.floor(idx / 3) * 260;
-
-        const clsName = cls.name || cls.className || `Class_${idx + 1}`;
-
-        return prisma.node.create({
-          data: {
-            diagramId: diagram.id,
-            name: clsName,
-            stereotype: cls.stereotype || 'Entity',
-            attributes: cls.attributes || [],
-            methods: cls.methods || [],
-            positionX: posX,
-            positionY: posY,
-          },
-        }).then(node => ({ node, originalCls: cls }));
-      });
-
-      const nodeResults = await Promise.all(nodeCreationPromises);
-      const tempIdToNodeMap = new Map<string, any>();
-      const nameToNodesMap = new Map<string, any[]>();
-
-      for (const resItem of nodeResults) {
-        const node = resItem.node;
-        const cls = resItem.originalCls;
-        createdNodes.push(node);
-
-        if (cls.tempId) tempIdToNodeMap.set(String(cls.tempId).toLowerCase(), node);
-        if (cls.id) tempIdToNodeMap.set(String(cls.id).toLowerCase(), node);
-
-        const lowerName = (node.name || '').trim().toLowerCase();
-        const list = nameToNodesMap.get(lowerName) || [];
-        list.push(node);
-        nameToNodesMap.set(lowerName, list);
-      }
-
-      const findNode = (tempIdRef?: string, classNameRef?: string): any | undefined => {
-        if (tempIdRef) {
-          const foundByTemp = tempIdToNodeMap.get(String(tempIdRef).toLowerCase());
-          if (foundByTemp) return foundByTemp;
-        }
-        if (classNameRef) {
-          const lowerName = classNameRef.trim().toLowerCase();
-          const matches = nameToNodesMap.get(lowerName);
-          if (matches && matches.length > 0) {
-            return matches.shift(); // Consume match for distinct instances if duplicate names exist
-          }
-        }
-        return undefined;
-      };
-
-      // Create relationships/connectors detected in the photo concurrently
-      if (detectedConnectors && detectedConnectors.length > 0) {
-        const connectorPayloads: any[] = [];
-
-        for (const conn of detectedConnectors) {
-          const srcTemp = conn.sourceTempId || conn.sourceId;
-          const tgtTemp = conn.targetTempId || conn.targetId;
-          const assocTemp = conn.associationClassTempId || conn.associationClassId;
-
-          const srcName = conn.sourceClassName || conn.sourceNodeName || conn.source || conn.sourceClass;
-          const tgtName = conn.targetClassName || conn.targetNodeName || conn.target || conn.targetClass;
-          const assocName = conn.associationClassName || conn.associationClassNode || conn.associationClass;
-
-          const srcNode = findNode(srcTemp, srcName);
-          const tgtNode = findNode(tgtTemp, tgtName);
-          let assocNode = findNode(assocTemp, assocName);
-
-          if (srcNode && tgtNode) {
-            let type = conn.type || 'Association';
-
-            // Gemini didn't name/create a junction class itself - if the cardinality is M:N on
-            // both ends, synthesize the same association-class node the manual canvas tool would.
-            if (!assocNode && type === 'Association' && isManyToMany(conn.sourceMultiplicity) && isManyToMany(conn.targetMultiplicity)) {
-              assocNode = await synthesizeAssociationClassNode(diagram.id, srcNode, tgtNode);
-              createdNodes.push(assocNode);
-              type = 'AssociationClass';
-            }
-
-            let finalSrcId = srcNode.id;
-            let finalTgtId = tgtNode.id;
-            let finalSrcMult = (conn.sourceMultiplicity !== undefined && conn.sourceMultiplicity !== null) ? String(conn.sourceMultiplicity) : '';
-            let finalTgtMult = (conn.targetMultiplicity !== undefined && conn.targetMultiplicity !== null) ? String(conn.targetMultiplicity) : '';
-
-            // Composition & Aggregation Normalization: SVG renderer draws the diamond on targetNodeId.
-            // If Gemini output srcNode as the parent container (e.g. Cliente) and tgtNode as child (e.g. comprador/Vendedor),
-            // flip source and target so targetNodeId receives the diamond on Cliente's border.
-            if (type === 'Composition' || type === 'Aggregation') {
-              const srcLower = (srcNode.name || '').toLowerCase();
-              const tgtLower = (tgtNode.name || '').toLowerCase();
-
-              // If srcNode is parent container (like Cliente) and tgtNode is child (comprador, Vendedor), flip endpoints
-              if (srcLower === 'cliente' || srcLower.includes('cliente') || srcLower.includes('parent') || srcLower.includes('padre')) {
-                finalSrcId = tgtNode.id;
-                finalTgtId = srcNode.id;
-                const tempM = finalSrcMult;
-                finalSrcMult = finalTgtMult;
-                finalTgtMult = tempM;
-              }
-            }
-
-            connectorPayloads.push({
-              diagramId: diagram.id,
-              sourceNodeId: finalSrcId,
-              targetNodeId: finalTgtId,
-              type: type,
-              sourceMultiplicity: finalSrcMult,
-              targetMultiplicity: finalTgtMult,
-              label: conn.label || '',
-              associationClassNodeId: assocNode ? assocNode.id : undefined,
-            });
-          }
-        }
-
-        if (connectorPayloads.length > 0) {
-          const connectorPromises = connectorPayloads.map(payload => prisma.connector.create({ data: payload }));
-          const savedConnectors = await Promise.all(connectorPromises);
-          createdConnectors = savedConnectors.map(connector => ({
-            id: connector.id,
-            sourceNodeId: connector.sourceNodeId,
-            targetNodeId: connector.targetNodeId,
-            type: connector.type,
-            sourceMultiplicity: connector.sourceMultiplicity,
-            targetMultiplicity: connector.targetMultiplicity,
-            label: connector.label,
-            associationClassNodeId: connector.associationClassNodeId || undefined,
-          }));
-        }
-      }
+      aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'PHOTO', content: aiResponse.message, proposals });
     }
 
     res.json({
       aiResponse,
-      createdNodes,
-      createdConnectors,
+      proposals,
+      createdNodes: [],
+      createdConnectors: [],
       userMessage,
       aiMessage,
     });
@@ -794,57 +736,28 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
       emitAIThinking(req, projectId, userMessage.user, true);
     }
 
+    const asker = userId
+      ? await promptContext(req, projectId, userId, isPrivate, userMessage?.id)
+      : { askerName: 'Usuario', history: [] as AIConversationTurn[] };
     const contextToUse = buildDiagramContext(diagram);
     let aiResponse: AIServiceResponse;
     try {
-      aiResponse = await AIAgentService.processVoicePrompt(file.path, file.mimetype, contextToUse, model);
+      aiResponse = await AIAgentService.processVoicePrompt(file.path, file.mimetype, contextToUse, model, asker);
     } finally {
       if (userMessage) emitAIThinking(req, projectId, userMessage.user, false);
     }
 
+    aiResponse.message = addressMessage(aiResponse.message, asker.askerName);
+    const proposals = aiResponse.error ? [] : buildStoredProposals(aiResponse, asker.askerName);
+
     let aiMessage: ChatMessageRecord | null = null;
     if (userId && !isPrivate) {
-      aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'VOICE', content: aiResponse.message });
-    }
-
-    let createdNodes: any[] = [];
-    let updatedNodes: any[] = [];
-    let deletedNodeIds: string[] = [];
-    let createdConnectors: any[] = [];
-    let deletedConnectorIds: string[] = [];
-    let updatedConnectors: any[] = [];
-
-    if (diagram) {
-      const existingNodes = diagram.nodes || [];
-
-      const mutationResult = await applyClassMutations(diagram.id, existingNodes, aiResponse);
-      createdNodes = mutationResult.createdNodes;
-      updatedNodes = mutationResult.updatedNodes;
-      deletedNodeIds = mutationResult.deletedNodeIds;
-
-      // Process connectorsGenerated (create), then connectorsToDelete/connectorsModified (edit
-      // existing relationships) - same shared helpers handleTextPrompt uses, so voice gets the
-      // exact same relationship capabilities instead of silently dropping them.
-      const allDiagramNodes = await prisma.node.findMany({ where: { diagramId: diagram.id } });
-      if (aiResponse.connectorsGenerated && aiResponse.connectorsGenerated.length > 0) {
-        const result = await applyConnectorsGenerated(diagram.id, allDiagramNodes, aiResponse.connectorsGenerated);
-        createdConnectors = result.createdConnectors;
-        createdNodes.push(...result.createdAssocNodes);
-      }
-
-      const editResult = await applyConnectorDeletionsAndEdits(diagram.id, allDiagramNodes, aiResponse);
-      deletedConnectorIds = editResult.deletedConnectorIds;
-      updatedConnectors = editResult.updatedConnectors;
+      aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'VOICE', content: aiResponse.message, proposals });
     }
 
     res.json({
       aiResponse,
-      createdNodes,
-      updatedNodes,
-      deletedNodeIds,
-      createdConnectors,
-      deletedConnectorIds,
-      updatedConnectors,
+      proposals,
       userMessage,
       aiMessage,
     });
@@ -911,6 +824,194 @@ export const clearAIChatHistory = async (req: AuthRequest, res: Response): Promi
     res.json({ ok: true, scope });
   } catch (error: any) {
     res.status(500).json({ error: 'Error al reiniciar el chat IA: ' + error.message });
+  }
+};
+
+async function applyPhotoDiagram(diagramId: string, payload: any) {
+  const detectedClasses = payload?.classesGenerated || payload?.classes || payload?.nodes || [];
+  const detectedConnectors = payload?.connectorsGenerated || payload?.connectors || payload?.relationships || [];
+  const createdNodes: any[] = [];
+  let createdConnectors: any[] = [];
+  if (!detectedClasses.length) {
+    return { createdNodes, createdConnectors, updatedNodes: [], deletedNodeIds: [], deletedConnectorIds: [], updatedConnectors: [], replaced: true };
+  }
+
+  await prisma.connector.deleteMany({ where: { diagramId } }).catch(() => {});
+  await prisma.node.deleteMany({ where: { diagramId } }).catch(() => {});
+
+  const nodeResults = await Promise.all(detectedClasses.map((cls: any, idx: number) => {
+    const posX = (cls.positionX !== undefined && cls.positionX !== null && !isNaN(cls.positionX))
+      ? Number(cls.positionX)
+      : 80 + (idx % 3) * 320;
+    const posY = (cls.positionY !== undefined && cls.positionY !== null && !isNaN(cls.positionY))
+      ? Number(cls.positionY)
+      : 80 + Math.floor(idx / 3) * 260;
+    return prisma.node.create({
+      data: {
+        diagramId,
+        name: cls.name || cls.className || `Class_${idx + 1}`,
+        stereotype: cls.stereotype || 'Entity',
+        attributes: cls.attributes || [],
+        methods: cls.methods || [],
+        positionX: posX,
+        positionY: posY,
+      },
+    }).then((node) => ({ node, originalCls: cls }));
+  }));
+
+  const tempIdToNodeMap = new Map<string, any>();
+  const nameToNodesMap = new Map<string, any[]>();
+  for (const resItem of nodeResults) {
+    createdNodes.push(resItem.node);
+    if (resItem.originalCls.tempId) tempIdToNodeMap.set(String(resItem.originalCls.tempId).toLowerCase(), resItem.node);
+    if (resItem.originalCls.id) tempIdToNodeMap.set(String(resItem.originalCls.id).toLowerCase(), resItem.node);
+    const lowerName = (resItem.node.name || '').trim().toLowerCase();
+    const list = nameToNodesMap.get(lowerName) || [];
+    list.push(resItem.node);
+    nameToNodesMap.set(lowerName, list);
+  }
+
+  const findNode = (tempIdRef?: string, classNameRef?: string): any | undefined => {
+    if (tempIdRef) {
+      const foundByTemp = tempIdToNodeMap.get(String(tempIdRef).toLowerCase());
+      if (foundByTemp) return foundByTemp;
+    }
+    if (classNameRef) {
+      const matches = nameToNodesMap.get(classNameRef.trim().toLowerCase());
+      if (matches && matches.length > 0) return matches.shift();
+    }
+    return undefined;
+  };
+
+  const connectorPayloads: any[] = [];
+  for (const conn of detectedConnectors) {
+    const srcNode = findNode(conn.sourceTempId || conn.sourceId, conn.sourceClassName || conn.sourceNodeName || conn.source || conn.sourceClass);
+    const tgtNode = findNode(conn.targetTempId || conn.targetId, conn.targetClassName || conn.targetNodeName || conn.target || conn.targetClass);
+    let assocNode = findNode(conn.associationClassTempId || conn.associationClassId, conn.associationClassName || conn.associationClassNode || conn.associationClass);
+    if (!srcNode || !tgtNode) continue;
+
+    let type = conn.type || 'Association';
+    if (!assocNode && type === 'Association' && isManyToMany(conn.sourceMultiplicity) && isManyToMany(conn.targetMultiplicity)) {
+      assocNode = await synthesizeAssociationClassNode(diagramId, srcNode, tgtNode);
+      createdNodes.push(assocNode);
+      type = 'AssociationClass';
+    }
+
+    let finalSrcId = srcNode.id;
+    let finalTgtId = tgtNode.id;
+    let finalSrcMult = conn.sourceMultiplicity != null ? String(conn.sourceMultiplicity) : '';
+    let finalTgtMult = conn.targetMultiplicity != null ? String(conn.targetMultiplicity) : '';
+    if (type === 'Composition' || type === 'Aggregation') {
+      const srcLower = (srcNode.name || '').toLowerCase();
+      if (srcLower === 'cliente' || srcLower.includes('cliente') || srcLower.includes('parent') || srcLower.includes('padre')) {
+        finalSrcId = tgtNode.id;
+        finalTgtId = srcNode.id;
+        const tempM = finalSrcMult;
+        finalSrcMult = finalTgtMult;
+        finalTgtMult = tempM;
+      }
+    }
+    connectorPayloads.push({
+      diagramId,
+      sourceNodeId: finalSrcId,
+      targetNodeId: finalTgtId,
+      type,
+      sourceMultiplicity: finalSrcMult,
+      targetMultiplicity: finalTgtMult,
+      label: conn.label || '',
+      associationClassNodeId: assocNode ? assocNode.id : undefined,
+    });
+  }
+
+  if (connectorPayloads.length > 0) {
+    const savedConnectors = await Promise.all(connectorPayloads.map((item) => prisma.connector.create({ data: item })));
+    createdConnectors = savedConnectors.map((connector) => ({
+      id: connector.id,
+      sourceNodeId: connector.sourceNodeId,
+      targetNodeId: connector.targetNodeId,
+      type: connector.type,
+      sourceMultiplicity: connector.sourceMultiplicity,
+      targetMultiplicity: connector.targetMultiplicity,
+      label: connector.label,
+      associationClassNodeId: connector.associationClassNodeId || undefined,
+    }));
+  }
+
+  return { createdNodes, createdConnectors, updatedNodes: [], deletedNodeIds: [], deletedConnectorIds: [], updatedConnectors: [], replaced: true };
+}
+
+export const decideAIProposal = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { projectId, messageId, proposalId, decision } = req.body;
+    const userId = req.user!.id;
+    if (!projectId || (decision !== 'apply' && decision !== 'reject')) {
+      res.status(400).json({ error: 'projectId y decision son requeridos.' });
+      return;
+    }
+    if (!(await userCanAccessProject(projectId, userId))) {
+      res.status(403).json({ error: 'No tienes acceso a este proyecto.' });
+      return;
+    }
+
+    const actor = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } });
+    const decidedBy = actor?.fullName || 'Usuario';
+    let proposal = req.body?.proposal;
+    let message: any = null;
+
+    if (messageId) {
+      message = await prisma.aIChatHistory.findFirst({
+        where: { id: messageId, projectId, sender: 'AI' },
+        include: { user: { select: CHAT_AUTHOR_SELECT } },
+      });
+      if (!message) {
+        res.status(404).json({ error: 'No se encontró la respuesta de la IA.' });
+        return;
+      }
+      const list = Array.isArray(message.proposals) ? message.proposals.map((item: any) => ({ ...item })) : [];
+      proposal = list.find((item: any) => item.id === proposalId);
+      if (!proposal) {
+        res.status(404).json({ error: 'No se encontró esa opción.' });
+        return;
+      }
+      if (proposal.status && proposal.status !== 'pending') {
+        res.json({ aiMessage: message, alreadyDecided: true });
+        return;
+      }
+
+      let applied: any = {};
+      if (decision === 'apply') {
+        let diagram = await prisma.diagram.findFirst({ where: { projectId }, orderBy: { updatedAt: 'desc' } });
+        if (!diagram) diagram = await prisma.diagram.create({ data: { projectId, name: 'Main Diagram' } });
+        applied = proposal.replaceDiagram
+          ? await applyPhotoDiagram(diagram.id, proposal.payload)
+          : await applyMutationPayload(diagram.id, proposal.payload);
+      }
+
+      proposal.status = decision === 'apply' ? 'applied' : 'rejected';
+      proposal.decidedBy = decidedBy;
+      message = await prisma.aIChatHistory.update({
+        where: { id: message.id },
+        data: { proposals: list },
+        include: { user: { select: CHAT_AUTHOR_SELECT } },
+      });
+      req.app.get('io')?.to(projectId).emit('ai-chat-message', message);
+      res.json({ aiMessage: message, ...applied, replaced: !!proposal.replaceDiagram && decision === 'apply' });
+      return;
+    }
+
+    if (decision === 'apply' && proposal) {
+      let diagram = await prisma.diagram.findFirst({ where: { projectId }, orderBy: { updatedAt: 'desc' } });
+      if (!diagram) diagram = await prisma.diagram.create({ data: { projectId, name: 'Main Diagram' } });
+      const applied = proposal.replaceDiagram
+        ? await applyPhotoDiagram(diagram.id, proposal.payload)
+        : await applyMutationPayload(diagram.id, proposal.payload);
+      res.json({ ...applied, replaced: !!proposal.replaceDiagram });
+      return;
+    }
+
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Error al decidir la propuesta: ' + error.message });
   }
 };
 
