@@ -10,7 +10,7 @@ export const routes: Routes = [
   { path: 'login', component: LoginComponent },
   { path: 'editor', component: EditorComponent },
   { path: 'help', component: HelpComponent },
-  // "Modo Ver" for the mobile app: real-time, read-only
+  // "Modo Ver" de la app móvil: tiempo real y solo lectura
   { path: 'view', component: ViewerProjectsComponent },
   { path: 'view/:projectId', component: ViewerComponent },
   { path: '**', redirectTo: 'editor' }

@@ -8,7 +8,7 @@ import { UMLNode } from '../../core/services/diagram.service';
   imports: [CommonModule],
   template: `
     <aside class="left-sidebar" id="left-sidebar-uml">
-      <!-- Vertical Resizer Handle Bar (ew-resize) -->
+      <!-- Barra para cambiar el ancho (arrastre horizontal) -->
       <div 
         class="sidebar-resizer-left" 
         [class.active]="isResizing"
@@ -16,7 +16,7 @@ import { UMLNode } from '../../core/services/diagram.service';
         title="Arrastra para cambiar el ancho del panel izquierdo"
       ></div>
 
-      <!-- Section 1: Palette of UML Elements -->
+      <!-- Sección 1: paleta de elementos UML -->
       <div class="sidebar-section">
         <div class="section-title">Elementos UML</div>
         <div class="palette-grid">
@@ -87,7 +87,7 @@ import { UMLNode } from '../../core/services/diagram.service';
         </div>
       </div>
 
-      <!-- Section 2: Palette of Connectors -->
+      <!-- Sección 2: paleta de conectores -->
       <div class="sidebar-section">
         <div class="section-title">Conectores UML</div>
         <div class="connectors-list">
@@ -142,7 +142,7 @@ import { UMLNode } from '../../core/services/diagram.service';
         </div>
       </div>
 
-      <!-- Section 3: Hierarchy Tree View -->
+      <!-- Sección 3: árbol de jerarquía -->
       <div class="sidebar-section tree-section">
         <div class="section-title">Árbol de Jerarquía</div>
         <div class="tree-container">

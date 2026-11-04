@@ -25,21 +25,21 @@ export interface SupportChatMessage {
 export class SupportAgentService {
   private readonly apiUrl = `${API_BASE}/api/ai/support`;
 
-  // Toggle state: Interactive mode ON/OFF
+  // Estado del interruptor: modo interactivo encendido o apagado
   private interactiveModeSubject = new BehaviorSubject<boolean>(true);
   public isInteractiveMode$ = this.interactiveModeSubject.asObservable();
 
-  // Highlighted UI element for screen assistance
+  // Elemento de la interfaz resaltado para la ayuda en pantalla
   private highlightSelectorSubject = new BehaviorSubject<string | null>(null);
   public highlightSelector$ = this.highlightSelectorSubject.asObservable();
 
-  // Active tip for the floating mascot/bubble in Editor
+  // Consejo activo de la burbuja flotante en el editor
   private activeMascotTipSubject = new BehaviorSubject<string | null>(
     '💡 ¡Hola! Estoy en modo activo para darte consejos y guiarte en el Canvas.'
   );
   public activeMascotTip$ = this.activeMascotTipSubject.asObservable();
 
-  // Chat message history
+  // Historial de mensajes del chat
   private chatHistorySubject = new BehaviorSubject<SupportChatMessage[]>([
     {
       sender: 'AGENT',
@@ -86,7 +86,7 @@ export class SupportAgentService {
   }
 
   public askAgent(question: string): Observable<SupportResponse> {
-    // Append user message
+    // Agregar el mensaje del usuario
     const current = this.chatHistorySubject.value;
     this.chatHistorySubject.next([
       ...current,

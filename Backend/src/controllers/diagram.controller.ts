@@ -16,7 +16,7 @@ export const getDiagramData = async (req: AuthRequest, res: Response): Promise<v
     });
 
     if (!diagram) {
-      // Auto-create diagram in PostgreSQL DB if missing for this project
+      // Crear el diagrama en PostgreSQL si este proyecto todavía no tiene uno
       diagram = await prisma.diagram.create({
         data: {
           projectId,
@@ -84,7 +84,7 @@ export const createNode = async (req: AuthRequest, res: Response): Promise<void>
       },
     });
 
-    // Touch parent diagram timestamp to preserve latest state
+    // Actualizar la fecha del diagrama padre para conservar el último estado
     await prisma.diagram.update({
       where: { id: diagramId },
       data: { updatedAt: new Date() },

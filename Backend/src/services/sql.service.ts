@@ -84,7 +84,7 @@ export class PostgreSQLGeneratorService {
     const nodeMap = new Map<string, UMLNode>();
     nodes.forEach((n) => nodeMap.set(n.id, n));
 
-    // Filter nodes that are Entities or Classes (ignoring interfaces/enums or translating them)
+    // Filtrar nodos que son entidades o clases (las interfaces y los enums se ignoran o se traducen)
     const entityNodes = nodes.filter((n) => n.stereotype !== 'Package');
 
     entityNodes.forEach((node) => {
@@ -94,7 +94,7 @@ export class PostgreSQLGeneratorService {
       const columns: string[] = [];
       let hasPrimaryKey = false;
 
-      // Attributes to columns
+      // Atributos a columnas
       const attrs = Array.isArray(node.attributes) ? node.attributes : [];
       attrs.forEach((attr) => {
         const colName = this.toColumnName(attr.name);
@@ -117,7 +117,7 @@ export class PostgreSQLGeneratorService {
       sqlOutput.push(`);\n`);
     });
 
-    // Handle Foreign Keys & Relationships
+    // Llaves foráneas y relaciones
     if (options.includeForeignKeys) {
       connectors.forEach((conn) => {
         const sourceNode = nodeMap.get(conn.sourceNodeId);
@@ -139,7 +139,7 @@ export class PostgreSQLGeneratorService {
       });
     }
 
-    // Handle Indexes
+    // Índices
     if (options.addIndexes) {
       connectors.forEach((conn) => {
         const sourceNode = nodeMap.get(conn.sourceNodeId);

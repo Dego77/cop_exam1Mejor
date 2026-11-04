@@ -268,14 +268,14 @@ html, body {
 .code-type { color: #67e8f9; }
 .code-comment { color: var(--text-muted); }
 
-/* Pulse animation */
+/* Animación de pulso */
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
 .animate-pulse { animation: pulse 2s ease infinite; }
 
-/* Glow animation */
+/* Animación de brillo */
 @keyframes glow {
   0%, 100% { box-shadow: 0 0 8px rgba(0, 212, 255, 0.3); }
   50% { box-shadow: 0 0 24px rgba(0, 212, 255, 0.6); }

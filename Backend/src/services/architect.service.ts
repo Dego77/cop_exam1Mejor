@@ -10,7 +10,7 @@ export class ArchitectSyncService {
 
     const packagedElements: any[] = [];
 
-    // Export Nodes
+    // Exportar nodos
     nodes.forEach((node) => {
       const attributes = (Array.isArray(node.attributes) ? node.attributes : []).map((attr) => ({
         $: {
@@ -49,7 +49,7 @@ export class ArchitectSyncService {
       });
     });
 
-    // Export Connectors
+    // Exportar conectores
     connectors.forEach((conn) => {
       packagedElements.push({
         $: {

@@ -40,7 +40,7 @@ export const exportArchitectXMI = async (req: AuthRequest, res: Response): Promi
 
     const xmiContent = ArchitectSyncService.exportToXMI(nodes, connectors);
 
-    // Save Architect Sync history
+    // Guardar el historial de sincronización con Architect
     await prisma.architectSync.create({
       data: {
         projectId,
@@ -75,7 +75,7 @@ export const importArchitectXMI = async (req: AuthRequest, res: Response): Promi
 
     const parsed = await ArchitectSyncService.importFromXMI(xmiContent);
 
-    // Replace or merge nodes in diagram
+    // Reemplazar o fusionar nodos en el diagrama
     const createdNodesMap = new Map<string, string>();
     const newNodesList = [];
 

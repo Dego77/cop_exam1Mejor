@@ -9,9 +9,9 @@ import { DiagramService, UMLNode, UMLConnector, CanvasLabel } from '../../core/s
 import { WebSocketService } from '../../core/services/websocket.service';
 import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service';
 
-// "Modo Ver" (mobile app): shows a project's diagram and its AI group chat in real time,
-// strictly read-only - no editing, no AI prompts. The server also ignores any edit event
-// coming from a socket joined in 'view' mode.
+// "Modo Ver" (app móvil): muestra el diagrama del proyecto y el chat grupal de la IA en tiempo real,
+// solo lectura. No se edita ni se escribe a la IA. El servidor también ignora cualquier evento de
+// edición que llegue de un socket unido en modo 'view'.
 @Component({
   selector: 'app-viewer',
   standalone: true,
@@ -48,7 +48,7 @@ import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service'
         ></app-canvas>
       </div>
 
-      <!-- Read-only AI group chat -->
+      <!-- Chat grupal de la IA, solo lectura -->
       <aside class="viewer-chat" *ngIf="showChat && status === 'ready'">
         <div class="vc-header">
           <span>Chat IA del grupo · solo lectura</span>
@@ -75,7 +75,7 @@ import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service'
       height: 100vh;
       background: var(--bg-darkest);
       color: var(--text-primary);
-      /* app-canvas sizes itself as 100vh minus this value */
+      /* app-canvas se mide como 100vh menos este valor */
       --navbar-height: 52px;
     }
     .viewer-layout {
@@ -264,7 +264,7 @@ export class ViewerComponent implements OnInit, OnDestroy {
     this.subs.add(this.diagramService.connectors$.subscribe(c => this.connectors = c));
     this.subs.add(this.diagramService.labels$.subscribe(l => this.labels = l));
 
-    // getById only answers for the owner or a collaborator
+    // getById solo responde al dueño o a un colaborador
     this.projectService.getById(this.projectId).subscribe({
       next: (project) => {
         this.projectName = project.name;
@@ -286,7 +286,7 @@ export class ViewerComponent implements OnInit, OnDestroy {
     this.router.navigate(['/view']);
   }
 
-  // Zoom so the whole diagram fits the phone screen (node sizes are estimated)
+  // Zoom para que el diagrama entero quepa en la pantalla del teléfono (el tamaño de los nodos es estimado)
   fitToScreen(): void {
     if (!this.canvas || this.nodes.length === 0) return;
     let maxX = 0;
@@ -322,7 +322,7 @@ export class ViewerComponent implements OnInit, OnDestroy {
     });
   }
 
-  // Listen-only: same realtime events the editor applies, without ever emitting changes
+  // Solo escucha: los mismos eventos en tiempo real que aplica el editor, sin emitir cambios
   private connectRealtime(): void {
     this.wsService.connect();
     this.wsService.joinProject(this.projectId, this.auth.currentUser, 'view', this.auth.token || undefined);
@@ -341,7 +341,7 @@ export class ViewerComponent implements OnInit, OnDestroy {
     }));
     this.subs.add(this.wsService.nodeUpdated$.subscribe(node => this.diagramService.updateLocalNode(node)));
     this.subs.add(this.wsService.nodeCreated$.subscribe(node => this.diagramService.addLocalNode(node)));
-    // Local removal only - DiagramService.deleteNode() would also send a DELETE to the server
+    // Borrado solo local. DiagramService.deleteNode() también mandaría un DELETE al servidor
     this.subs.add(this.wsService.nodeDeleted$.subscribe(nodeId => {
       (this.diagramService as any).nodesSubject.next(this.diagramService.currentNodes.filter(n => n.id !== nodeId));
       (this.diagramService as any).connectorsSubject.next(

@@ -157,7 +157,7 @@ import { ProjectService, Project } from '../../core/services/project.service';
         </div>
       </div>
 
-      <!-- User Profile & Realtime Timer Popover Modal -->
+      <!-- Ventana del perfil y del temporizador en tiempo real -->
       <div class="modal-backdrop" *ngIf="showUserPopover" (click)="closeUserPopover()">
         <div class="modal-card glass-panel user-profile-card" (click)="$event.stopPropagation()">
           <div class="ea-modal-header">
@@ -196,7 +196,7 @@ import { ProjectService, Project } from '../../core/services/project.service';
         </div>
       </div>
 
-      <!-- Work Session History Modal -->
+      <!-- Ventana del historial de sesiones de trabajo -->
       <div class="modal-backdrop" *ngIf="showHistoryModal" (click)="closeHistoryModal()">
         <div class="modal-card glass-panel history-modal-card" (click)="$event.stopPropagation()">
           <div class="ea-modal-header">
@@ -284,7 +284,7 @@ import { ProjectService, Project } from '../../core/services/project.service';
         </div>
       </div>
 
-      <!-- New Project Modal (Enterprise Architect Save As) -->
+      <!-- Ventana de proyecto nuevo (guardar como en Enterprise Architect) -->
       <div class="modal-backdrop" *ngIf="showNewModal">
         <div class="modal-card glass-panel modal-ea-style">
           <div class="ea-modal-header">
@@ -325,7 +325,7 @@ import { ProjectService, Project } from '../../core/services/project.service';
         </div>
       </div>
 
-      <!-- Invite Modal -->
+      <!-- Ventana de invitación -->
       <div class="modal-backdrop" *ngIf="showInviteModal">
         <div class="modal-card glass-panel">
           <h3>Invitar Colaborador</h3>
@@ -732,7 +732,7 @@ import { ProjectService, Project } from '../../core/services/project.service';
       margin-top: 4px;
     }
 
-    /* User Profile Popover & History Modal */
+    /* Ventana del perfil y del historial */
     .user-profile-card {
       width: 420px;
       padding: 20px;

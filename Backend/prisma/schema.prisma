@@ -108,12 +108,12 @@ model AIChatHistory {
   mode      String
   content   String
   mediaUrl  String?
-  // Pending, applied, or rejected diagram options for this AI reply. Null on user messages.
+  // Opciones del diagrama pendientes, aplicadas o rechazadas de esta respuesta de la IA. Nulo en mensajes de usuario.
   proposals Json?
   createdAt DateTime @default(now())
 }
 
-// "New Chat → Para mí": the user only sees AI chat messages created after clearedAt
+// "Nuevo chat → Para mí": el usuario solo ve mensajes del chat de IA creados después de clearedAt
 model AIChatClear {
   id        String   @id @default(uuid())
   projectId String

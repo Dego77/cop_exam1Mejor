@@ -164,7 +164,7 @@ export class AgentBubbleComponent implements OnInit, OnDestroy {
   public mascotTip: string | null = null;
   private subs: Subscription[] = [];
 
-  // Draggable position coordinates
+  // Coordenadas de la posición arrastrable
   public posX: number = 280;
   public posY: number = 550;
   public isDragging: boolean = false;
@@ -178,7 +178,7 @@ export class AgentBubbleComponent implements OnInit, OnDestroy {
   ) {}
 
   ngOnInit(): void {
-    // Calculate initial Y position safely
+    // Calcular la posición Y inicial con cuidado
     if (typeof window !== 'undefined') {
       this.posY = Math.max(100, window.innerHeight - 130);
     }
@@ -214,7 +214,7 @@ export class AgentBubbleComponent implements OnInit, OnDestroy {
 
     this.totalDragDistance += Math.abs(event.movementX) + Math.abs(event.movementY);
 
-    // Screen bounds checking
+    // Comprobar que no se salga de la pantalla
     const maxX = window.innerWidth - 80;
     const maxY = window.innerHeight - 80;
 
@@ -228,7 +228,7 @@ export class AgentBubbleComponent implements OnInit, OnDestroy {
   }
 
   public onAvatarClick(event: MouseEvent): void {
-    // If it was a small drag/click, navigate to help
+    // Si fue un clic o un arrastre corto, ir a la ayuda
     if (this.totalDragDistance < 6) {
       this.openHelp();
     }

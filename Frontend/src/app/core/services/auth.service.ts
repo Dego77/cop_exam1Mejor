@@ -44,7 +44,7 @@ export class AuthService {
     localStorage.removeItem('classforge_token');
     localStorage.removeItem('classforge_user');
     
-    // Clear all user-specific projects cache from localStorage
+    // Limpia del localStorage la caché de proyectos de este usuario
     Object.keys(localStorage).forEach(key => {
       if (key.startsWith('classforge_projects_cache')) {
         localStorage.removeItem(key);

@@ -74,7 +74,7 @@ export class DiagramService {
   loadDiagram(projectId: string): Observable<Diagram> {
     this.currentProjectId = projectId;
     return new Observable(observer => {
-      // Clear memory subjects immediately so elements from previous project don't bleed into new project
+      // Vaciar la memoria de inmediato para que lo del proyecto anterior no se cuele en el nuevo
       this.nodesSubject.next([]);
       this.connectorsSubject.next([]);
 
@@ -84,18 +84,18 @@ export class DiagramService {
           const serverNodes = d.nodes || [];
           let serverConnectors = d.connectors || [];
 
-          // Check if local snapshot has saved connectors for this user/project
+          // Ver si la copia local tiene conectores guardados para este usuario y proyecto
           const cached = this.getDiagramLocalSnapshot(projectId);
           if (cached && cached.connectors && cached.connectors.length > 0 && serverConnectors.length === 0) {
             serverConnectors = cached.connectors;
           }
 
-          // Auto-Synthesize Connectors ONLY if neither server nor local snapshot has any saved connectors
+          // Crear conectores automáticos solo si ni el servidor ni la copia local tienen conectores guardados
           if (serverConnectors.length === 0 && serverNodes.length >= 2 && (!cached || !cached.nodes || cached.nodes.length === 0)) {
             const synthesized = this.autoSynthesizeConnectors(serverNodes);
             if (synthesized.length > 0) {
               serverConnectors = synthesized;
-              // Persist to PostgreSQL asynchronously
+              // Guardar en PostgreSQL sin esperar
               synthesized.forEach(c => this.addConnector(c).subscribe());
             }
           }
@@ -139,7 +139,7 @@ export class DiagramService {
     const connectors: UMLConnector[] = [];
     if (!nodes || nodes.length < 2) return connectors;
 
-    // 1. Foreign Key Attribute Matching
+    // 1. Emparejar por atributo de llave foránea
     for (let i = 0; i < nodes.length; i++) {
       const srcNode = nodes[i];
       const attrs = srcNode.attributes || [];
@@ -176,7 +176,7 @@ export class DiagramService {
       }
     }
 
-    // 2. Specific Domain Matching (Customer -> User, etc.)
+    // 2. Emparejar por dominio (Customer -> User, etc.)
     const findNodeByName = (nameStr: string) => {
       const clean = nameStr.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
       return nodes.find(n => {
@@ -202,7 +202,7 @@ export class DiagramService {
       }
     }
 
-    // 3. Fallback: Sequential Chain for remaining disconnected nodes
+    // 3. Respaldo: cadena en orden para los nodos que siguieron sueltos
     if (connectors.length === 0 && nodes.length >= 2) {
       for (let i = 0; i < nodes.length - 1; i++) {
         connectors.push({
@@ -220,19 +220,17 @@ export class DiagramService {
     return connectors;
   }
 
-  // Self-heals a connector whose associationClassNodeId points at a client-side temp id
-  // (e.g. "node_assoc_...") that was never rewritten to the node's real UUID. This happens
-  // because addConnector() posts a new AssociationClass connector to the backend immediately,
-  // before its box node is necessarily persisted (see onCreateConnector in editor.component.ts),
-  // and the temp->real reconciliation in saveCurrentDiagram() below only fires when both the
-  // node save and the connector update land in the very same batch - anything that breaks that
-  // (a network hiccup, an edit going through the singular updateConnector() instead, etc.)
-  // leaves the connector permanently pointing at an id no node will ever have again. Runs on
-  // every project load: if associationClassNodeId doesn't match any current node, resolve it by
-  // the same "{source}_{target}" naming convention editor.component.ts uses when it
-  // auto-creates the association-class box (the same fallback canvas.component.ts's
-  // getAssocClassNode() already relies on to draw the dashed line), then persist the fix so the
-  // project self-repairs the first time anyone opens it after this change ships.
+  // Repara un conector cuyo associationClassNodeId apunta a un id temporal del cliente
+  // (por ejemplo "node_assoc_...") que nunca se reescribió al UUID real del nodo. Pasa porque
+  // addConnector() manda el conector AssociationClass al backend de inmediato, antes de que la
+  // caja exista en la base (ver onCreateConnector en editor.component.ts). El cambio de id
+  // temporal a real en saveCurrentDiagram() solo ocurre si el guardado del nodo y la
+  // actualización del conector caen en el mismo lote. Si eso se corta (un fallo de red, una
+  // edición que pasa por updateConnector(), etc.) el conector queda apuntando a un id que
+  // ningún nodo va a tener. Corre en cada carga: si associationClassNodeId no coincide con
+  // ningún nodo, lo resuelve con el nombre "{origen}_{destino}" que usa editor.component.ts al
+  // crear la caja (el mismo respaldo de getAssocClassNode() en canvas.component.ts para dibujar
+  // la línea punteada) y guarda el arreglo, así el proyecto se repara la primera vez que alguien lo abre.
   private repairAssociationClassLinks(connectors: UMLConnector[], nodes: UMLNode[]): UMLConnector[] {
     if (!connectors || connectors.length === 0 || !nodes || nodes.length === 0) return connectors;
     const nodeIds = new Set(nodes.map(n => n.id));
@@ -409,7 +407,7 @@ export class DiagramService {
           label: conn.label || ''
         };
 
-        // Always push to connectorsSubject immediately so line renders on canvas
+        // Publicar el conector de inmediato para que la línea se dibuje en el lienzo
         const current = this.connectorsSubject.value;
         if (!current.some(c => c.id === tempConn.id || (c.sourceNodeId === tempConn.sourceNodeId && c.targetNodeId === tempConn.targetNodeId && c.type === tempConn.type))) {
           this.connectorsSubject.next([...current, tempConn]);
@@ -480,7 +478,7 @@ export class DiagramService {
     const existingIndex = current.findIndex(n => n.id === node.id || (n.name && n.name.toLowerCase() === node.name?.toLowerCase()));
     
     if (existingIndex >= 0) {
-      // Replace existing local node with updated version
+      // Reemplazar el nodo local por la versión actualizada
       const updatedList = [...current];
       updatedList[existingIndex] = { ...updatedList[existingIndex], ...node };
       this.nodesSubject.next(updatedList);

@@ -5,7 +5,7 @@ export class SupportAIAgentService {
     return new GoogleGenAI({ vertexai: true, apiKey });
   }
 
-  // Support Agent AI Prompt Processor
+  // Procesador del pedido del agente de soporte
   public static async processSupportPrompt(
     prompt: string,
     isInteractiveMode: boolean = false,

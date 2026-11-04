@@ -26,7 +26,7 @@ export interface AIMessage {
   id?: string;
   projectId?: string;
   userId?: number | string;
-  // For USER messages: who wrote it. For AI messages: who the AI is answering.
+  // En mensajes de usuario: quién lo escribió. En mensajes de la IA: a quién responde.
   user?: AIChatAuthor;
   sender: 'USER' | 'AI';
   mode: 'CHAT' | 'VOICE' | 'PHOTO';
@@ -51,7 +51,7 @@ export class AIAgentService {
     return new HttpHeaders({ Authorization: `Bearer ${this.auth.token}` });
   }
 
-  // isPrivate: the AI behaves the same, but the conversation is not stored nor shared with collaborators
+  // isPrivate: la IA se comporta igual, pero la conversación no se guarda ni se comparte con los colaboradores
   sendTextPrompt(projectId: string, prompt: string, model?: string, diagramContext?: any, isPrivate = false, history?: any[]): Observable<any> {
     return this.http.post(`${this.apiUrl}/chat`, { projectId, prompt, model, diagramContext, isPrivate, history }, { headers: this.headers });
   }
@@ -91,12 +91,12 @@ export class AIAgentService {
     );
   }
 
-  // New Chat: 'me' resets only this user's view, 'all' wipes the project's chat for everyone
+  // Nuevo chat: 'me' reinicia solo la vista de este usuario, 'all' borra el chat del proyecto para todos
   clearChatHistory(projectId: string, scope: 'me' | 'all'): Observable<any> {
     return this.http.delete(`${this.apiUrl}/history/${projectId}?scope=${scope}`, { headers: this.headers });
   }
 
-  // Backend rows carry `createdAt`; the chat UI renders `timestamp`
+  // Las filas del backend traen `createdAt`; el chat pinta `timestamp`
   normalizeChatMessage(msg: AIMessage): AIMessage {
     return { ...msg, timestamp: msg.timestamp || (msg.createdAt ? new Date(msg.createdAt) : undefined) };
   }
@@ -109,25 +109,25 @@ export class AIAgentService {
    */
   private normalizeSpeechPrompt(prompt: string): string {
     let clean = prompt.trim();
-    // 1. Remove speech fillers, stutters, and hesitations
+    // 1. Quitar muletillas, tartamudeos y dudas
     clean = clean.replace(/\b(eeh|ehh|ehmm|este|o\s+sea|osea|bueno|mira|sabes|digo|eh|ajá|mmm|mm)\b/gi, ' ');
     clean = clean.replace(/\s+/g, ' ').trim();
 
-    // 2. Normalize compound PK/FK attribute patterns: "id rol" or "id de rol" -> "id_rol"
+    // 2. Normalizar atributos compuestos de PK/FK: "id rol" o "id de rol" -> "id_rol"
     clean = clean.replace(/\bid\s+(?:de\s+)?([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)\b/gi, (match, p1) => {
       const lowerP1 = p1.toLowerCase();
       if (['que', 'se', 'una', 'la', 'un', 'el', 'los', 'las', 'del'].includes(lowerP1)) return match;
       return `id_${lowerP1}`;
     });
 
-    // 3. Normalize "nombre rol" / "nombre de rol" -> "nombre_rol"
+    // 3. Normalizar "nombre rol" / "nombre de rol" -> "nombre_rol"
     clean = clean.replace(/\bnombre\s+(?:de\s+)?([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)\b/gi, (match, p1) => {
       const lowerP1 = p1.toLowerCase();
       if (['que', 'se', 'una', 'la', 'un', 'el', 'los', 'las', 'del'].includes(lowerP1)) return match;
       return `nombre_${lowerP1}`;
     });
 
-    // 4. Normalize "fecha creacion" / "fecha de creacion" -> "fecha_creacion"
+    // 4. Normalizar "fecha creacion" / "fecha de creacion" -> "fecha_creacion"
     clean = clean.replace(/\bfecha\s+(?:de\s+)?([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)\b/gi, (match, p1) => {
       const lowerP1 = p1.toLowerCase();
       if (['que', 'se', 'una', 'la', 'un', 'el', 'los', 'las', 'del'].includes(lowerP1)) return match;
@@ -143,7 +143,7 @@ export class AIAgentService {
     const createdConnectors: UMLConnector[] = [];
     let responseMsg = '';
 
-    // Calculate position X, Y to avoid overlapping existing cards
+    // Calcular la posición X, Y para no tapar las tarjetas que ya existen
     let maxX = 120;
     let maxY = 80;
     if (currentNodes && currentNodes.length > 0) {
@@ -160,7 +160,7 @@ export class AIAgentService {
 
     const stopWords = new Set(['q', 'que', 'se', 'llame', 'llamada', 'llamado', 'nombrada', 'nombrado', 'denominada', 'denominado', 'una', 'la', 'un', 'el', 'clase', 'entidad', 'interface', 'enum', 'y', 'con']);
 
-    // 0. RELATIONSHIP DETECTION (Priority 1: "relacioname cliente y rol", "asocia usuario con rol")
+    // 0. Detección de relaciones (prioridad 1: "relacioname cliente y rol", "asocia usuario con rol")
     const isRelationCommand = /(?:relaciona|relacioname|relacionamelo|asocia|asociame|asociamelo|vincula|vinculame|conecta|conectame|une|uneme|asociacion|asociación|agregacion|agregación|composicion|composición|herencia)\b/i.test(cleanPrompt);
 
     if (isRelationCommand && currentNodes && currentNodes.length >= 2) {
@@ -178,7 +178,7 @@ export class AIAgentService {
         if (/composicion|composición/i.test(cleanPrompt)) connType = 'Composition';
         if (/herencia/i.test(cleanPrompt)) connType = 'Inheritance';
 
-        // Extract multiplicities for source and target
+        // Extraer las multiplicidades de origen y destino
         let srcMult = '';
         let tgtMult = '';
 
@@ -212,7 +212,7 @@ export class AIAgentService {
       }
     }
 
-    // ABSOLUTE CHECK: Does prompt target an EXISTING class in currentNodes?
+    // Comprobación: ¿el pedido apunta a una clase que YA existe en currentNodes?
     let targetExistingNode: UMLNode | undefined;
     if (currentNodes && currentNodes.length > 0) {
       targetExistingNode = currentNodes.find(n => {
@@ -233,7 +233,7 @@ export class AIAgentService {
         return { message: responseMsg, createdNodes: [], createdConnectors: [] };
       }
 
-      // Extract target attribute/method name requested
+      // Extraer el nombre del atributo o método que se pidió
       let extractedItemName = '';
       const explicitMatch = cleanPrompt.match(/(?:q\s+se\s+llame|que\s+se\s+llame|llamado|llamada|nombrado|nombrada|denominado|denominada)\s+([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)/i);
       if (explicitMatch && explicitMatch[1]) {
@@ -243,7 +243,7 @@ export class AIAgentService {
         if (itemMatch && itemMatch[1]) {
           extractedItemName = itemMatch[1];
         } else {
-          // Fallback: match last word if user says "borra el atributo nombre_rol"
+          // Respaldo: tomar la última palabra si el usuario dice "borra el atributo nombre_rol"
           const lastWordMatch = cleanPrompt.match(/(?:atributo|campo|propiedad|metodo|método)\s+.*?\b([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)$/i);
           if (lastWordMatch && lastWordMatch[1]) {
             extractedItemName = lastWordMatch[1];
@@ -295,7 +295,7 @@ export class AIAgentService {
       }
     }
 
-    // 1. High-precision Class Name Extraction (Only for NEW classes that do not exist)
+    // 1. Extraer con precisión el nombre de la clase (solo clases NUEVAS, que no existen)
     let rawClassName = '';
     const explicitNameMatch = cleanPrompt.match(/(?:q\s+se\s+llame|que\s+se\s+llame|llamada|llamado|nombrada|nombrado|denominada|denominado)\s+([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)/i);
     if (explicitNameMatch && explicitNameMatch[1]) {
@@ -315,15 +315,15 @@ export class AIAgentService {
     if (rawClassName) {
       const className = rawClassName.charAt(0).toUpperCase() + rawClassName.slice(1);
 
-      // Check if className already exists in currentNodes before creating!
+      // Antes de crear, comprobar si className ya existe en currentNodes
       const existing = currentNodes?.find(n => n.name.toLowerCase() === className.toLowerCase());
       if (existing) {
-        // If it already exists, do not create a duplicate class!
+        // Si ya existe, no crear una clase duplicada
         responseMsg = `La clase **${existing.name}** ya existe en tu diagrama.`;
         return { message: responseMsg, createdNodes: [], createdConnectors: [] };
       }
 
-      // Extract attributes mentioned (e.g. "q tenga como atributos id_rol", "con atributos id, nombre: String")
+      // Extraer los atributos mencionados (por ejemplo "q tenga como atributos id_rol", "con atributos id, nombre: String")
       const attributes: any[] = [];
       const attrSectionMatch = cleanPrompt.match(/(?:tenga|tengan|con|atributo|atributos|campos?|propiedad|propiedades)\s+(?:como\s+atributos?\s+)?([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ:\s,]+)/i);
 
@@ -360,7 +360,7 @@ export class AIAgentService {
         });
       }
 
-      // If no attribute extracted, add default ID attribute
+      // Si no se extrajo ningún atributo, agregar un id por defecto
       if (attributes.length === 0) {
         const defaultId = `id_${className.toLowerCase()}`;
         attributes.push({ visibility: '+', name: defaultId, type: 'Int' });
@@ -382,7 +382,7 @@ export class AIAgentService {
       responseMsg = `✨ He creado la clase **${className}** con ${attributes.length} atributo(s) (${attributes.map(a => a.name).join(', ')}) en tu proyecto activo.`;
     }
 
-    // 2. Detect Relationship / Connector creation (e.g., "relaciona Usuario con Rol")
+    // 2. Detectar la creación de una relación o conector (por ejemplo "relaciona Usuario con Rol")
     const relMatch = cleanPrompt.match(/(?:relaciona|conecta|asocia|vincula)\s+(?:a\s+)?([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)\s+(?:con|y|a)\s+([A-Za-z0-9_áéíóúÁÉÍÓÚñÑ]+)/i);
     if (relMatch && relMatch[1] && relMatch[2]) {
       const srcName = relMatch[1].trim();

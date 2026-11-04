@@ -22,7 +22,7 @@ export class EaImporterService {
     let currentX = 120;
     let currentY = 80;
 
-    // Helper: Find elements by local name regardless of namespace
+    // Ayuda: buscar elementos por nombre local, sin importar el espacio de nombres
     const getElements = (tagName: string) => {
       const list1 = Array.from(xmlDoc.getElementsByTagName(tagName));
       const list2 = Array.from(xmlDoc.getElementsByTagNameNS('*', tagName));
@@ -32,7 +32,7 @@ export class EaImporterService {
 
     const hiddenElementIds = new Set<string>();
 
-    // 0. PARSE DIAGRAM GEOMETRY (<element geometry="Left=...;Top=...;" subject="EAID_..."/>)
+    // 0. Leer la geometría del diagrama (<element geometry="Left=...;Top=...;" subject="EAID_..."/>)
     const diagElements = getElements('element');
     for (const dEl of diagElements) {
       const geom = dEl.getAttribute('geometry');
@@ -55,7 +55,7 @@ export class EaImporterService {
       }
     }
 
-    // 1. PARSE STANDARD UML CLASSES (<packagedElement xmi:type="uml:Class"> or <element xmi:type="uml:Class">)
+    // 1. Leer las clases UML (<packagedElement xmi:type="uml:Class"> o <element xmi:type="uml:Class">)
     const allPackaged = [...getElements('packagedElement'), ...getElements('element')];
 
     for (let i = 0; i < allPackaged.length; i++) {
@@ -65,13 +65,13 @@ export class EaImporterService {
       const name = el.getAttribute('name') || '';
 
       if ((type.includes('Class') || type.includes('Interface') || type.includes('Enumeration')) && name) {
-        // Skip only if this exact xmi:id was already parsed
+        // Saltar solo si este xmi:id exacto ya se leyó
         if (nodeMap.has(id)) continue;
 
         const attributes: any[] = [];
         const methods: any[] = [];
 
-        // Parse attributes (<ownedAttribute> or <attribute>)
+        // Leer atributos (<ownedAttribute> o <attribute>)
         const attrNodes = [...Array.from(el.getElementsByTagName('ownedAttribute')), ...Array.from(el.getElementsByTagName('attribute'))];
         for (let j = 0; j < attrNodes.length; j++) {
           const attrEl = attrNodes[j];
@@ -100,7 +100,7 @@ export class EaImporterService {
           attributes.push({ visibility, name: attrName, type: attrType });
         }
 
-        // Parse methods (<ownedOperation> or <operation>)
+        // Leer métodos (<ownedOperation> o <operation>)
         const methodNodes = [...Array.from(el.getElementsByTagName('ownedOperation')), ...Array.from(el.getElementsByTagName('operation'))];
         for (let k = 0; k < methodNodes.length; k++) {
           const mEl = methodNodes[k];
@@ -123,7 +123,7 @@ export class EaImporterService {
         if (type.includes('Interface')) stereotype = 'Interface';
         if (type.includes('Enumeration')) stereotype = 'Enum';
 
-        // Check if geometry exists for this specific xmi:id / subject
+        // Ver si hay geometría para este xmi:id o subject
         let pos = geometryMap.get(id);
         if (!pos) {
           pos = { x: currentX, y: currentY };
@@ -154,7 +154,7 @@ export class EaImporterService {
       }
     }
 
-    // 2. PARSE EA CONNECTORS (<connector xmi:idref="..."> or <packagedElement xmi:type="uml:Association"> or <packagedElement xmi:type="uml:AssociationClass">)
+    // 2. Leer los conectores de EA (<connector xmi:idref="...">, <packagedElement xmi:type="uml:Association"> o uml:AssociationClass)
     const assocNodes = [...getElements('connector'), ...getElements('packagedElement'), ...getElements('generalization'), ...getElements('realization'), ...getElements('realisation')];
 
     for (let i = 0; i < assocNodes.length; i++) {
@@ -162,7 +162,7 @@ export class EaImporterService {
       const connId = el.getAttribute('xmi:idref') || el.getAttribute('xmi:id') || el.getAttribute('id') || '';
 
       if (connId && (hiddenElementIds.has(connId) || hiddenElementIds.has(connId.toLowerCase()))) {
-        // Skip hidden connectors explicitly suppressed in Enterprise Architect diagram view
+        // Saltar conectores ocultos que Enterprise Architect marcó como suprimidos en la vista del diagrama
         continue;
       }
 
@@ -272,7 +272,7 @@ export class EaImporterService {
           }
         }
 
-        // Map srcId and tgtId to resolved node IDs if available
+        // Pasar srcId y tgtId a los ids de nodo ya resueltos, si existen
         const srcNode = nodeMap.get(srcId) || nodeMap.get(srcId.toLowerCase());
         const tgtNode = nodeMap.get(tgtId) || nodeMap.get(tgtId.toLowerCase());
         const assocNode = assocClassAttr ? (nodeMap.get(assocClassAttr) || nodeMap.get(assocClassAttr.toLowerCase())) : undefined;
@@ -324,7 +324,7 @@ export class EaImporterService {
 
     let rawMult = endpointEl.getAttribute('multiplicity') || endpointEl.getAttribute('bounds') || '';
 
-    // 1. Enterprise Architect <role name="1..*" visibility="Public"/>
+    // 1. Enterprise Architect: <role name="1..*" visibility="Public"/>
     if (!rawMult) {
       const roleEl = endpointEl.getElementsByTagName('role')[0];
       if (roleEl && roleEl.getAttribute('name')) {
@@ -332,7 +332,7 @@ export class EaImporterService {
       }
     }
 
-    // 2. Enterprise Architect <labels lt="+1..*" rt="+0..*"/>
+    // 2. Enterprise Architect: <labels lt="+1..*" rt="+0..*"/>
     if (!rawMult && connectorEl) {
       const labelsEl = connectorEl.getElementsByTagName('labels')[0];
       if (labelsEl) {
@@ -343,7 +343,7 @@ export class EaImporterService {
       }
     }
 
-    // 3. Enterprise Architect <properties lowerBound="..." upperBound="..."/>
+    // 3. Enterprise Architect: <properties lowerBound="..." upperBound="..."/>
     if (!rawMult) {
       const allProps = Array.from(endpointEl.getElementsByTagName('properties'));
       const props = allProps.find(p => p.getAttribute('lowerBound') || p.getAttribute('upperBound') || p.getAttribute('lower') || p.getAttribute('upper')) || allProps[0];
@@ -360,7 +360,7 @@ export class EaImporterService {
       }
     }
 
-    // 4. Search all descendants for a 'multiplicity' or 'lowerBound'/'upperBound' attribute
+    // 4. Buscar en todos los descendientes un atributo 'multiplicity' o 'lowerBound'/'upperBound'
     if (!rawMult) {
       const allDescendants = Array.from(endpointEl.getElementsByTagName('*'));
       for (const desc of allDescendants) {
@@ -377,7 +377,7 @@ export class EaImporterService {
       }
     }
 
-    // 5. Search lowerValue and upperValue
+    // 5. Buscar lowerValue y upperValue
     if (!rawMult) {
       const lowerEl = endpointEl.getElementsByTagName('lowerValue')[0];
       const upperEl = endpointEl.getElementsByTagName('upperValue')[0];
@@ -390,7 +390,7 @@ export class EaImporterService {
 
     if (!rawMult) return '';
 
-    // Get visibility
+    // Obtener la visibilidad
     let vis = endpointEl.getAttribute('visibility') || '';
     const roleEl = endpointEl.getElementsByTagName('role')[0];
     if (!vis && roleEl) {

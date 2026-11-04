@@ -23,7 +23,7 @@ interface VideoTutorial {
   imports: [CommonModule, FormsModule],
   template: `
     <div class="help-container">
-      <!-- HEADER -->
+      <!-- ENCABEZADO -->
       <div class="help-header">
         <div class="header-left">
           <button class="back-btn" (click)="goBack()" title="Volver al Editor">
@@ -39,10 +39,10 @@ interface VideoTutorial {
         </div>
       </div>
 
-      <!-- BODY GRID -->
+      <!-- CUADRÍCULA DEL CUERPO -->
       <div class="help-body">
         
-        <!-- LEFT COLUMN: VIDEO TUTORIALS PLACEHOLDER -->
+        <!-- COLUMNA IZQUIERDA: VIDEOS TUTORIALES -->
         <div class="left-section">
           <div class="section-header">
             <div class="section-title-wrap">
@@ -54,7 +54,7 @@ interface VideoTutorial {
             </p>
           </div>
 
-          <!-- CATEGORY FILTERS -->
+          <!-- FILTROS DE CATEGORÍA -->
           <div class="category-chips">
             <button 
               *ngFor="let cat of categories" 
@@ -65,7 +65,7 @@ interface VideoTutorial {
             </button>
           </div>
 
-          <!-- TUTORIAL CARDS GRID -->
+          <!-- CUADRÍCULA DE TARJETAS DE TUTORIAL -->
           <div class="tutorials-grid">
             <div 
               *ngFor="let video of filteredVideos" 
@@ -89,11 +89,11 @@ interface VideoTutorial {
         </div>
 
 
-        <!-- RIGHT COLUMN: AI SUPPORT CHATBOT -->
+        <!-- COLUMNA DERECHA: CHAT DE SOPORTE DE LA IA -->
         <div class="right-section">
           <div class="chat-card">
             
-            <!-- CHAT HEADER WITH TOGGLE SWITCH -->
+            <!-- ENCABEZADO DEL CHAT CON EL INTERRUPTOR -->
             <div class="chat-header">
               <div class="agent-info">
                 <div class="agent-avatar">🤖</div>
@@ -118,7 +118,7 @@ interface VideoTutorial {
               </div>
             </div>
 
-            <!-- CHAT MESSAGES BODY -->
+            <!-- CUERPO DE MENSAJES DEL CHAT -->
             <div class="chat-messages" #scrollContainer>
               <div 
                 *ngFor="let msg of messages" 
@@ -133,14 +133,14 @@ interface VideoTutorial {
                 <div class="message-bubble">
                   <p class="message-text">{{ msg.text }}</p>
                   
-                  <!-- STEP GUIDE LIST IF PRESENT -->
+                  <!-- LISTA DE PASOS, SI VIENE -->
                   <div *ngIf="msg.stepGuide && msg.stepGuide.length > 0" class="step-guide">
                     <div *ngFor="let step of msg.stepGuide" class="step-item">
                       {{ step }}
                     </div>
                   </div>
 
-                  <!-- HIGHLIGHT ELEMENT BUTTON -->
+                  <!-- BOTÓN PARA RESALTAR EL ELEMENTO -->
                   <button 
                     *ngIf="msg.targetSelector && isInteractiveMode" 
                     class="highlight-action-btn"
@@ -154,7 +154,7 @@ interface VideoTutorial {
                 </div>
               </div>
 
-              <!-- LOADING INDICATOR -->
+              <!-- INDICADOR DE CARGA -->
               <div *ngIf="isLoading" class="message-wrapper agent-wrapper">
                 <div class="message-avatar">🤖</div>
                 <div class="message-bubble loading-bubble">
@@ -165,7 +165,7 @@ interface VideoTutorial {
               </div>
             </div>
 
-            <!-- QUICK SUGGESTIONS CHIPS -->
+            <!-- SUGERENCIAS RÁPIDAS -->
             <div class="quick-chips">
               <span class="quick-title">Preguntas frecuentes:</span>
               <button 
@@ -176,7 +176,7 @@ interface VideoTutorial {
               </button>
             </div>
 
-            <!-- CHAT INPUT FOOTER -->
+            <!-- PIE PARA ESCRIBIR EN EL CHAT -->
             <div class="chat-footer">
               <input 
                 type="text" 
@@ -237,7 +237,7 @@ interface VideoTutorial {
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
     }
 
-    /* HEADER */
+    /* ENCABEZADO */
     .help-header {
       height: 58px;
       background: #0f1420;
@@ -297,7 +297,7 @@ interface VideoTutorial {
       box-shadow: 0 0 8px #10b981;
     }
 
-    /* BODY GRID */
+    /* CUADRÍCULA DEL CUERPO */
     .help-body {
       flex: 1;
       min-height: 0;
@@ -308,7 +308,7 @@ interface VideoTutorial {
       overflow: hidden;
     }
 
-    /* LEFT SECTION: VIDEOS */
+    /* SECCIÓN IZQUIERDA: VIDEOS */
     .left-section {
       background: #0d111a;
       border: 1px solid rgba(255, 255, 255, 0.07);
@@ -455,7 +455,7 @@ interface VideoTutorial {
       line-height: 1.4;
     }
 
-    /* RIGHT SECTION: CHATBOT */
+    /* SECCIÓN DERECHA: CHAT */
     .right-section {
       height: 100%;
       min-height: 0;
@@ -504,7 +504,7 @@ interface VideoTutorial {
       color: #94a3b8;
     }
 
-    /* TOGGLE SWITCH */
+    /* INTERRUPTOR */
     .toggle-container {
       display: flex;
       flex-direction: column;
@@ -559,7 +559,7 @@ interface VideoTutorial {
       border-radius: 50%;
     }
 
-    /* CHAT MESSAGES */
+    /* MENSAJES DEL CHAT */
     .chat-messages {
       flex: 1;
       min-height: 0;
@@ -658,7 +658,7 @@ interface VideoTutorial {
       color: #000;
     }
 
-    /* TYPING INDICATOR */
+    /* INDICADOR DE QUE ESTÁ ESCRIBIENDO */
     .loading-bubble {
       display: flex;
       align-items: center;
@@ -679,7 +679,7 @@ interface VideoTutorial {
       40% { opacity: 1; transform: scale(1.2); }
     }
 
-    /* QUICK CHIPS */
+    /* SUGERENCIAS RÁPIDAS */
     .quick-chips {
       padding: 8px 16px;
       background: #101624;
@@ -710,7 +710,7 @@ interface VideoTutorial {
       color: #00d4ff;
     }
 
-    /* FOOTER */
+    /* PIE */
     .chat-footer {
       padding: 12px 16px;
       background: #141926;

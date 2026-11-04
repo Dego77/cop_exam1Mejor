@@ -20,38 +20,38 @@ import { MinimapComponent } from '../minimap/minimap.component';
       (click)="onCanvasClick($event)"
       (dblclick)="onCanvasDblClick($event)"
     >
-      <!-- Unified Canvas Viewport (Scales SVG Connectors, Nodes, Labels & Cursors 1:1) -->
+      <!-- Vista única del lienzo (escala conectores SVG, nodos, etiquetas y cursores 1:1) -->
       <div 
         class="canvas-viewport"
         [style.transform]="'scale(' + zoomLevel + ')'"
         [style.transform-origin]="'0 0'"
       >
-        <!-- SVG Connectors Layer (z-index: 25) -->
+        <!-- Capa de conectores SVG (z-index: 25) -->
         <svg class="svg-layer">
         <defs>
-          <!-- Association / Dependency Arrow -->
+          <!-- Flecha de asociación o dependencia -->
           <marker id="arrow" viewBox="0 0 14 14" refX="13" refY="7" markerWidth="10" markerHeight="10" orient="auto">
             <path d="M 1 1 L 13 7 L 1 13" fill="none" stroke="#00d4ff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
           </marker>
-          <!-- Inheritance Triangle -->
+          <!-- Triángulo de herencia -->
           <marker id="inheritance" viewBox="0 0 14 14" refX="13" refY="7" markerWidth="12" markerHeight="12" orient="auto">
             <path d="M 1 1 L 13 7 L 1 13 Z" fill="#ffffff" stroke="#00d4ff" stroke-width="2" stroke-linejoin="miter" />
           </marker>
-          <!-- Composition Solid Diamond -->
+          <!-- Rombo sólido de composición -->
           <marker id="composition" viewBox="0 0 16 16" refX="15" refY="8" markerWidth="14" markerHeight="14" orient="auto">
             <path d="M 1 8 L 8 1 L 15 8 L 8 15 Z" fill="#000000" stroke="#00d4ff" stroke-width="2" stroke-linejoin="miter" />
           </marker>
-          <!-- Aggregation Hollow White Diamond (Image 2 style) -->
+          <!-- Rombo blanco hueco de agregación (estilo imagen 2) -->
           <marker id="aggregation" viewBox="0 0 16 16" refX="15" refY="8" markerWidth="14" markerHeight="14" orient="auto">
             <path d="M 1 8 L 8 1 L 15 8 L 8 15 Z" fill="#ffffff" stroke="#00d4ff" stroke-width="2" stroke-linejoin="miter" />
           </marker>
         </defs>
 
-        <!-- Render Connectors -->
+        <!-- Dibujar conectores -->
         <g *ngFor="let conn of connectors">
-          <!-- Standard Non-Reflexive Connectors -->
+          <!-- Conectores normales, no reflexivos -->
           <ng-container *ngIf="!isReflexive(conn)">
-            <!-- Invisible 16px Hitbox Path for Super Easy Line Clicking -->
+            <!-- Zona invisible de 16px para poder hacer clic en la línea con facilidad -->
             <path 
               [attr.d]="getConnectorPath(conn)" 
               class="connector-hitbox"
@@ -59,7 +59,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
               (dblclick)="onConnectorClick($event, conn)"
             />
 
-            <!-- Visible Connector Line Path -->
+            <!-- Trazo visible de la línea del conector -->
             <path 
               [attr.d]="getConnectorPath(conn)" 
               class="connector-line"
@@ -69,7 +69,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
               (dblclick)="onConnectorClick($event, conn)"
             />
 
-            <!-- Direct SVG Aggregation Hollow White Diamond Shape -->
+            <!-- Rombo blanco hueco de agregación, en SVG -->
             <polygon 
               *ngIf="conn.type === 'Aggregation'"
               [attr.points]="getDiamondPoints(conn)" 
@@ -81,7 +81,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
               (click)="onConnectorClick($event, conn)"
             />
 
-            <!-- Direct SVG Composition Solid Black Diamond Shape -->
+            <!-- Rombo negro sólido de composición, en SVG -->
             <polygon 
               *ngIf="conn.type === 'Composition'"
               [attr.points]="getDiamondPoints(conn)" 
@@ -93,7 +93,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
               (click)="onConnectorClick($event, conn)"
             />
 
-            <!-- Direct SVG Inheritance / Implementation Triangle Shape -->
+            <!-- Triángulo de herencia o implementación, en SVG -->
             <polygon 
               *ngIf="conn.type === 'Inheritance' || conn.type === 'Implementation'"
               [attr.points]="getTrianglePoints(conn)" 
@@ -105,9 +105,9 @@ import { MinimapComponent } from '../minimap/minimap.component';
               (click)="onConnectorClick($event, conn)"
             />
 
-            <!-- Source Multiplicity (Near Source Class) -->
+            <!-- Multiplicidad de origen (junto a la clase origen) -->
             <g *ngIf="shouldShowSourceMultiplicity(conn)">
-              <!-- Enterprise Architect Dashed Guide Line (ONLY WHEN SELECTED) -->
+              <!-- Línea guía punteada al estilo de Enterprise Architect (solo si está seleccionado) -->
               <line 
                 *ngIf="isSelectedMultiplicity(conn, 'source')"
                 [attr.x1]="getConnectorSourceAnchorX(conn)"
@@ -120,7 +120,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
                 style="pointer-events: none; filter: drop-shadow(0 0 4px rgba(0, 212, 255, 0.8));"
               />
 
-              <!-- Multiplicity Text -->
+              <!-- Texto de la multiplicidad -->
               <text 
                 [attr.x]="getConnectorSourceX(conn)" 
                 [attr.y]="getConnectorSourceY(conn) - 8" 
@@ -134,7 +134,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
                 {{ conn.sourceMultiplicity || '' }}
               </text>
 
-              <!-- Enterprise Architect 4 Corner Selection Handle Box -->
+              <!-- Caja de selección de 4 esquinas, al estilo de Enterprise Architect -->
               <g *ngIf="isSelectedMultiplicity(conn, 'source')">
                 <rect [attr.x]="getConnectorSourceX(conn) - 12" [attr.y]="getConnectorSourceY(conn) - 22" width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
                 <rect [attr.x]="getConnectorSourceX(conn) + 12" [attr.y]="getConnectorSourceY(conn) - 22" width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
@@ -143,9 +143,9 @@ import { MinimapComponent } from '../minimap/minimap.component';
               </g>
             </g>
 
-            <!-- Target Multiplicity (Near Target Class) -->
+            <!-- Multiplicidad de destino (junto a la clase destino) -->
             <g *ngIf="shouldShowTargetMultiplicity(conn)">
-              <!-- Enterprise Architect Dashed Guide Line (ONLY WHEN SELECTED) -->
+              <!-- Línea guía punteada al estilo de Enterprise Architect (solo si está seleccionado) -->
               <line 
                 *ngIf="isSelectedMultiplicity(conn, 'target')"
                 [attr.x1]="getConnectorTargetAnchorX(conn)"
@@ -158,7 +158,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
                 style="pointer-events: none; filter: drop-shadow(0 0 4px rgba(0, 212, 255, 0.8));"
               />
 
-              <!-- Multiplicity Text -->
+              <!-- Texto de la multiplicidad -->
               <text 
                 [attr.x]="getConnectorTargetX(conn)" 
                 [attr.y]="getConnectorTargetY(conn) - 8" 
@@ -172,7 +172,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
                 {{ conn.targetMultiplicity || '' }}
               </text>
 
-              <!-- Enterprise Architect 4 Corner Selection Handle Box -->
+              <!-- Caja de selección de 4 esquinas, al estilo de Enterprise Architect -->
               <g *ngIf="isSelectedMultiplicity(conn, 'target')">
                 <rect [attr.x]="getConnectorTargetX(conn) - 12" [attr.y]="getConnectorTargetY(conn) - 22" width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
                 <rect [attr.x]="getConnectorTargetX(conn) + 12" [attr.y]="getConnectorTargetY(conn) - 22" width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
@@ -181,7 +181,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
               </g>
             </g>
 
-            <!-- Relationship Label / Name (Center) -->
+            <!-- Etiqueta o nombre de la relación (al centro) -->
             <text 
               *ngIf="conn.label"
               [attr.x]="getConnectorMidX(conn)" 
@@ -193,7 +193,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
               {{ conn.label }}
             </text>
 
-            <!-- Association Class Dashed Connecting Line -->
+            <!-- Línea punteada de la clase de asociación -->
             <line 
               *ngIf="getAssocClassNode(conn)"
               [attr.x1]="getConnectorMidX(conn)" 
@@ -208,9 +208,9 @@ import { MinimapComponent } from '../minimap/minimap.component';
 
           </ng-container>
 
-          <!-- Reflexive / Self Association Loop Connectors -->
+          <!-- Conectores en lazo de asociación reflexiva -->
           <ng-container *ngIf="conn.sourceNodeId === conn.targetNodeId">
-            <!-- Hitbox -->
+            <!-- Zona de clic -->
             <path 
               [attr.d]="getReflexivePath(conn)" 
               class="connector-hitbox"
@@ -218,7 +218,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
               (mousedown)="startDragLoopBox($event, conn)"
             />
 
-            <!-- Visible Reflexive Loop Line -->
+            <!-- Línea visible del lazo reflexivo -->
             <path 
               [attr.d]="getReflexivePath(conn)" 
               class="connector-line"
@@ -229,9 +229,9 @@ import { MinimapComponent } from '../minimap/minimap.component';
               (mousedown)="startDragLoopBox($event, conn)"
             />
 
-            <!-- Reflexive Loop Target Multiplicity -->
+            <!-- Multiplicidad de destino del lazo reflexivo -->
             <g *ngIf="conn.targetMultiplicity">
-              <!-- Enterprise Architect Dashed Guide Line (ONLY WHEN SELECTED) -->
+              <!-- Línea guía punteada al estilo de Enterprise Architect (solo si está seleccionado) -->
               <line 
                 *ngIf="isSelectedMultiplicity(conn, 'target')"
                 [attr.x1]="getReflexiveBox(conn).x + getReflexiveBox(conn).width + 8"
@@ -257,7 +257,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
                 {{ conn.targetMultiplicity }}
               </text>
 
-              <!-- Enterprise Architect 4 Corner Selection Handle Box -->
+              <!-- Caja de selección de 4 esquinas, al estilo de Enterprise Architect -->
               <g *ngIf="isSelectedMultiplicity(conn, 'target')">
                 <rect [attr.x]="getReflexiveTargetMultX(conn) - 12" [attr.y]="getReflexiveTargetMultY(conn) - 14" width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
                 <rect [attr.x]="getReflexiveTargetMultX(conn) + 12" [attr.y]="getReflexiveTargetMultY(conn) - 14" width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
@@ -266,9 +266,9 @@ import { MinimapComponent } from '../minimap/minimap.component';
               </g>
             </g>
 
-            <!-- Reflexive Loop Source Multiplicity -->
+            <!-- Multiplicidad de origen del lazo reflexivo -->
             <g *ngIf="conn.sourceMultiplicity">
-              <!-- Enterprise Architect Dashed Guide Line (ONLY WHEN SELECTED) -->
+              <!-- Línea guía punteada al estilo de Enterprise Architect (solo si está seleccionado) -->
               <line 
                 *ngIf="isSelectedMultiplicity(conn, 'source')"
                 [attr.x1]="getReflexiveBox(conn).x - 14"
@@ -294,7 +294,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
                 {{ conn.sourceMultiplicity }}
               </text>
 
-              <!-- Enterprise Architect 4 Corner Selection Handle Box -->
+              <!-- Caja de selección de 4 esquinas, al estilo de Enterprise Architect -->
               <g *ngIf="isSelectedMultiplicity(conn, 'source')">
                 <rect [attr.x]="getReflexiveSourceMultX(conn) - 12" [attr.y]="getReflexiveSourceMultY(conn) - 14" width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
                 <rect [attr.x]="getReflexiveSourceMultX(conn) + 12" [attr.y]="getReflexiveSourceMultY(conn) - 14" width="5" height="5" fill="#00d4ff" stroke="#000" stroke-width="0.5" />
@@ -303,7 +303,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
               </g>
             </g>
 
-            <!-- 4 Corner Interactive Handles when Selected/Editing -->
+            <!-- Asas interactivas de 4 esquinas al seleccionar o editar -->
             <g *ngIf="selectedConnector?.id === conn.id || editingConnector?.id === conn.id">
               <rect 
                 [attr.x]="getReflexiveBox(conn).x - 5" 
@@ -342,7 +342,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
         </g>
       </svg>
 
-      <!-- UML Class Nodes Layer (z-index: 20) -->
+      <!-- Capa de nodos de clases UML (z-index: 20) -->
       <div class="nodes-layer">
         <div 
           *ngFor="let node of nodes" 
@@ -355,7 +355,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
           (click)="onNodeClick($event, node)"
           (dblclick)="onNodeDblClick($event, node)"
         >
-          <!-- Stereotype & Class Header -->
+          <!-- Estereotipo y encabezado de la clase -->
           <div class="card-header">
             <span class="stereotype">«{{ node.stereotype || 'Entity' }}»</span>
             <div class="header-name-row">
@@ -383,7 +383,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
             </div>
           </div>
 
-          <!-- Attributes Divider & List -->
+          <!-- Separador y lista de atributos -->
           <div class="card-section">
             <div class="section-header">
               <span>Atributos</span>
@@ -391,7 +391,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
             </div>
             
             <div *ngFor="let attr of node.attributes; let i = index">
-              <!-- View Mode -->
+              <!-- Modo lectura -->
               <div 
                 *ngIf="editingAttrKey !== (node.id + '_' + i)" 
                 class="member-item member-hoverable"
@@ -404,7 +404,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
                 <button class="member-del" (click)="deleteAttribute($event, node, i)" title="Eliminar Atributo">✕</button>
               </div>
 
-              <!-- Edit Mode -->
+              <!-- Modo edición -->
               <div 
                 *ngIf="editingAttrKey === (node.id + '_' + i)" 
                 class="member-edit-row"
@@ -430,7 +430,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
             </div>
           </div>
 
-          <!-- Methods Divider & List -->
+          <!-- Separador y lista de métodos -->
           <div class="card-section">
             <div class="section-header">
               <span>Métodos</span>
@@ -438,7 +438,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
             </div>
 
             <div *ngFor="let m of node.methods; let i = index">
-              <!-- View Mode -->
+              <!-- Modo lectura -->
               <div 
                 *ngIf="editingMethodKey !== (node.id + '_' + i)" 
                 class="member-item member-hoverable"
@@ -451,7 +451,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
                 <button class="member-del" (click)="deleteMethod($event, node, i)" title="Eliminar Método">✕</button>
               </div>
 
-              <!-- Edit Mode -->
+              <!-- Modo edición -->
               <div 
                 *ngIf="editingMethodKey === (node.id + '_' + i)" 
                 class="member-edit-row"
@@ -476,7 +476,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
           </div>
         </div>
 
-        <!-- Canvas Free-Text Labels / Notes Layer (z-index: 22) -->
+        <!-- Capa de etiquetas y notas libres del lienzo (z-index: 22) -->
         <div class="labels-layer">
           <div 
             *ngFor="let label of labels" 
@@ -504,7 +504,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
           </div>
         </div>
 
-        <!-- Live Collaborator Cursors Overlay -->
+        <!-- Capa de cursores de los colaboradores en vivo -->
         <div 
           class="remote-cursor" 
           *ngFor="let c of remoteCursors"
@@ -521,7 +521,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
       </div>
     </div>
 
-      <!-- Connector Multiplicity Editor Floating Popup Modal (z-index: 200) -->
+      <!-- Ventana flotante para editar la multiplicidad del conector (z-index: 200) -->
       <div 
         *ngIf="editingConnector" 
         class="connector-modal glass-panel animate-fade-in"
@@ -535,7 +535,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
         </div>
 
         <div class="modal-body">
-          <!-- Source Multiplicity -->
+          <!-- Multiplicidad de origen -->
           <div class="form-group">
             <label>Multiplicidad Origen (Clase {{ getSourceNodeName(editingConnector) }})</label>
             <div class="chip-row">
@@ -551,7 +551,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
             <input type="text" class="input-field-sm" [(ngModel)]="editingConnector.sourceMultiplicity" (input)="saveConnectorEditDirect()" placeholder="Ej. 1..*" />
           </div>
 
-          <!-- Target Multiplicity -->
+          <!-- Multiplicidad de destino -->
           <div class="form-group">
             <label>Multiplicidad Destino (Clase {{ getTargetNodeName(editingConnector) }})</label>
             <div class="chip-row">
@@ -567,7 +567,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
             <input type="text" class="input-field-sm" [(ngModel)]="editingConnector.targetMultiplicity" (input)="saveConnectorEditDirect()" placeholder="Ej. 0..*" />
           </div>
 
-          <!-- Connector Type -->
+          <!-- Tipo de conector -->
           <div class="form-group">
             <label>Tipo de Conector UML</label>
             <select class="input-field-sm" [(ngModel)]="editingConnector.type" (change)="saveConnectorEditDirect()">
@@ -579,7 +579,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
             </select>
           </div>
 
-          <!-- Relationship Label -->
+          <!-- Etiqueta de la relación -->
           <div class="form-group">
             <label>Nombre / Etiqueta de la Relación</label>
             <input type="text" class="input-field-sm" [(ngModel)]="editingConnector.label" (input)="saveConnectorEditDirect()" placeholder="Ej. tiene, pertenece a" />
@@ -596,7 +596,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
         </div>
       </div>
 
-      <!-- Persistent Top-Right Connector Quick Control Panel -->
+      <!-- Panel fijo arriba a la derecha para controlar el conector -->
       <div 
         *ngIf="selectedConnector && !editingConnector" 
         class="connector-quick-panel glass-panel animate-fade-in"
@@ -628,7 +628,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
         </div>
       </div>
 
-      <!-- Navigation Minimap Overlay Widget -->
+      <!-- Minimapa de navegación -->
       <app-minimap
         [nodes]="nodes"
         [connectors]="connectors"
@@ -636,7 +636,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
         [zoomLevel]="zoomLevel"
       ></app-minimap>
 
-      <!-- Bottom Status & Control Bar -->
+      <!-- Barra inferior de estado y controles -->
       <div class="status-bar">
 
         <div class="status-left">
@@ -669,7 +669,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
       position: relative;
       min-width: 0;
     }
-    /* Modo Ver: every node, connector and label ignores clicks/drags; the zoom controls still work */
+    /* Modo Ver: nodos, conectores y etiquetas ignoran clics y arrastres; el zoom sigue funcionando */
     .canvas-container.read-only .canvas-viewport,
     .canvas-container.read-only .canvas-viewport * {
       pointer-events: none !important;
@@ -1224,7 +1224,7 @@ export class CanvasComponent {
   @Input() selectedNode: UMLNode | null = null;
   @Input() activeConnectorType: string | null = null;
   @Input() remoteCursors: any[] = [];
-  // "Modo Ver" (mobile viewer): diagram is visible and zoomable, but nothing can be edited
+  // "Modo Ver" (visor móvil): el diagrama se ve y se puede hacer zoom, pero no se edita nada
   @Input() readOnly = false;
 
   @Output() nodeMoved = new EventEmitter<UMLNode>();
@@ -1261,7 +1261,7 @@ export class CanvasComponent {
   multOptions = ['+1', '+*', '+0..1', '+1..*', '1', '0..1', '1..*', '0..*', '*', '1..1'];
   dataTypeOptions = ['Int', 'String', 'Double', 'Bool', 'Date', 'Char', 'Long', 'Arrays'];
 
-  // Reflexive Loop drag & resize properties
+  // Arrastre y tamaño del lazo reflexivo
   draggingLoopConn: UMLConnector | null = null;
   resizingLoopConn: UMLConnector | null = null;
   resizeCorner: string | null = null;
@@ -1272,7 +1272,7 @@ export class CanvasComponent {
   loopInitialOX = -50;
   loopInitialOY = 30;
 
-  // Multiplicity Dragging Properties (Enterprise Architect Style)
+  // Arrastre de multiplicidades, al estilo de Enterprise Architect
   selectedMultiplicity: { connectorId: string; type: 'source' | 'target' } | null = null;
   draggingMultiplicity: { connector: UMLConnector; type: 'source' | 'target' } | null = null;
   multDragStartX = 0;
@@ -1373,7 +1373,7 @@ export class CanvasComponent {
     const w = conn.loopWidth || 100;
     const h = conn.loopHeight || 140;
 
-    // Anchor top-right corner of loop box to bottom-left corner of node (like reference image)
+    // Anclar la esquina superior derecha del lazo a la esquina inferior izquierda del nodo (como en la imagen de referencia)
     const ox = conn.loopOffsetX !== undefined ? conn.loopOffsetX : -w;
     const oy = conn.loopOffsetY !== undefined ? conn.loopOffsetY : nodeH;
 
@@ -1387,7 +1387,7 @@ export class CanvasComponent {
 
   getReflexivePath(conn: UMLConnector): string {
     const box = this.getReflexiveBox(conn);
-    // Closed 4-sided rectangle
+    // Rectángulo cerrado de 4 lados
     return `M ${box.x} ${box.y} L ${box.x + box.width} ${box.y} L ${box.x + box.width} ${box.y + box.height} L ${box.x} ${box.y + box.height} Z`;
   }
 
@@ -1558,7 +1558,7 @@ export class CanvasComponent {
       if (!this.connectingSourceId) {
         this.connectingSourceId = node.id;
       } else if (this.connectingSourceId === node.id) {
-        // Second click on SAME node: CREATE REFLEXIVE ASSOCIATION
+        // Segundo clic en el MISMO nodo: crear asociación reflexiva
         const connType = this.activeConnectorType;
         this.connectingSourceId = null;
         this.createConnector.emit({
@@ -1567,7 +1567,7 @@ export class CanvasComponent {
           type: connType
         });
       } else {
-        // Click on DIFFERENT node: CREATE CONNECTOR A -> B
+        // Clic en un nodo DISTINTO: crear el conector A -> B
         const sourceId = this.connectingSourceId;
         const connType = this.activeConnectorType;
         this.connectingSourceId = null;
@@ -1870,7 +1870,7 @@ export class CanvasComponent {
     }
 
     if (Math.abs(dx) >= Math.abs(dy)) {
-      // Horizontal routing
+      // Recorrido horizontal
       sx = dx >= 0 ? source.positionX + sourceW : source.positionX;
       sy = scy + srcOffset;
       const rawTx = dx >= 0 ? target.positionX : target.positionX + targetW;
@@ -1879,7 +1879,7 @@ export class CanvasComponent {
       const c1x = sx + (tx - sx) / 2;
       return `M ${sx} ${sy} C ${c1x} ${sy}, ${c1x} ${ty}, ${tx} ${ty}`;
     } else {
-      // Vertical routing
+      // Recorrido vertical
       sx = scx + srcOffset;
       sy = dy >= 0 ? source.positionY + sourceH : source.positionY;
       const rawTy = dy >= 0 ? target.positionY : target.positionY + targetH;
@@ -2002,13 +2002,13 @@ export class CanvasComponent {
   getAssocClassNode(conn: UMLConnector): UMLNode | undefined {
     if (!conn) return undefined;
 
-    // 1. Direct ID resolution
+    // 1. Resolución directa por id
     if (conn.associationClassNodeId) {
       const node = this.findNode(conn.associationClassNodeId);
       if (node) return node;
     }
 
-    // 2. Stereotype and Name resolution (AI, EA Import, DB reloaded)
+    // 2. Resolución por estereotipo y nombre (IA, importación de EA, recarga de la base)
     if (conn.type === 'AssociationClass' || conn.associationClassNodeId) {
       const source = this.findNode(conn.sourceNodeId);
       const target = this.findNode(conn.targetNodeId);
@@ -2025,7 +2025,7 @@ export class CanvasComponent {
         if (match) return match;
       }
 
-      // Fallback: any AssociationClass node on canvas
+      // Respaldo: cualquier nodo AssociationClass que haya en el lienzo
       const anyAssoc = this.nodes?.find(n => n.stereotype === 'AssociationClass');
       if (anyAssoc) return anyAssoc;
     }

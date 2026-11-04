@@ -9,7 +9,7 @@ import { CursorData } from '../../core/services/websocket.service';
   imports: [CommonModule],
   template: `
     <div class="minimap-wrapper" [class.collapsed]="isCollapsed">
-      <!-- Minimap Toggle Header Button -->
+      <!-- Botón para mostrar u ocultar el minimapa -->
       <div class="minimap-header" (click)="isCollapsed = !isCollapsed" title="Minimapa de Navegación">
         <div class="header-title">
           <span class="minimap-icon">🗺️</span>
@@ -18,10 +18,10 @@ import { CursorData } from '../../core/services/websocket.service';
         <button class="toggle-btn">{{ isCollapsed ? '▲' : '▼' }}</button>
       </div>
 
-      <!-- Minimap Body -->
+      <!-- Cuerpo del minimapa -->
       <div *ngIf="!isCollapsed" class="minimap-body" #minimapBox (click)="onMinimapClick($event)">
         <svg class="minimap-svg" [attr.viewBox]="svgViewBox">
-          <!-- Connectors Layer -->
+          <!-- Capa de conectores -->
           <g *ngFor="let conn of connectors">
             <line
               *ngIf="getConnectorCoords(conn) as coords"
@@ -35,7 +35,7 @@ import { CursorData } from '../../core/services/websocket.service';
             />
           </g>
 
-          <!-- Nodes Layer -->
+          <!-- Capa de nodos -->
           <rect
             *ngFor="let node of nodes"
             [attr.x]="node.positionX"
@@ -48,7 +48,7 @@ import { CursorData } from '../../core/services/websocket.service';
             stroke-width="2"
           />
 
-          <!-- Remote Collaborators Cursors -->
+          <!-- Cursores de los colaboradores remotos -->
           <circle
             *ngFor="let c of remoteCursors"
             [attr.cx]="c.cursor ? c.cursor.x : 0"
@@ -60,7 +60,7 @@ import { CursorData } from '../../core/services/websocket.service';
           />
 
 
-          <!-- Current Viewport Rect (Visible Screen Region) -->
+          <!-- Rectángulo de lo que se ve ahora en pantalla -->
           <rect
             [attr.x]="viewportRect.x"
             [attr.y]="viewportRect.y"

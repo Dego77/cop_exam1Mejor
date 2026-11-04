@@ -9,14 +9,12 @@ export class EaExporterService {
   private toEaGuid(rawId: string): string {
     if (!rawId) return 'EAID_11111111_2222_3333_4444_555555555555';
 
-    // Fold the WHOLE input through 4 independent rolling hashes so every
-    // character influences the output. A plain hex-concat + substring(0,32)
-    // (the old approach) only ever reflected the first ~16 characters of
-    // rawId, which made `toEaGuid(node.id)` collide with
-    // `toEaGuid(`${node.id}_attr_...`)` whenever node.id was already a
-    // 36-char UUID (real persisted nodes), because the "_attr_..." suffix
-    // fell entirely outside that 16-char window - producing an attribute
-    // with the SAME xmi:id as its own owning class.
+    // Pasa TODO el texto por 4 hashes independientes para que cada carácter
+    // influya en el resultado. El método viejo (hex concatenado y substring(0, 32))
+    // solo miraba los primeros ~16 caracteres de rawId, así que `toEaGuid(node.id)`
+    // chocaba con `toEaGuid(`${node.id}_attr_...`)` cuando node.id ya era un UUID
+    // de 36 caracteres (nodos guardados de verdad): el sufijo "_attr_..." quedaba
+    // fuera de esa ventana y el atributo salía con el MISMO xmi:id que su clase.
     let h1 = 0x811c9dc5, h2 = 0x01000193, h3 = 0x9e3779b9, h4 = 0x85ebca6b;
     for (let i = 0; i < rawId.length; i++) {
       const c = rawId.charCodeAt(i);
@@ -30,14 +28,14 @@ export class EaExporterService {
     return `EAID_${clean.substring(0, 8)}_${clean.substring(8, 12)}_${clean.substring(12, 16)}_${clean.substring(16, 20)}_${clean.substring(20, 32)}`;
   }
 
-  // Resolves the real node id an association-class connector's box belongs to. Normally
-  // conn.associationClassNodeId already points at a real, persisted node id - but for a
-  // connector saved through diagram.service.ts's optimistic "temp id first, reconcile later"
-  // flow, that field can be left holding a stale client-side temp id (e.g. "node_assoc_...")
-  // that was never rewritten to the node's real UUID once it got persisted (see
-  // diagram.service.ts's tempToRealIdMap / saveCurrentDiagram). When that happens, fall back to
-  // the same name-matching heuristic canvas.component.ts's getAssocClassNode() already uses to
-  // draw the dashed line on-screen, so the export matches what the user actually sees on canvas.
+  // Resuelve el id real de la caja de una clase de asociación. Normalmente
+  // conn.associationClassNodeId ya apunta a un nodo guardado, pero si el conector
+  // se guardó con el flujo optimista de diagram.service.ts (id temporal primero,
+  // reconciliar después), ese campo puede quedar con un id viejo del cliente
+  // (por ejemplo "node_assoc_...") que nunca pasó al UUID real (ver tempToRealIdMap
+  // y saveCurrentDiagram). En ese caso se usa el mismo empareje por nombre que
+  // getAssocClassNode() de canvas.component.ts usa para dibujar la línea punteada,
+  // así la exportación coincide con lo que se ve en el lienzo.
   private resolveAssocClassNodeId(
     conn: UMLConnector,
     nodes: UMLNode[],
@@ -69,7 +67,7 @@ export class EaExporterService {
       return { lowVal: '', uppVal: '', eaTypeMult: '' };
     }
 
-    // 1. Clean visibility prefixes (+, -, #, ~) and whitespace
+    // 1. Limpiar prefijos de visibilidad (+, -, #, ~) y espacios
     const clean = multStr.trim().replace(/^[+\-#~]\s*/, '');
 
     if (!clean) {
@@ -143,7 +141,7 @@ export class EaExporterService {
     let elementsExtensionXml = '';
     let diagramElementsXml = '';
 
-    // Map to store node information for connector resolution
+    // Mapa con los datos de cada nodo para resolver los conectores
     const nodeMap = new Map<string, { node: UMLNode; eaId: string; localId: number }>();
     const generalizationMap = new Map<string, { parentEaId: string; genEaId: string }[]>();
 
@@ -154,7 +152,7 @@ export class EaExporterService {
       });
     }
 
-    // Pre-process connectors to identify Generalizations (Inheritance)
+    // Preprocesar conectores para detectar generalizaciones (herencia)
     if (connectors && connectors.length > 0) {
       connectors.forEach((conn, idx) => {
         if (conn.type === 'Inheritance') {
@@ -170,16 +168,15 @@ export class EaExporterService {
       });
     }
 
-    // Pre-process connectors to identify nodes that are actually "association classes"
-    // (the junction/intermediate entity of a many-to-many relation). Those nodes must be
-    // exported as a single merged uml:AssociationClass element instead of a standalone
-    // uml:Class, otherwise Enterprise Architect has no standard way to know the class is
-    // tied to the many-to-many relation between the two real entities.
+    // Preprocesar conectores para detectar nodos que son clases de asociación
+    // (la entidad intermedia de un muchos a muchos). Esos nodos se exportan como un
+    // solo uml:AssociationClass, no como un uml:Class suelto. Si no, Enterprise Architect
+    // no tiene forma estándar de saber que la clase va atada a esa relación.
     const assocClassNodeIds = new Set<string>();
-    // Maps an association-class node id -> the EA id of the SEPARATE visual "link" connector
-    // (the plain Association line drawn between the two real entities). Enterprise Architect
-    // requires this to be a distinct element from the AssociationClass box itself; reusing the
-    // same id for both makes EA unable to place a diagram edge for the link (see below).
+    // Mapa de id del nodo de clase de asociación -> id de EA del conector visual APARTE
+    // (la línea Association entre las dos entidades reales). Enterprise Architect exige que
+    // sea un elemento distinto de la caja AssociationClass. Reusar el mismo id impide que
+    // EA dibuje la arista de ese enlace (ver más abajo).
     const assocClassLinkEaId = new Map<string, string>();
     if (connectors && connectors.length > 0) {
       connectors.forEach((conn, idx) => {
@@ -192,14 +189,14 @@ export class EaExporterService {
     }
     const assocClassContentMap = new Map<string, { attrsXml: string; methodsXml: string; generalizationsXml: string }>();
 
-    // 1. DYNAMIC MAPPING OF ALL NODES / CLASSES
+    // 1. Mapeo de todos los nodos y clases
     if (nodes && nodes.length > 0) {
       nodes.forEach((node, idx) => {
         const nodeInfo = nodeMap.get(node.id)!;
         const nodeEaId = nodeInfo.eaId;
         const isAssocClassNode = assocClassNodeIds.has(node.id);
 
-        // Parse Generalizations (Inheritance) inside class
+        // Leer generalizaciones (herencia) dentro de la clase
         let generalizationsXml = '';
         const gens = generalizationMap.get(node.id);
         if (gens && gens.length > 0) {
@@ -209,7 +206,7 @@ export class EaExporterService {
           });
         }
 
-        // Parse Attributes
+        // Leer atributos
         let attrsXml = '';
         if (node.attributes && node.attributes.length > 0) {
           node.attributes.forEach((attr, aIdx) => {
@@ -222,7 +219,7 @@ export class EaExporterService {
           });
         }
 
-        // Parse Methods / Operations
+        // Leer métodos y operaciones
         let methodsXml = '';
         if (node.methods && node.methods.length > 0) {
           node.methods.forEach((m, mIdx) => {
@@ -239,12 +236,12 @@ export class EaExporterService {
         }
 
         if (isAssocClassNode) {
-          // Deferred: merged into a single uml:AssociationClass packagedElement together with
-          // its association ends when the owning connector is processed below (step 2), since
-          // in the UML metamodel an association class is ONE element, not a class + a link.
+          // Se aplaza: se fusiona en un solo packagedElement uml:AssociationClass, con sus
+          // extremos, cuando se procese el conector dueño (paso 2). En el metamodelo UML una
+          // clase de asociación es UN elemento, no una clase más un enlace.
           assocClassContentMap.set(node.id, { attrsXml, methodsXml, generalizationsXml });
         } else {
-          // Standard UML Class Element (including generalization links if any)
+          // Elemento UML de clase estándar (incluye los enlaces de generalización, si hay)
           classesXml += `
         <packagedElement xmi:type="uml:Class" xmi:id="${nodeEaId}" name="${node.name}">
           ${generalizationsXml}
@@ -253,11 +250,11 @@ export class EaExporterService {
         </packagedElement>`;
         }
 
-        // Enterprise Architect Extension Element Definition. EA itself exports the box of an
-        // association class as xmi:type="uml:Class" (not uml:AssociationClass) with ntype="17"
-        // marking it, plus a conID pointing at the separate link connector below - mirroring
-        // real EA output here (verified against genuine EA-exported .xml samples) is what makes
-        // EA draw the dashed line back to this box on import.
+        // Definición de elemento de la extensión de Enterprise Architect. El propio EA exporta
+        // la caja de una clase de asociación como xmi:type="uml:Class" (no uml:AssociationClass),
+        // marcada con ntype="17", más un conID que apunta al conector del enlace de abajo.
+        // Copiar esa salida real (comprobada con XML exportados por EA) es lo que hace que,
+        // al importar, EA dibuje la línea punteada de vuelta a esta caja.
         const assocLinkId = isAssocClassNode ? assocClassLinkEaId.get(node.id) : undefined;
         elementsExtensionXml += `
         <element xmi:idref="${nodeEaId}" xmi:type="uml:Class" name="${node.name}" scope="public">
@@ -266,7 +263,7 @@ export class EaExporterService {
           <extendedProperties package_name="Logical View"${assocLinkId ? ` conID="${assocLinkId}"` : ''}/>
         </element>`;
 
-        // Enterprise Architect Visual Geometry Diagram Placement
+        // Posición visual del diagrama en Enterprise Architect
         const left = Math.round(node.positionX || (100 + idx * 240));
         const top = Math.round(node.positionY || (100 + (idx % 2) * 180));
         const right = left + 220;
@@ -277,7 +274,7 @@ export class EaExporterService {
       });
     }
 
-    // 2. DYNAMIC MAPPING OF ALL CONNECTORS / RELATIONSHIPS
+    // 2. Mapeo de todos los conectores y relaciones
     let connectorsXml = '';
     let connectorsExtensionXml = '';
 
@@ -289,12 +286,12 @@ export class EaExporterService {
         const assocInfo = resolvedAssocNodeId ? nodeMap.get(resolvedAssocNodeId) : undefined;
         const isAssocClassConn = !!(assocInfo && assocClassNodeIds.has(assocInfo.node.id));
 
-        // The AssociationClass box (assocInfo.eaId) and the plain Association LINE drawn between
-        // the two real entities are two distinct EA elements, verified against genuine
-        // Enterprise-Architect-exported .xml samples (scratch_xml/*.xml): the line carries its
-        // own id and an <extendedProperties associationclass="..."/> pointer back to the box.
-        // Reusing one id for both (as this used to do) leaves the line with no diagram geometry,
-        // so EA renders the box with nothing connecting it to the two classes.
+        // La caja AssociationClass (assocInfo.eaId) y la LÍNEA Association entre las dos
+        // entidades reales son dos elementos distintos de EA. Se comprobó con XML exportados
+        // de verdad por Enterprise Architect (scratch_xml/*.xml): la línea lleva su propio id
+        // y un <extendedProperties associationclass="..."/> que apunta a la caja. Reusar un
+        // solo id (como antes) deja la línea sin geometría, y EA dibuja la caja sin unirla
+        // a las dos clases.
         const connEaId = this.toEaGuid(conn.id || `conn_${idx}`);
 
         const srcEaId = srcInfo ? srcInfo.eaId : this.toEaGuid(conn.sourceNodeId);
@@ -348,11 +345,11 @@ export class EaExporterService {
 
         const isStructuralAssoc = conn.type === 'Association' || !conn.type;
         const isWholePart = conn.type === 'Aggregation' || conn.type === 'Composition';
-        // The diamond is always rendered at the connector's TARGET endpoint (see
-        // canvas.component.ts getDiamondPoints() -> getTargetEndpoint()), so by UML convention
-        // the target class is the "whole" and the source class is the "part". When the user
-        // left a multiplicity blank on an Aggregation/Composition, default to the usual
-        // whole/part reading instead of exporting an empty (ambiguous) multiplicity.
+        // El rombo siempre se dibuja en el extremo DESTINO del conector (ver
+        // getDiamondPoints() -> getTargetEndpoint() en canvas.component.ts). Por convención
+        // UML la clase destino es el "todo" y la origen es la "parte". Si el usuario dejó
+        // vacía la multiplicidad de una agregación o composición, se usa esa lectura
+        // todo/parte en vez de exportar una multiplicidad vacía y ambigua.
         const defaultSrcMult = isStructuralAssoc ? '1' : (isWholePart ? '0..*' : '');
         const defaultTgtMult = isStructuralAssoc ? '*' : (isWholePart ? '1' : '');
 
@@ -362,19 +359,19 @@ export class EaExporterService {
         const srcMult = this.buildMultiplicityXml(rawSrcMult, `${connEaId}_src`);
         const tgtMult = this.buildMultiplicityXml(rawTgtMult, `${connEaId}_tgt`);
 
-        // Standard UML2 aggregation kind belongs on the ownedEnd typed as the "part" (source
-        // here, see note above): the property whose type is the aggregated class carries
-        // aggregation="shared"/"composite", while the "whole" end (target) stays "none".
+        // En UML2 el tipo de agregación va en el ownedEnd de la "parte" (aquí el origen;
+        // ver la nota de arriba): la propiedad cuyo tipo es la clase agregada lleva
+        // aggregation="shared" o "composite", y el extremo del "todo" (destino) queda en "none".
         const srcAggAttr = aggregationValue ? ` aggregation="${aggregationValue}"` : '';
 
-        // Real EA puts this on the LINE connector's <extendedProperties>, not on <properties>,
-        // and the attribute is lowercase "associationclass".
+        // El EA real pone esto en <extendedProperties> del conector de la LÍNEA, no en
+        // <properties>, y el atributo va en minúsculas: "associationclass".
         const assocClassExtProps = isAssocClassConn ? ` associationclass="${assocInfo!.eaId}"` : '';
         const assocSubtypeAttr = isAssocClassConn ? 'subtype="Class"' : '';
 
-        // Standard UML 2.1 Association / AssociationClass in packagedElement (memberEnd & type xmi:idref).
-        // For an association class this packagedElement is the CLASS+ASSOCIATION itself, so it
-        // must use the box's own id (assocInfo.eaId), not the separate visual line's connEaId.
+        // Association o AssociationClass de UML 2.1 en packagedElement (memberEnd y type xmi:idref).
+        // En una clase de asociación ese packagedElement ES la clase y la asociación, así que
+        // usa el id de la caja (assocInfo.eaId), no el connEaId de la línea visual aparte.
         if (conn.type !== 'Inheritance') {
           let assocClassMembersXml = '';
           const pkgElId = isAssocClassConn ? assocInfo!.eaId : connEaId;
@@ -401,8 +398,8 @@ export class EaExporterService {
         </packagedElement>`;
         }
 
-        // Enterprise Architect Extension Connector Definition with EXPLICIT <model type="Class"/>.
-        // This is always the separate visual LINE (own connEaId), even for an association class.
+        // Definición de conector de la extensión de Enterprise Architect, con <model type="Class"/> explícito.
+        // Siempre es la LÍNEA visual aparte (su propio connEaId), también en una clase de asociación.
         connectorsExtensionXml += `
         <connector xmi:idref="${connEaId}" name="${isAssocClassConn ? '' : (conn.label || '')}">
           <source xmi:idref="${srcEaId}">
@@ -420,9 +417,9 @@ export class EaExporterService {
           <appearance linemode="3" linecolor="-1" linewidth="0" seqno="0" headstyle="0" linestyle="0"/>
         </connector>`;
 
-        // Enterprise Architect Diagram Visual Line Link Placement. Always emitted, including for
-        // an association class: the line (connEaId) and the box (assocInfo.eaId) are now distinct
-        // subjects, so this no longer collides with the box's own geometry entry from the node loop.
+        // Posición visual de la línea en el diagrama de Enterprise Architect. Siempre se emite,
+        // también en una clase de asociación: la línea (connEaId) y la caja (assocInfo.eaId)
+        // ya son sujetos distintos, así que no choca con la geometría de la caja del bucle de nodos.
         diagramElementsXml += `
           <element geometry="SX=0;SY=0;EX=0;EY=0;Path=;" subject="${connEaId}" style="LEStyle=3;BStyle=0;"/>`;
       });
@@ -495,7 +492,7 @@ export class EaExporterService {
       }
     }
 
-    // Fallback if browser doesn't support showSaveFilePicker
+    // Respaldo si el navegador no tiene showSaveFilePicker
     const name = prompt('Ingrese el nombre del proyecto XML para Enterprise Architect:', defaultName);
     if (!name) return null;
     const cleanName = name.trim();
@@ -519,7 +516,7 @@ export class EaExporterService {
       }
     }
 
-    // Fallback if no active handle exists
+    // Respaldo si no hay un manejador de archivo activo
     if ('showSaveFilePicker' in window) {
       try {
         const cleanFilename = projectName.toLowerCase().endsWith('.xml') ? projectName : `${projectName}.xml`;

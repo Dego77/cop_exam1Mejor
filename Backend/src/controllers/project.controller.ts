@@ -121,7 +121,7 @@ export const addCollaborator = async (req: AuthRequest, res: Response): Promise<
     const { email, role } = req.body;
     const userId = req.user!.id;
 
-    // Verify project exists in database first
+    // Comprobar primero que el proyecto existe en la base
     const project = await prisma.project.findUnique({
       where: { id },
     });

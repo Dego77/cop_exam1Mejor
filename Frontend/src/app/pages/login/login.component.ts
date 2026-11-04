@@ -324,7 +324,7 @@ export class LoginComponent implements AfterViewInit, OnDestroy {
 
   constructor(private auth: AuthService, private router: Router, private route: ActivatedRoute) {}
 
-  // After login go back to where the user came from (e.g. the mobile "Modo Ver" at /view)
+  // Después de entrar, volver a donde venía el usuario (por ejemplo el "Modo Ver" móvil en /view)
   private navigateAfterAuth(): void {
     const returnUrl = this.route.snapshot.queryParamMap.get('returnUrl');
     if (returnUrl && returnUrl.startsWith('/view')) {

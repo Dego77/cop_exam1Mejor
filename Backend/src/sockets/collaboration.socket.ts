@@ -2,11 +2,11 @@ import { Server, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../config/prisma';
 
-// Map of projectId -> Map<socketId, user>
+// Mapa de projectId -> mapa de socketId a usuario
 const roomUsers = new Map<string, Map<string, any>>();
 
-// "Modo Ver" (mobile app): the user is taken from the verified JWT - never from the payload - and
-// must be the owner or a collaborator of the project. Returns the user, or null if not allowed.
+// "Modo Ver" (app móvil): el usuario sale del JWT verificado, nunca del cuerpo del mensaje, y
+// tiene que ser el dueño o un colaborador. Devuelve el usuario, o null si no puede entrar.
 async function resolveViewer(projectId: string, token: string | undefined) {
   if (!token) return null;
   try {
@@ -37,11 +37,11 @@ export const setupCollaborationSockets = (io: Server) => {
   io.on('connection', (socket: Socket) => {
     console.log(`[Socket] Cliente conectado: ${socket.id}`);
 
-    // Join collaborative project room
+    // Unirse a la sala del proyecto colaborativo
     socket.on('join-project', async ({ projectId, user, mode, token }) => {
       if (!projectId) return;
 
-      // Read-only viewer: strict auth, no work session, and every edit event from it is ignored
+      // Visor de solo lectura: autenticación estricta, sin sesión de trabajo, y se ignora cualquier edición suya
       if (mode === 'view') {
         const viewer = await resolveViewer(projectId, token);
         if (!viewer) {
@@ -64,7 +64,7 @@ export const setupCollaborationSockets = (io: Server) => {
         return;
       }
 
-      // Validate user authorization for project if it exists in database
+      // Validar que el usuario puede entrar al proyecto, si existe en la base
       try {
         const project = await prisma.project.findUnique({
           where: { id: projectId },
@@ -123,7 +123,7 @@ export const setupCollaborationSockets = (io: Server) => {
       socket.to(projectId).emit('user-joined', { user: userData, socketId: socket.id });
     });
 
-    // Realtime cursor tracking
+    // Seguimiento del cursor en tiempo real
     socket.on('cursor-move', ({ projectId, cursor, user }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only
       socket.to(projectId).emit('cursor-moved', {
@@ -133,13 +133,13 @@ export const setupCollaborationSockets = (io: Server) => {
       });
     });
 
-    // Realtime node dragging / auto-saving
+    // Arrastre de nodos en tiempo real y autoguardado
     socket.on('node-dragged', async ({ projectId, nodeId, positionX, positionY }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only
-      // Broadcast to room immediately for smooth 60fps rendering
+      // Enviar a la sala de inmediato para que se dibuje fluido
       socket.to(projectId).emit('node-dragged', { nodeId, positionX, positionY });
 
-      // Save position to shared database (single source of truth)
+      // Guardar la posición en la base compartida (la fuente única)
       try {
         await prisma.node.update({
           where: { id: nodeId },
@@ -150,7 +150,7 @@ export const setupCollaborationSockets = (io: Server) => {
       }
     });
 
-    // Realtime node content update (attributes/methods)
+    // Actualización en tiempo real del contenido del nodo (atributos y métodos)
     socket.on('node-updated', async ({ projectId, node }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only
       socket.to(projectId).emit('node-updated', { node });
@@ -170,31 +170,31 @@ export const setupCollaborationSockets = (io: Server) => {
       }
     });
 
-    // Realtime node creation
+    // Creación de nodos en tiempo real
     socket.on('node-created', async ({ projectId, node }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only
       socket.to(projectId).emit('node-created', { node });
     });
 
-    // Realtime node deletion
+    // Borrado de nodos en tiempo real
     socket.on('node-deleted', async ({ projectId, nodeId }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only
       socket.to(projectId).emit('node-deleted', { nodeId });
     });
 
-    // Realtime connector creation
+    // Creación de conectores en tiempo real
     socket.on('connector-created', async ({ projectId, connector }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only
       socket.to(projectId).emit('connector-created', { connector });
     });
 
-    // Realtime connector deletion
+    // Borrado de conectores en tiempo real
     socket.on('connector-deleted', async ({ projectId, connectorId }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only
       socket.to(projectId).emit('connector-deleted', { connectorId });
     });
 
-    // Realtime full diagram reloaded (AI operations, bulk updates)
+    // Recarga completa del diagrama en tiempo real (operaciones de la IA y cambios masivos)
     socket.on('diagram-reloaded', async ({ projectId, payload }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only
       socket.to(projectId).emit('diagram-reloaded', { projectId, payload });

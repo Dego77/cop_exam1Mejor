@@ -26,7 +26,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
     const avatarUrl = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(cleanName)}`;
 
-    // Store 100% plain text password as requested by user
+    // Guardar la contraseña en texto plano, tal como se pidió
     const newUser = await prisma.user.create({
       data: {
         email: cleanEmail,
@@ -75,7 +75,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Direct 100% plain text password comparison as requested by user
+    // Comparar la contraseña en texto plano, tal como se pidió
     if (user.password !== cleanPassword && user.password.trim() !== cleanPassword) {
       res.status(401).json({ error: 'Credenciales inválidas.' });
       return;

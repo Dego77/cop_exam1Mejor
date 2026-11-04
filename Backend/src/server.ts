@@ -26,25 +26,25 @@ const io = new Server(server, {
   },
 });
 
-// Lets HTTP controllers broadcast to project rooms (e.g. shared AI chat messages)
+// Permite que los controladores HTTP avisen a las salas del proyecto (por ejemplo el chat de IA)
 app.set('io', io);
 
-// Middleware
+// Middlewares
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
-// HTTP Request Logger
+// Registro de peticiones HTTP
 app.use((req, res, next) => {
   console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
   next();
 });
 
-// Serve uploaded files statically
+// Servir los archivos subidos de forma estática
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// REST API Routes
+// Rutas de la API REST
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/diagrams', diagramRoutes);
@@ -52,7 +52,7 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/sql', sqlRoutes);
 app.use('/api/architect', architectRoutes);
 
-// Health check endpoint
+// Ruta para comprobar que el servidor está vivo
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -61,7 +61,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Socket.io Realtime Server Setup
+// Configuración del servidor de tiempo real con Socket.io
 setupCollaborationSockets(io);
 
 const PORT = process.env.PORT || 3000;

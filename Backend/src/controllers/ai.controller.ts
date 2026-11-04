@@ -16,8 +16,8 @@ type ChatMessageData = {
   proposals?: any;
 };
 
-// Persists one AI chat message and broadcasts it (with its author) to everyone in the project
-// room, so collaborators see who asked the AI what - and its reply - in real time, like a group chat.
+// Guarda un mensaje del chat de IA y lo envía, con su autor, a todos los que están en el proyecto,
+// para que vean en el momento quién preguntó y qué respondió la IA.
 async function saveAndBroadcastChat(req: AuthRequest, data: ChatMessageData) {
   const message = await prisma.aIChatHistory.create({
     data,
@@ -29,7 +29,7 @@ async function saveAndBroadcastChat(req: AuthRequest, data: ChatMessageData) {
 
 type ChatMessageRecord = Awaited<ReturnType<typeof saveAndBroadcastChat>>;
 
-// Owner or collaborator of the project
+// Dueño o colaborador del proyecto
 async function userCanAccessProject(projectId: string, userId: number): Promise<boolean> {
   const project = await prisma.project.findFirst({
     where: {
@@ -44,8 +44,8 @@ async function userCanAccessProject(projectId: string, userId: number): Promise<
   return !!project;
 }
 
-// Private chat: the AI works exactly the same, but the conversation is neither stored nor
-// broadcast to collaborators (arrives as boolean in JSON or 'true' in multipart FormData).
+// Chat privado: la IA trabaja igual, pero la conversación no se guarda ni se envía a los
+// colaboradores. Llega como booleano en JSON o como 'true' en FormData.
 function isPrivateRequest(req: AuthRequest): boolean {
   return req.body?.isPrivate === true || req.body?.isPrivate === 'true';
 }
@@ -174,13 +174,12 @@ function emitAIThinking(req: AuthRequest, projectId: string, user: { id: number;
   req.app.get('io')?.to(projectId).emit('ai-chat-thinking', { projectId, userId: user.id, fullName: user.fullName, thinking });
 }
 
-// Builds the "Current Canvas Diagram Context" sent to Gemini, resolving each connector's
-// sourceNodeId/targetNodeId (meaningless DB ids to the model) into class names, and including
-// existing relationships alongside classes. Without this, Gemini has no way to know what
-// relationships already exist, so it can't correctly use connectorsToDelete/connectorsModified
-// (it would only ever be able to create new ones, never reference an existing one by name).
-// Built fresh from the DB on every call instead of trusting whatever the frontend last sent, so
-// it's always accurate for the diagram state at request time.
+// Arma el "Current Canvas Diagram Context" que se envía a Gemini. Cambia el sourceNodeId y el
+// targetNodeId de cada conector (ids de la base que el modelo no entiende) por nombres de clase,
+// e incluye las relaciones junto con las clases. Sin eso, Gemini no sabe qué relaciones ya existen
+// y no puede usar connectorsToDelete ni connectorsModified: solo podría crear líneas nuevas.
+// Se arma desde la base en cada llamada, no desde lo último que mandó el frontend, para que
+// coincida con el diagrama en ese momento.
 function buildDiagramContext(diagram: any): { nodes: any[]; connectors: any[] } {
   const nodes = (diagram?.nodes || []).map((n: any) => ({
     name: n.name,
@@ -203,20 +202,19 @@ function buildDiagramContext(diagram: any): { nodes: any[]; connectors: any[] } 
   return { nodes, connectors };
 }
 
-// A relationship is many-to-many when BOTH ends carry a many-valued multiplicity. Mirrors the
-// same "strip a leading visibility prefix" normalization ea-exporter.service.ts's
-// buildMultiplicityXml already uses on the frontend, so both layers agree on what counts as "*".
+// Una relación es muchos a muchos cuando LOS DOS extremos tienen multiplicidad de muchos. Quita el
+// prefijo de visibilidad (+, -, #) igual que buildMultiplicityXml en ea-exporter.service.ts, para
+// que el frontend y el backend cuenten "*" de la misma forma.
 function isManyToMany(mult?: string | null): boolean {
   if (!mult) return false;
   const clean = mult.trim().replace(/^[+\-#~]\s*/, '');
   return clean === '*' || clean === '1..*' || clean === '0..*';
 }
 
-// Deterministic fallback for when Gemini doesn't follow the "IMPLICIT ASSOCIATION CLASS" prompt
-// rule: synthesizes the same junction node the manual "Clase de Asociación" canvas tool creates
-// (see editor.component.ts's onCreateConnector, which this mirrors - same naming and midpoint
-// positioning convention) so AI-generated many-to-many relationships always get modeled the same
-// way as a manually-drawn one, regardless of what Gemini actually returned.
+// Respaldo cuando Gemini no sigue la regla de clase de asociación implícita. Crea el mismo nodo
+// intermedio que la herramienta manual "Clase de Asociación" del lienzo (onCreateConnector en
+// editor.component.ts: el mismo nombre y el mismo punto medio), para que un muchos a muchos de la
+// IA quede igual que uno dibujado a mano, aunque Gemini no lo haya devuelto.
 async function synthesizeAssociationClassNode(diagramId: string, srcNode: any, tgtNode: any) {
   const midX = ((srcNode.positionX || 0) + (tgtNode.positionX || 0)) / 2;
   const midY = Math.max(srcNode.positionY || 0, tgtNode.positionY || 0) + 170;
@@ -234,9 +232,8 @@ async function synthesizeAssociationClassNode(diagramId: string, srcNode: any, t
   });
 }
 
-// Shared by handleTextPrompt and handleVoicePrompt so relationship-creation logic (including the
-// many-to-many -> association class synthesis above) lives in exactly one place. Voice used to
-// have none of this at all, which is why it could never create a relationship.
+// Lo comparten el texto y la voz, para que crear relaciones (incluido el muchos a muchos de arriba)
+// viva en un solo lugar. Antes la voz no creaba relaciones.
 async function applyConnectorsGenerated(
   diagramId: string,
   allDiagramNodes: any[],
@@ -256,8 +253,8 @@ async function applyConnectorsGenerated(
 
     if (srcNode && tgtNode) {
       let effectiveType: string = conn.type || 'Association';
-      // Gemini didn't name/create a junction class itself - if the cardinality is M:N on both
-      // ends, synthesize the same association-class node the manual canvas tool would.
+      // Gemini no nombró la clase intermedia. Si la cardinalidad es M:N en los dos extremos,
+      // se crea el mismo nodo de clase de asociación que crearía la herramienta manual.
       if (!assocNode && effectiveType === 'Association' && isManyToMany(conn.sourceMultiplicity) && isManyToMany(conn.targetMultiplicity)) {
         assocNode = await synthesizeAssociationClassNode(diagramId, srcNode, tgtNode);
         createdAssocNodes.push(assocNode);
@@ -293,8 +290,8 @@ async function applyConnectorsGenerated(
   return { createdConnectors, createdAssocNodes };
 }
 
-// Finds an existing connector between two named classes (either direction), optionally narrowed
-// by relationship type - shared by the deletion and edit paths below.
+// Busca un conector que ya existe entre dos clases (en cualquier dirección). Si viene el tipo,
+// lo usa para distinguir. Lo comparten el borrado y la edición de relaciones.
 function findConnectorByNames(
   connectors: any[],
   nodesById: Map<string, any>,
@@ -310,15 +307,14 @@ function findConnectorByNames(
     const cTgtName = (nodesById.get(c.targetNodeId)?.name || '').toLowerCase();
     const namesMatch = (cSrcName === a && cTgtName === b) || (cSrcName === b && cTgtName === a);
     if (!namesMatch) return false;
-    // Case-insensitive: Gemini doesn't always reproduce the exact PascalCase enum value
-    // ("Association") it was given in the schema/context, especially reasoning from audio.
+    // Sin distinguir mayúsculas: Gemini no siempre repite el valor exacto del esquema
+    // ("Association"), sobre todo cuando razona a partir de un audio.
     return !type || (c.type || '').toLowerCase() === type.toLowerCase();
   });
 }
 
-// Reads the first present key from `item`, tolerating the kind of field-name variance Gemini
-// sometimes introduces (especially transcribing+reasoning from audio in one pass) instead of
-// following the schema's exact property names for removal/deletion payloads.
+// Lee la primera clave que sí venga en `item`. Tolera que Gemini cambie el nombre del campo
+// (pasa sobre todo en la voz) en vez de usar el nombre exacto del esquema al borrar.
 function resolveName(item: any, ...keys: string[]): string | undefined {
   for (const k of keys) {
     if (item && item[k]) return item[k];
@@ -326,9 +322,9 @@ function resolveName(item: any, ...keys: string[]): string | undefined {
   return undefined;
 }
 
-// Shared by handleTextPrompt and handleVoicePrompt: deletes/edits an EXISTING relationship by
-// the two class names Gemini reported in 'connectorsToDelete'/'connectorsModified'. Until now
-// neither mode could do this at all - only create new relationships.
+// Lo comparten el texto y la voz: borra o edita una relación que YA existe, usando los dos nombres
+// de clase que Gemini mandó en 'connectorsToDelete' o 'connectorsModified'. Antes ninguno de los
+// dos modos podía hacer esto: solo creaban relaciones nuevas.
 async function applyConnectorDeletionsAndEdits(
   diagramId: string,
   allDiagramNodes: any[],
@@ -380,17 +376,13 @@ async function applyConnectorDeletionsAndEdits(
   return { deletedConnectorIds, updatedConnectors };
 }
 
-// Shared by handleTextPrompt and handleVoicePrompt: applies classesToDelete, attributesToRemove,
-// methodsToRemove, classesModified and classesGenerated against the diagram's nodes, in that
-// order, within a single in-memory `existingNodes` snapshot that is kept up to date after every
-// write. Centralizing this (instead of duplicating it per-handler, as before) fixes two bugs at
-// once: (1) text and voice can no longer drift apart, since there is only one implementation left
-// to fix; (2) previously each handler re-read a STALE copy of a class's attributes/methods in
-// every one of these five blocks, so e.g. "editing" an attribute - which the AI expresses as
-// removing the old one in attributesToRemove AND adding the new one via classesModified in the
-// SAME response, per the system prompt - silently undid itself: the classesModified block still
-// saw the pre-removal attribute list and overwrote the DB with it, restoring the attribute the
-// attributesToRemove block had just deleted a moment earlier in the same request.
+// Lo comparten el texto y la voz. Aplica, en este orden, classesToDelete, attributesToRemove,
+// methodsToRemove, classesModified y classesGenerated sobre los nodos del diagrama. Todo ocurre
+// sobre la misma lista en memoria `existingNodes`, que se actualiza después de cada escritura.
+// Tener una sola copia evita dos fallos: (1) texto y voz ya no pueden divergir; (2) antes cada
+// bloque releía una copia vieja de atributos y métodos. Editar un atributo (quitar el viejo en
+// attributesToRemove y agregar el nuevo en classesModified, en la MISMA respuesta) se deshacía
+// solo: classesModified seguía viendo la lista de antes del borrado y la volvía a guardar.
 async function applyClassMutations(
   diagramId: string,
   existingNodes: any[],
@@ -400,7 +392,7 @@ async function applyClassMutations(
   const updatedNodes: any[] = [];
   const deletedNodeIds: string[] = [];
 
-  // classesToDelete
+  // classesToDelete: borrar clases enteras
   if (aiResponse.classesToDelete && aiResponse.classesToDelete.length > 0) {
     for (const clsName of aiResponse.classesToDelete) {
       const matchNode = existingNodes.find(n => n.name.toLowerCase() === clsName?.toLowerCase());
@@ -413,7 +405,7 @@ async function applyClassMutations(
     }
   }
 
-  // attributesToRemove
+  // attributesToRemove: quitar atributos
   if (aiResponse.attributesToRemove && aiResponse.attributesToRemove.length > 0) {
     for (const item of aiResponse.attributesToRemove) {
       const clsName = resolveName(item, 'className', 'class', 'name', 'entityName');
@@ -432,7 +424,7 @@ async function applyClassMutations(
     }
   }
 
-  // methodsToRemove
+  // methodsToRemove: quitar métodos
   if (aiResponse.methodsToRemove && aiResponse.methodsToRemove.length > 0) {
     for (const item of aiResponse.methodsToRemove) {
       const clsName = resolveName(item, 'className', 'class', 'name', 'entityName');
@@ -451,7 +443,7 @@ async function applyClassMutations(
     }
   }
 
-  // classesModified (add attributes/methods to an existing class)
+  // classesModified: agregar atributos o métodos a una clase que ya existe
   if (aiResponse.classesModified && aiResponse.classesModified.length > 0) {
     for (const mod of aiResponse.classesModified) {
       const matchNode = existingNodes.find(n => n.name.toLowerCase() === mod.name?.toLowerCase());
@@ -486,7 +478,7 @@ async function applyClassMutations(
     }
   }
 
-  // classesGenerated (create a new class, or merge into an existing same-named one)
+  // classesGenerated: crear una clase nueva, o fusionarla si ya existe una con el mismo nombre
   if (aiResponse.classesGenerated && aiResponse.classesGenerated.length > 0) {
     let currentX = 100;
     let currentY = 150;
@@ -539,10 +531,9 @@ async function applyClassMutations(
     }
   }
 
-  // classesToRename - processed LAST so any attribute/method/merge operation earlier in this same
-  // response (which necessarily still refers to the class by its pre-rename name, since that's
-  // what Current Canvas Diagram Context showed the model) resolves correctly before the name
-  // changes. Relationships are unaffected: connectors reference nodes by DB id, not by name.
+  // classesToRename va AL FINAL. Así, lo que esta misma respuesta haga antes con atributos, métodos
+  // o fusiones sigue usando el nombre viejo, que es el que vio el modelo en el contexto. Las
+  // relaciones no se afectan: los conectores apuntan al id del nodo, no al nombre.
   if (aiResponse.classesToRename && aiResponse.classesToRename.length > 0) {
     for (const item of aiResponse.classesToRename) {
       const oldName = resolveName(item, 'oldName', 'currentName', 'from', 'className');
@@ -559,10 +550,9 @@ async function applyClassMutations(
     }
   }
 
-  // classesToReposition - moves an existing class to new canvas coordinates. Gemini computes
-  // positionX/positionY using the current positions already included in Current Canvas Diagram
-  // Context (see buildDiagramContext), so it can reason about relative moves ("ponla a la derecha
-  // de Y") as well as absolute ones ("colócala en x:400, y:300").
+  // classesToReposition mueve una clase a nuevas coordenadas. Gemini calcula positionX y positionY
+  // con las posiciones que ya vienen en el contexto (buildDiagramContext), así que entiende tanto
+  // "ponla a la derecha de Y" como "colócala en x:400, y:300".
   if (aiResponse.classesToReposition && aiResponse.classesToReposition.length > 0) {
     for (const item of aiResponse.classesToReposition) {
       const clsName = resolveName(item, 'className', 'class', 'name');
@@ -609,7 +599,7 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
 
     const isPrivate = isPrivateRequest(req);
 
-    // Save & broadcast the prompt first so collaborators see it right away
+    // Se guarda y se envía el mensaje primero, para que los demás lo vean de inmediato
     let userMessage: ChatMessageRecord | null = null;
     if (!isPrivate) {
       userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'CHAT', content: prompt });
@@ -771,13 +761,13 @@ export const getAIChatHistory = async (req: AuthRequest, res: Response): Promise
     const projectId = req.params.projectId as string;
     const userId = req.user!.id;
 
-    // Only the owner or collaborators of the project can read its shared AI chat
+    // Solo el dueño o los colaboradores pueden leer el chat de IA del proyecto
     if (!(await userCanAccessProject(projectId, userId))) {
       res.status(403).json({ error: 'No tienes acceso al historial de este proyecto.' });
       return;
     }
 
-    // "New Chat → Para mí": hide everything before this user's own reset
+    // "Nuevo chat → Para mí": oculta todo lo anterior al reinicio de este usuario
     const clear = await prisma.aIChatClear.findUnique({
       where: { projectId_userId: { projectId, userId } },
     });
@@ -794,8 +784,8 @@ export const getAIChatHistory = async (req: AuthRequest, res: Response): Promise
   }
 };
 
-// New Chat: scope=me resets the chat only for the requesting user; scope=all wipes the
-// project's AI chat history for every member and notifies the connected collaborators.
+// Nuevo chat: scope=me reinicia el chat solo para quien lo pidió. scope=all borra el historial
+// de IA del proyecto para todos y avisa a los colaboradores conectados.
 export const clearAIChatHistory = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const projectId = req.params.projectId as string;

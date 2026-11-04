@@ -28,7 +28,7 @@ import { Subscription } from 'rxjs';
   ],
   template: `
     <div class="editor-layout">
-      <!-- Navbar Top Header -->
+      <!-- Barra superior -->
       <app-navbar
         [currentProject]="currentProject"
         [projects]="projects"
@@ -46,9 +46,9 @@ import { Subscription } from 'rxjs';
       ></app-navbar>
 
 
-      <!-- Main Workspace (3 columns) -->
+      <!-- Área de trabajo (3 columnas) -->
       <div class="workspace-container">
-        <!-- Left Sidebar: Palette & Hierarchy -->
+        <!-- Barra izquierda: paleta y jerarquía -->
         <app-left-sidebar
           [style.width.px]="leftSidebarWidth"
           [sidebarWidth]="leftSidebarWidth"
@@ -77,7 +77,7 @@ import { Subscription } from 'rxjs';
           (cursorMove)="onCursorMove($event)"
         ></app-canvas>
 
-        <!-- Right Sidebar: AI Multimodal & Code/Sync -->
+        <!-- Barra derecha: IA multimodal y código/sincronización -->
         <app-right-sidebar
           [style.width.px]="rightSidebarWidth"
           [sidebarWidth]="rightSidebarWidth"
@@ -89,7 +89,7 @@ import { Subscription } from 'rxjs';
         ></app-right-sidebar>
       </div>
 
-      <!-- Floating Support Agent Mascot/Bubble -->
+      <!-- Burbuja flotante del agente de soporte -->
       <app-agent-bubble></app-agent-bubble>
     </div>
   `,
@@ -145,7 +145,7 @@ export class EditorComponent implements OnInit, OnDestroy {
   ) { }
 
   ngOnInit(): void {
-    // Check authentication
+    // Comprobar autenticación
     if (!this.auth.isLoggedIn) {
       this.router.navigate(['/login']);
       return;
@@ -153,7 +153,7 @@ export class EditorComponent implements OnInit, OnDestroy {
 
     this.wsService.connect();
 
-    // Subscribe to Support AI Element Highlight / Spotlight
+    // Suscribirse al resaltado del agente de soporte
     this.subs.add(
       this.supportService.highlightSelector$.subscribe(selector => {
         if (selector) {
@@ -162,7 +162,7 @@ export class EditorComponent implements OnInit, OnDestroy {
       })
     );
 
-    // Subscribe to Diagram changes
+    // Suscribirse a los cambios del diagrama
     this.subs.add(
       this.diagramService.nodes$.subscribe(n => this.nodes = n)
     );
@@ -176,7 +176,7 @@ export class EditorComponent implements OnInit, OnDestroy {
       this.diagramService.selectedNode$.subscribe(sn => this.selectedNode = sn)
     );
 
-    // Subscribe to WebSocket events
+    // Suscribirse a los eventos de WebSocket
     this.subs.add(
       this.wsService.roomUsers$.subscribe(users => {
         this.activeRoomUsers = users || [];
@@ -285,14 +285,14 @@ export class EditorComponent implements OnInit, OnDestroy {
           serverProjects = [...owned, ...shared];
         }
 
-        // Merge user's server projects with user's isolated local cached projects
+        // Unir los proyectos del servidor con la caché local de este usuario
         const mergedMap = new Map<string, Project>();
         localCachedProjects.forEach(p => mergedMap.set(p.id, p));
         serverProjects.forEach(p => mergedMap.set(p.id, p));
 
         const combined = Array.from(mergedMap.values());
 
-        // Deduplicate projects by case-insensitive name, keeping the most recently updated project
+        // Quitar proyectos duplicados por nombre, sin distinguir mayúsculas, y quedarse con el más reciente
         const uniqueByName = new Map<string, Project>();
         combined.forEach(p => {
           const key = (p.name || '').trim().toLowerCase();
@@ -313,7 +313,7 @@ export class EditorComponent implements OnInit, OnDestroy {
             this.onSelectProject(deduplicated[0]);
           }
         } else {
-          // Clean state for brand new users without auto-creating demo projects
+          // Estado limpio para usuarios nuevos, sin crear proyectos de demostración
           this.projects = [];
           this.currentProject = null;
           this.saveProjectsCache();
@@ -357,7 +357,7 @@ export class EditorComponent implements OnInit, OnDestroy {
   }
 
   loadDemoDiagram(): void {
-    // Demo UML elements matching the visual layout specification
+    // Elementos UML de demostración, según la maqueta visual
     const demoNodes: UMLNode[] = [
       {
         id: 'node_user',
@@ -464,7 +464,7 @@ export class EditorComponent implements OnInit, OnDestroy {
   updateOnlineCollaboratorsList(): void {
     const allUsersMap = new Map<string, any>();
 
-    // 1. Current Logged-in User
+    // 1. Usuario que inició sesión
     if (this.auth.currentUser) {
       const u = this.auth.currentUser;
       const key = String(u.id || u.email);
@@ -483,7 +483,7 @@ export class EditorComponent implements OnInit, OnDestroy {
       return;
     }
 
-    // 2. Project Owner
+    // 2. Dueño del proyecto
     const owner = (this.currentProject as any).owner;
     if (owner && (owner.id || owner.email)) {
       const key = String(owner.id || owner.email);
@@ -500,7 +500,7 @@ export class EditorComponent implements OnInit, OnDestroy {
     }
 
 
-    // 2. Invited Collaborators
+    // 2. Colaboradores invitados
     const collaborators = (this.currentProject as any).collaborators;
     if (Array.isArray(collaborators)) {
       for (const colab of collaborators) {
@@ -521,7 +521,7 @@ export class EditorComponent implements OnInit, OnDestroy {
       }
     }
 
-    // 3. Active WebSocket Room User Keys
+    // 3. Claves de usuarios activos en la sala de WebSocket
     const activeUserMap = new Map<string, any>();
     for (const roomUser of this.activeRoomUsers) {
       if (roomUser) {
@@ -530,7 +530,7 @@ export class EditorComponent implements OnInit, OnDestroy {
       }
     }
 
-    // 4. Build output array with isOnline status and joinedAt timestamp
+    // 4. Armar la lista de salida con isOnline y la hora joinedAt
     const result: any[] = [];
     const addedUserKeys = new Set<string>();
     const currentUserIdStr = this.auth.currentUser ? String(this.auth.currentUser.id || this.auth.currentUser.email) : null;
@@ -552,7 +552,7 @@ export class EditorComponent implements OnInit, OnDestroy {
       }
     }
 
-    // Add active room users not in project DB yet (deduplicated)
+    // Agregar usuarios activos de la sala que todavía no están en la base del proyecto, sin duplicar
     for (const roomUser of this.activeRoomUsers) {
       if (roomUser && (roomUser.id || roomUser.email)) {
         const key = String(roomUser.id || roomUser.email);
@@ -571,11 +571,11 @@ export class EditorComponent implements OnInit, OnDestroy {
       }
     }
 
-    // Online users first
+    // Primero los usuarios en línea
     result.sort((a, b) => (b.isOnline ? 1 : 0) - (a.isOnline ? 1 : 0));
     this.onlineUsers = result;
 
-    // Purge any remote cursors from disconnected users
+    // Quitar los cursores remotos de quienes se desconectaron
     if (this.remoteCursorsMap.size > 0) {
       const activeSockets = new Set(
         this.activeRoomUsers
@@ -605,7 +605,7 @@ export class EditorComponent implements OnInit, OnDestroy {
       }
     }
 
-    // Immediately clear canvas state so old elements do not bleed into the incoming project
+    // Limpiar el lienzo de inmediato para que lo anterior no se cuele en el proyecto que se abre
     (this.diagramService as any).nodesSubject.next([]);
     (this.diagramService as any).connectorsSubject.next([]);
 
@@ -649,7 +649,7 @@ export class EditorComponent implements OnInit, OnDestroy {
 
   async onCreateProject(data: { name: string; description: string; fileType?: string }): Promise<void> {
     const defaultName = data.name || 'actores_casodeUso';
-    // Clear canvas for brand new project
+    // Limpiar el lienzo para un proyecto nuevo
     (this.diagramService as any).nodesSubject.next([]);
     (this.diagramService as any).connectorsSubject.next([]);
 
@@ -905,7 +905,7 @@ export class EditorComponent implements OnInit, OnDestroy {
 
 
   onAIDiagramUpdated(): void {
-    // Canvas nodes and connectors are reactively updated by AIAgentService and DiagramService
+    // Los nodos y conectores del lienzo se actualizan desde AIAgentService y DiagramService
   }
 
   onSaveProject(): void {
@@ -978,7 +978,7 @@ export class EditorComponent implements OnInit, OnDestroy {
     const imported = this.eaImporterService.parseXMI(fileName, xmlContent);
     const projName = imported.projectName || fileName.replace(/\.(eap|xmi|xml|eapx)$/i, '');
 
-    // Deduplicate project list in UI dropdown
+    // Quitar duplicados de la lista de proyectos del menú
     const seenNames = new Set<string>();
     this.projects = this.projects.filter(p => {
       const lower = p.name.toLowerCase();
@@ -988,7 +988,7 @@ export class EditorComponent implements OnInit, OnDestroy {
     });
     this.saveProjectsCache();
 
-    // Check if a project with this exact name already exists in user's projects list
+    // Comprobar si el usuario ya tiene un proyecto con este nombre exacto
     const existing = this.projects.find(p => p.name.toLowerCase() === projName.toLowerCase());
 
     const handleImportNodes = async (proj: Project) => {
@@ -1009,7 +1009,7 @@ export class EditorComponent implements OnInit, OnDestroy {
         (this.diagramService as any).connectorsSubject.next(connectorsToImport);
         this.diagramService.saveDiagramLocalSnapshot(proj.id, nodesToImport, connectorsToImport);
 
-        // Auto-save imported nodes and connectors to PostgreSQL with UUID mapping
+        // Guardar en PostgreSQL los nodos y conectores importados, mapeando los UUID
         this.diagramService.saveCurrentDiagram().subscribe({
           next: () => console.log('Diagrama de archivo importado guardado exitosamente.'),
           error: (err: any) => console.error('Error al guardar diagrama importado:', err)

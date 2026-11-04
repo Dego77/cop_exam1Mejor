@@ -63,7 +63,7 @@ export class WebSocketService {
   }
 
 
-  // mode 'view' (mobile "Modo Ver"): read-only membership, verified on the server with the JWT
+  // modo 'view' ("Modo Ver" móvil): pertenencia de solo lectura, verificada en el servidor con el JWT
   joinProject(projectId: string, user: any, mode: 'edit' | 'view' = 'edit', token?: string): void {
     this.activeProjectRoom = projectId;
     this.activeUser = user;

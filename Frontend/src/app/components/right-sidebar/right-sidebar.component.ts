@@ -16,7 +16,7 @@ import { AuthService } from '../../core/services/auth.service';
   imports: [CommonModule, FormsModule],
   template: `
     <aside class="right-sidebar" id="right-sidebar-ai">
-      <!-- Vertical Resizer Handle Bar (ew-resize) -->
+      <!-- Barra para cambiar el ancho (arrastre horizontal) -->
       <div 
         class="sidebar-resizer" 
         [class.active]="isResizing"
@@ -24,7 +24,7 @@ import { AuthService } from '../../core/services/auth.service';
         title="Arrastra para cambiar el ancho del panel"
       ></div>
 
-      <!-- Main Tab Switcher -->
+      <!-- Cambio de pestaña principal -->
       <div class="tab-group">
         <button 
           class="tab-btn" 
@@ -43,9 +43,9 @@ import { AuthService } from '../../core/services/auth.service';
       </div>
 
 
-      <!-- TAB 1: AI AGENT MULTIMODAL -->
+      <!-- PESTAÑA 1: AGENTE DE IA MULTIMODAL -->
       <div class="tab-content" *ngIf="activeTab === 'AI'">
-        <!-- Sub-mode Selector -->
+        <!-- Selector de submodo -->
         <div class="submode-selector">
           <button 
             class="submode-btn" 
@@ -70,7 +70,7 @@ import { AuthService } from '../../core/services/auth.service';
           </button>
         </div>
 
-        <!-- CHAT SUB-MODE -->
+        <!-- SUBMODO CHAT -->
         <div class="chat-container" *ngIf="aiMode === 'CHAT'">
           <div class="chat-messages" #chatScroll>
             <div class="chat-welcome" *ngIf="visibleChat.length === 0 && !isPrivateChat">
@@ -123,7 +123,7 @@ import { AuthService } from '../../core/services/auth.service';
             </div>
           </div>
 
-          <!-- AI Model / Agent Selector Dropdown (Estilo Imagen 3) -->
+          <!-- Menú del modelo o agente de IA (estilo imagen 3) -->
           <div class="agent-selector-wrapper">
             <button class="agent-selector-btn" (click)="toggleAgentMenu($event)" title="Seleccionar Agente de IA / Modelo">
               <span class="plus-icon">+</span>
@@ -131,7 +131,7 @@ import { AuthService } from '../../core/services/auth.service';
               <span class="chevron">▾</span>
             </button>
 
-            <!-- Floating Agent Dropdown Menu -->
+            <!-- Menú flotante del agente -->
             <div class="agent-dropdown-menu" *ngIf="showAgentMenu" (click)="$event.stopPropagation()">
               <div class="agent-dropdown-header">SELECCIONAR AGENTE IA</div>
               <div 
@@ -149,7 +149,7 @@ import { AuthService } from '../../core/services/auth.service';
             </div>
           </div>
 
-          <!-- Prompt Input -->
+          <!-- Caja para escribir el pedido -->
           <div class="chat-input-row">
             <input 
               type="text" 
@@ -165,7 +165,7 @@ import { AuthService } from '../../core/services/auth.service';
 
           <div class="chat-notice" *ngIf="chatNotice">{{ chatNotice }}</div>
 
-          <!-- New Chat options (only in collaborative projects) -->
+          <!-- Opciones de nuevo chat (solo en proyectos colaborativos) -->
           <div class="chat-actions-row" *ngIf="showNewChatOptions">
             <button class="btn btn-primary" (click)="resetChat('me')" [disabled]="isResettingChat"
               title="Empezar un chat nuevo solo para ti; los demás conservan su historial">
@@ -189,7 +189,7 @@ import { AuthService } from '../../core/services/auth.service';
           </div>
         </div>
 
-        <!-- VOICE SUB-MODE -->
+        <!-- SUBMODO VOZ -->
         <div class="voice-container" *ngIf="aiMode === 'VOICE'">
           <div class="voice-card glass-panel">
             <div class="voice-wave" [class.recording]="isRecording">
@@ -213,7 +213,7 @@ import { AuthService } from '../../core/services/auth.service';
           </div>
         </div>
 
-        <!-- PHOTO SUB-MODE -->
+        <!-- SUBMODO FOTO -->
         <div class="photo-container" *ngIf="aiMode === 'PHOTO'">
           <div 
             class="photo-dropzone glass-panel"
@@ -274,7 +274,7 @@ import { AuthService } from '../../core/services/auth.service';
 
       </div>
 
-      <!-- TAB 2: CODE & SYNC (Visor de JSON Canónico) -->
+      <!-- PESTAÑA 2: CÓDIGO Y SINCRONIZACIÓN (visor de JSON canónico) -->
       <div class="tab-content" *ngIf="activeTab === 'CODE'">
         <div class="code-viewer-card glass-panel">
           <div class="code-viewer-header">
@@ -305,7 +305,7 @@ import { AuthService } from '../../core/services/auth.service';
       </div>
 
 
-      <!-- Bottom Logout Button Section -->
+      <!-- Sección inferior del botón de salir -->
       <div class="sidebar-footer">
         <button class="btn logout-btn" (click)="logout()">
           <span>Cerrar Sesión</span>
@@ -1011,7 +1011,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   textPrompt = '';
   isProcessing = false;
   isDeciding = false;
-  // Collaborators whose AI request is still being processed (shared group chat)
+  // Colaboradores cuyo pedido a la IA todavía se está procesando (chat grupal)
   peersWaitingAI: { userId: number; fullName: string }[] = [];
   private chatSocketSub?: Subscription;
   @ViewChild('chatScroll') chatScroll?: ElementRef<HTMLDivElement>;
@@ -1113,7 +1113,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   ) { }
 
   ngOnChanges(changes: SimpleChanges): void {
-    // projectId arrives asynchronously from the editor - (re)load the shared chat whenever it changes
+    // El projectId llega después, desde el editor. Se recarga el chat compartido cada vez que cambia
     if (changes['projectId'] && !changes['projectId'].firstChange && this.projectId) {
       this.chatHistory = [];
       this.peersWaitingAI = [];
@@ -1130,8 +1130,8 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
       this.loadHistory();
     }
 
-    // Shared AI chat: messages and "AI is answering X" indicators from other collaborators.
-    // Own messages are already rendered optimistically by sendTextPrompt/voice/photo.
+    // Chat de IA compartido: mensajes y el aviso "la IA está respondiendo a X" de los demás.
+    // Los mensajes propios ya se pintan al enviarlos en sendTextPrompt, voz o foto.
     this.chatSocketSub = this.wsService.aiChatMessage$.subscribe((raw) => {
       if (!raw || raw.projectId !== this.projectId) return;
       const msg = this.aiService.normalizeChatMessage(raw);
@@ -1151,7 +1151,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
       if (evt.thinking) this.peersWaitingAI.push({ userId: evt.userId, fullName: evt.fullName });
       this.scrollChatToBottom();
     }));
-    // "New Chat → Para Todos" from any member wipes the group chat for everyone
+    // "Nuevo chat → Para todos" de cualquier miembro borra el chat grupal para todos
     this.chatSocketSub.add(this.wsService.aiChatCleared$.subscribe((evt) => {
       if (!evt || evt.projectId !== this.projectId) return;
       this.chatHistory = [];
@@ -1183,7 +1183,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     });
   }
 
-  // Messages without an author were pushed locally by this user; otherwise compare with the logged-in user
+  // Un mensaje sin autor lo agregó este usuario en local; si tiene autor, se compara con quien inició sesión
   isOwnMessage(msg: AIMessage): boolean {
     const authorId = msg.user?.id ?? msg.userId;
     if (authorId === undefined || authorId === null) return true;
@@ -1194,7 +1194,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     return (msg.user?.fullName || '?').trim().charAt(0).toUpperCase();
   }
 
-  // Stable per-user color so each collaborator is easy to tell apart, like a group chat
+  // Color fijo por usuario para distinguir a cada colaborador, como en un chat de grupo
   private priorHistory(isPrivate: boolean, target: AIMessage[]): any[] | undefined {
     if (!isPrivate) return undefined;
     const name = this.auth.currentUser?.fullName || 'Usuario';
@@ -1310,7 +1310,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   sendTextPrompt(): void {
     if (!this.textPrompt.trim()) return;
     const prompt = this.textPrompt;
-    // Fixed at send time so a late AI reply stays in the chat it was asked from
+    // Se fija al enviar, para que una respuesta tardía de la IA quede en el chat donde se preguntó
     const isPrivate = this.isPrivateChat;
     const target = this.activeChatTarget();
     target.push({ sender: 'USER', mode: 'CHAT', content: prompt, timestamp: new Date() });
@@ -1348,8 +1348,8 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     }
   }
 
-  // Toggles a temporary private chat: starts empty every time, is never stored nor shared,
-  // and turning it off shows the group chat again (kept up to date in the background)
+  // Abre un chat privado temporal: empieza vacío, no se guarda ni se comparte,
+  // y al cerrarlo vuelve el chat grupal (que siguió actualizándose detrás)
   onPrivateChat(): void {
     this.isPrivateChat = !this.isPrivateChat;
     this.privateChatHistory = [];
@@ -1364,8 +1364,8 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     return this.isPrivateChat ? this.privateChatHistory : this.chatHistory;
   }
 
-  // New Chat: in the private chat it just empties it; alone in the project it wipes the history;
-  // in a collaborative project it asks "Para mí" / "Para Todos" (owner and collaborators alike)
+  // Nuevo chat: en el privado solo lo vacía; si estás solo en el proyecto borra el historial;
+  // si hay colaboradores pregunta "Para mí" / "Para todos" (dueño y colaboradores por igual)
   onNewChat(): void {
     if (this.isPrivateChat) {
       this.privateChatHistory = [];

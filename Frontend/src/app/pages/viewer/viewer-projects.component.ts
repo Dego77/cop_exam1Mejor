@@ -4,7 +4,7 @@ import { Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { ProjectService, Project } from '../../core/services/project.service';
 
-// "Modo Ver" (mobile app): list of projects the user owns or collaborates on, to open read-only
+// "Modo Ver" (app móvil): lista de proyectos que el usuario posee o donde colabora, para abrirlos en solo lectura
 @Component({
   selector: 'app-viewer-projects',
   standalone: true,
