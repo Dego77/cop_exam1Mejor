@@ -2,7 +2,7 @@ export class SupportAIAgentService {
   private static async getAIInstance(): Promise<any> {
     const apiKey = process.env.GEMINI_API_KEY || '';
     const { GoogleGenAI } = await import('@google/genai');
-    return new GoogleGenAI({ apiKey });
+    return new GoogleGenAI({ vertexai: true, apiKey });
   }
 
   // Support Agent AI Prompt Processor

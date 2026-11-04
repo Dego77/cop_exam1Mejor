@@ -40,7 +40,9 @@ export class AIAgentService {
   private static async getAIInstance(): Promise<any> {
     const apiKey = process.env.GEMINI_API_KEY || '';
     const { GoogleGenAI } = await import('@google/genai');
-    return new GoogleGenAI({ apiKey });
+    // vertexai: true manda la llamada a Agent Platform (el proyecto Diagramador),
+    // que es lo que descuenta el crédito de Google Cloud. La clave es la misma de .env.
+    return new GoogleGenAI({ vertexai: true, apiKey });
   }
 
   // System Prompt instructing Gemini how to act as ClassForge Software Architect AI
