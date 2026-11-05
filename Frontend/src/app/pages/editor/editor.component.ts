@@ -266,6 +266,29 @@ export class EditorComponent implements OnInit, OnDestroy {
     return `classforge_projects_cache_${uId}`;
   }
 
+  private getLastProjectKey(): string {
+    const uId = this.auth.currentUser?.id || this.auth.currentUser?.email || 'anonymous';
+    return `classforge_last_project_${uId}`;
+  }
+
+  // sessionStorage conserva el proyecto de cada pestaña; localStorage, el último usado al reabrir el navegador
+  private rememberProject(projectId: string): void {
+    try {
+      const key = this.getLastProjectKey();
+      sessionStorage.setItem(key, projectId);
+      localStorage.setItem(key, projectId);
+    } catch (e) { }
+  }
+
+  private pickInitialProject(list: Project[]): Project {
+    let lastProjectId: string | null = null;
+    try {
+      const key = this.getLastProjectKey();
+      lastProjectId = sessionStorage.getItem(key) || localStorage.getItem(key);
+    } catch (e) { }
+    return list.find(p => p.id === lastProjectId) || list[0];
+  }
+
   loadProjects(): void {
     const cacheKey = this.getUserCacheKey();
     const cachedStr = localStorage.getItem(cacheKey);
@@ -310,7 +333,7 @@ export class EditorComponent implements OnInit, OnDestroy {
           if (currentStillExists) {
             this.currentProject = currentStillExists;
           } else {
-            this.onSelectProject(deduplicated[0]);
+            this.onSelectProject(this.pickInitialProject(deduplicated));
           }
         } else {
           // Estado limpio para usuarios nuevos, sin crear proyectos de demostración
@@ -323,7 +346,7 @@ export class EditorComponent implements OnInit, OnDestroy {
       error: () => {
         if (localCachedProjects.length > 0) {
           this.projects = localCachedProjects;
-          this.onSelectProject(localCachedProjects[0]);
+          this.onSelectProject(this.pickInitialProject(localCachedProjects));
         } else {
           this.projects = [];
           this.currentProject = null;
@@ -611,6 +634,7 @@ export class EditorComponent implements OnInit, OnDestroy {
 
     this.remoteCursorsMap.clear();
     this.currentProject = p;
+    this.rememberProject(p.id);
     this.updateOnlineCollaboratorsList();
 
     this.projectService.getById(p.id).subscribe({
@@ -1040,6 +1064,7 @@ export class EditorComponent implements OnInit, OnDestroy {
           this.projects.push(fallbackProj);
           this.saveProjectsCache();
           this.currentProject = fallbackProj;
+          this.rememberProject(fallbackProj.id);
           this.diagramService.clearLocalSnapshot(fallbackProj.id);
           (this.diagramService as any).nodesSubject.next(imported.nodes || []);
           (this.diagramService as any).connectorsSubject.next(imported.connectors || []);

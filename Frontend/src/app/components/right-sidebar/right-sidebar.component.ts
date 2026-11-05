@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges, ViewChild, ElementRef } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges, ViewChild, ElementRef, NgZone } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -103,7 +103,7 @@ import { AuthService } from '../../core/services/auth.service';
               <div class="msg-text">{{ msg.content }}</div>
               <div class="proposal" *ngFor="let proposal of msg.proposals">
                 <div class="proposal-label">{{ proposal.label }}</div>
-                <div class="proposal-actions" *ngIf="!proposal.status || proposal.status === 'pending'">
+                <div class="proposal-actions" *ngIf="(!proposal.status || proposal.status === 'pending') && isOwnMessage(msg)">
                   <button class="btn btn-primary btn-sm" (click)="decideProposal(msg, proposal, 'apply')" [disabled]="isDeciding">Permitir</button>
                   <button class="btn btn-ghost btn-sm" (click)="decideProposal(msg, proposal, 'reject')" [disabled]="isDeciding">No permitir</button>
                 </div>
@@ -192,24 +192,36 @@ import { AuthService } from '../../core/services/auth.service';
         <!-- SUBMODO VOZ -->
         <div class="voice-container" *ngIf="aiMode === 'VOICE'">
           <div class="voice-card glass-panel">
-            <div class="voice-wave" [class.recording]="isRecording">
+            <div class="voice-wave" [class.recording]="isRecording && !isPaused">
               <div class="wave-bar"></div>
               <div class="wave-bar"></div>
               <div class="wave-bar"></div>
             </div>
 
             <p class="voice-status">
-              {{ isRecording ? 'Escuchando tu descripción...' : 'Haz clic en el micrófono para grabar tus instrucciones de voz' }}
+              {{ !isRecording ? 'Haz clic en el micrófono para grabar tus instrucciones de voz' : isPaused ? 'Grabación en pausa' : 'Escuchando tu descripción...' }}
             </p>
 
-            <button 
-              class="btn btn-rec" 
-              [class.recording]="isRecording"
-              (click)="toggleVoiceRecording()"
-            >
-              <span *ngIf="!isRecording">🎙️ Iniciar Grabación</span>
-              <span *ngIf="isRecording">⏹️ Detener y Procesar</span>
+            <button class="btn btn-rec" *ngIf="!isRecording" (click)="startRecording()">
+              🎙️ Iniciar Grabación
             </button>
+
+            <div class="voice-actions" *ngIf="isRecording">
+              <button class="btn btn-rec" (click)="togglePause()">
+                {{ isPaused ? '▶️ Seguir' : '⏸️ Pausar' }}
+              </button>
+              <button class="btn btn-rec recording" (click)="stopRecording()">⏹️ Detener</button>
+            </div>
+          </div>
+
+          <div class="voice-transcript glass-panel" *ngIf="isRecording">
+            <span class="voice-transcript-title">Lo que vas diciendo</span>
+            <div class="voice-transcript-text" #voiceTranscript>
+              {{ liveTranscript || 'Empieza a hablar...' }}
+            </div>
+            <span class="voice-transcript-notice" *ngIf="!speechSupported">
+              Tu navegador no muestra el texto en vivo, pero el audio se está grabando.
+            </span>
           </div>
         </div>
 
@@ -648,6 +660,37 @@ import { AuthService } from '../../core/services/auth.service';
       background: var(--red);
       color: #fff;
     }
+    .voice-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+    }
+    .voice-transcript {
+      margin-top: 12px;
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .voice-transcript-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+    .voice-transcript-text {
+      max-height: 45vh;
+      overflow-y: auto;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-primary);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .voice-transcript-notice {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
     .photo-dropzone {
       padding: 32px 16px;
       text-align: center;
@@ -996,6 +1039,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     this.diagramChangeSub?.unsubscribe();
     this.chatSocketSub?.unsubscribe();
     clearTimeout(this.chatNoticeTimer);
+    this.cancelRecording();
   }
 
   activeTab: 'AI' | 'CODE' = 'AI';
@@ -1017,8 +1061,11 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   @ViewChild('chatScroll') chatScroll?: ElementRef<HTMLDivElement>;
 
   isRecording = false;
+  isPaused = false;
   mediaRecorder: any = null;
   audioChunks: any[] = [];
+  recordingStream: MediaStream | null = null;
+  @ViewChild('voiceTranscript') voiceTranscript?: ElementRef<HTMLDivElement>;
 
   @ViewChild('fileInput') fileInput?: ElementRef<HTMLInputElement>;
 
@@ -1109,7 +1156,8 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     private diagramService: DiagramService,
     private wsService: WebSocketService,
     private auth: AuthService,
-    private router: Router
+    private router: Router,
+    private zone: NgZone
   ) { }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -1412,40 +1460,23 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   speechRecognition: any = null;
+  speechSupported = true;
   recordedTranscript = '';
+  interimTranscript = '';
 
-  toggleVoiceRecording(): void {
-    if (this.isRecording) {
-      this.stopRecording();
-    } else {
-      this.startRecording();
-    }
+  get liveTranscript(): string {
+    return `${this.recordedTranscript} ${this.interimTranscript}`.trim();
   }
 
   async startRecording(): Promise<void> {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.recordingStream = stream;
       this.mediaRecorder = new MediaRecorder(stream);
       this.audioChunks = [];
       this.recordedTranscript = '';
-
-      const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRec) {
-        this.speechRecognition = new SpeechRec();
-        this.speechRecognition.lang = 'es-ES';
-        this.speechRecognition.continuous = true;
-        this.speechRecognition.interimResults = true;
-
-        this.speechRecognition.onresult = (event: any) => {
-          let text = '';
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            text += event.results[i][0].transcript;
-          }
-          this.recordedTranscript = text;
-        };
-
-        try { this.speechRecognition.start(); } catch { }
-      }
+      this.interimTranscript = '';
+      this.isPaused = false;
 
       this.mediaRecorder.ondataavailable = (event: any) => {
         this.audioChunks.push(event.data);
@@ -1453,42 +1484,126 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
 
       this.mediaRecorder.onstop = () => {
         const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
-        this.uploadVoice(audioBlob, this.recordedTranscript);
+        const transcript = this.liveTranscript;
+        this.recordedTranscript = '';
+        this.interimTranscript = '';
+        this.releaseMicrophone();
+        this.uploadVoice(audioBlob, transcript);
       };
 
       this.mediaRecorder.start();
       this.isRecording = true;
+
+      this.speechSupported = !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+      this.startSpeechRecognition();
     } catch (err) {
+      this.releaseMicrophone();
       alert('No se pudo acceder al micrófono para grabar nota de voz.');
     }
   }
 
+  // El navegador corta el reconocimiento tras un silencio: onend lo reanuda mientras se siga grabando
+  private startSpeechRecognition(): void {
+    if (!this.speechSupported) return;
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const recognition = new SpeechRec();
+    recognition.lang = 'es-ES';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    recognition.onresult = (event: any) => {
+      if (recognition !== this.speechRecognition || !this.isRecording) return;
+      this.zone.run(() => {
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const text = event.results[i][0].transcript.trim();
+          if (event.results[i].isFinal) {
+            this.recordedTranscript = `${this.recordedTranscript} ${text}`.trim();
+          } else {
+            interim = `${interim} ${text}`.trim();
+          }
+        }
+        this.interimTranscript = interim;
+        this.scrollVoiceTranscript();
+      });
+    };
+
+    recognition.onerror = (event: any) => {
+      if (['not-allowed', 'service-not-allowed', 'network'].includes(event.error)) {
+        this.zone.run(() => this.speechSupported = false);
+      }
+    };
+
+    recognition.onend = () => {
+      if (recognition !== this.speechRecognition) return;
+      this.zone.run(() => {
+        this.speechRecognition = null;
+        this.recordedTranscript = this.liveTranscript;
+        this.interimTranscript = '';
+        if (this.isRecording && !this.isPaused) this.startSpeechRecognition();
+      });
+    };
+
+    this.speechRecognition = recognition;
+    try { recognition.start(); } catch { }
+  }
+
+  private scrollVoiceTranscript(): void {
+    setTimeout(() => {
+      const el = this.voiceTranscript?.nativeElement;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  }
+
+  togglePause(): void {
+    if (!this.mediaRecorder || !this.isRecording) return;
+    if (this.isPaused) {
+      this.mediaRecorder.resume();
+      this.isPaused = false;
+      // Si el reconocimiento anterior todavía se está cerrando, su onend lo vuelve a iniciar
+      if (!this.speechRecognition) this.startSpeechRecognition();
+    } else {
+      this.mediaRecorder.pause();
+      this.isPaused = true;
+      try { this.speechRecognition?.stop(); } catch { }
+    }
+  }
+
   stopRecording(): void {
-    if (this.speechRecognition) {
-      try { this.speechRecognition.stop(); } catch { }
-    }
-    if (this.mediaRecorder && this.isRecording) {
-      this.mediaRecorder.stop();
-      this.isRecording = false;
-    }
+    if (!this.mediaRecorder || !this.isRecording) return;
+    this.isRecording = false;
+    this.isPaused = false;
+    try { this.speechRecognition?.stop(); } catch { }
+    this.mediaRecorder.stop();
+  }
+
+  // Al salir del editor en plena grabación: se descarta el audio, sin enviarlo a la IA
+  private cancelRecording(): void {
+    if (!this.isRecording) return;
+    this.mediaRecorder.onstop = null;
+    this.stopRecording();
+    this.releaseMicrophone();
+  }
+
+  private releaseMicrophone(): void {
+    this.recordingStream?.getTracks().forEach(track => track.stop());
+    this.recordingStream = null;
   }
 
   uploadVoice(blob: Blob, transcriptText: string = ''): void {
     this.isProcessing = true;
     const isPrivate = this.isPrivateChat;
     const target = this.activeChatTarget();
-    if (transcriptText.trim()) {
-      target.push({
-        sender: 'USER',
-        mode: 'VOICE',
-        content: `🎙️ "${transcriptText}"`,
-        timestamp: new Date()
-      });
-    }
+    target.push({
+      sender: 'USER',
+      mode: 'VOICE',
+      content: transcriptText.trim() ? `🎙️ "${transcriptText}"` : 'Nota de voz enviada',
+      timestamp: new Date()
+    });
 
     if (this.projectId) {
       const history = this.priorHistory(isPrivate, target);
-      this.aiService.sendVoice(this.projectId, blob, this.selectedAgent.id, undefined, isPrivate, history).subscribe({
+      this.aiService.sendVoice(this.projectId, blob, this.selectedAgent.id, undefined, isPrivate, history, transcriptText).subscribe({
         next: (res) => {
           this.isProcessing = false;
           const reply = this.serverAiMessage(res, 'VOICE');

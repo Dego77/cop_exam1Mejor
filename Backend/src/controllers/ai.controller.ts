@@ -149,6 +149,70 @@ function buildStoredProposals(ai: any, askerName: string, replaceDiagram = false
   }];
 }
 
+const RELATION_NAMES: Record<string, string> = {
+  Association: 'asociación',
+  AssociationClass: 'asociación',
+  Aggregation: 'agregación',
+  Composition: 'composición',
+  Inheritance: 'herencia',
+  Implementation: 'implementación',
+  Dependency: 'dependencia',
+};
+
+function joinList(items: string[]): string {
+  if (items.length < 2) return items[0] || '';
+  return `${items.slice(0, -1).join(', ')} y ${items[items.length - 1]}`;
+}
+
+// Pregunta antes de borrar una clase. La escribe el servidor con las relaciones reales del diagrama
+// porque Gemini a veces responde que ya la eliminó, aunque nada cambia hasta pulsar Permitir.
+function buildDeletionConfirmation(diagram: any, proposals: any[], askerName: string, message: string): string {
+  const deleting = proposals.filter((item) => item.payload?.classesToDelete?.length);
+  const nodes: any[] = diagram?.nodes || [];
+  const connectors: any[] = diagram?.connectors || [];
+  const names = deleting.flatMap((item) => item.payload.classesToDelete as string[]);
+  const targets = nodes.filter((n) => names.some((name) => name?.toLowerCase() === n.name.toLowerCase()));
+  if (!targets.length) return message;
+
+  const nodesById = new Map<string, any>(nodes.map((n) => [n.id, n]));
+  let hasRelations = false;
+  const details = targets.map((node) => {
+    const relations = connectors
+      .filter((c) => c.sourceNodeId === node.id || c.targetNodeId === node.id)
+      .map((c) => {
+        const otherId = c.sourceNodeId === node.id ? c.targetNodeId : c.sourceNodeId;
+        const relation = `una relación de ${RELATION_NAMES[c.type] || 'asociación'}`;
+        if (otherId === node.id) return `${relation} consigo misma`;
+        const other = nodesById.get(otherId);
+        return other ? `${relation} con la clase ${other.name}` : '';
+      })
+      .filter(Boolean);
+    const associationRoles = connectors
+      .filter((c) => c.associationClassNodeId === node.id)
+      .map((c) => `${nodesById.get(c.sourceNodeId)?.name} y ${nodesById.get(c.targetNodeId)?.name}`);
+
+    const sentences: string[] = [];
+    if (associationRoles.length) sentences.push(`La clase ${node.name} es la clase de asociación entre ${joinList(associationRoles)}, y esa relación se conservará.`);
+    if (relations.length) {
+      hasRelations = true;
+      sentences.push(`La clase ${node.name} tiene ${joinList(relations)}.`);
+    }
+    if (!sentences.length) sentences.push(`La clase ${node.name} no tiene relaciones con otras clases.`);
+    return sentences.join(' ');
+  });
+
+  const hasOtherChanges = deleting.some((item) =>
+    MUTATION_KEYS.some((key) => key !== 'classesToDelete' && item.payload[key]?.length));
+  const parts = [
+    `¿estás seguro de eliminar ${joinList(targets.map((n) => `la clase ${n.name}`))}?`,
+    ...details,
+    hasRelations ? `Si ${targets.length > 1 ? 'las' : 'la'} eliminas, las relaciones de ${targets.length > 1 ? 'esas clases' : 'esa clase'} también se borrarán.` : '',
+    hasOtherChanges ? 'Si permites, también se aplicarán los demás cambios pedidos.' : '',
+    'Usa Permitir o No permitir para decidir.',
+  ];
+  return addressMessage(parts.filter(Boolean).join(' '), askerName);
+}
+
 async function applyMutationPayload(diagramId: string, payload: any) {
   const existingNodes = await prisma.node.findMany({ where: { diagramId } });
   const mutationResult = await applyClassMutations(diagramId, existingNodes, payload || {});
@@ -617,6 +681,7 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
 
     aiResponse.message = addressMessage(aiResponse.message, askerName);
     const proposals = aiResponse.error ? [] : buildStoredProposals(aiResponse, askerName);
+    aiResponse.message = buildDeletionConfirmation(diagram, proposals, askerName, aiResponse.message);
 
     let aiMessage: ChatMessageRecord | null = null;
     if (!isPrivate) {
@@ -722,7 +787,10 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
 
     let userMessage: ChatMessageRecord | null = null;
     if (userId && !isPrivate) {
-      userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'VOICE', content: 'Nota de voz enviada', mediaUrl: file.path });
+      // El texto lo reconoce el navegador; sin él (por ejemplo en Firefox) queda el mensaje genérico
+      const transcript = String(req.body?.transcript || '').trim().slice(0, 5000);
+      const content = transcript ? `🎙️ "${transcript}"` : 'Nota de voz enviada';
+      userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'VOICE', content, mediaUrl: file.path });
       emitAIThinking(req, projectId, userMessage.user, true);
     }
 
@@ -739,6 +807,7 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
 
     aiResponse.message = addressMessage(aiResponse.message, asker.askerName);
     const proposals = aiResponse.error ? [] : buildStoredProposals(aiResponse, asker.askerName);
+    aiResponse.message = buildDeletionConfirmation(diagram, proposals, asker.askerName, aiResponse.message);
 
     let aiMessage: ChatMessageRecord | null = null;
     if (userId && !isPrivate) {
@@ -955,6 +1024,10 @@ export const decideAIProposal = async (req: AuthRequest, res: Response): Promise
       });
       if (!message) {
         res.status(404).json({ error: 'No se encontró la respuesta de la IA.' });
+        return;
+      }
+      if (message.userId !== userId) {
+        res.status(403).json({ error: 'Solo quien hizo el pedido a la IA puede decidirlo.' });
         return;
       }
       const list = Array.isArray(message.proposals) ? message.proposals.map((item: any) => ({ ...item })) : [];

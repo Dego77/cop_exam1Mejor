@@ -72,13 +72,14 @@ export class AIAgentService {
     });
   }
 
-  sendVoice(projectId: string, blob: Blob, model?: string, diagramContext?: any, isPrivate = false, history?: any[]): Observable<any> {
+  sendVoice(projectId: string, blob: Blob, model?: string, diagramContext?: any, isPrivate = false, history?: any[], transcript?: string): Observable<any> {
     const formData = new FormData();
     formData.append('voice', blob, 'voice-note.webm');
     formData.append('projectId', projectId);
     if (model) formData.append('model', model);
     if (isPrivate) formData.append('isPrivate', 'true');
     if (history) formData.append('history', JSON.stringify(history));
+    if (transcript) formData.append('transcript', transcript);
     if (diagramContext) formData.append('diagramContext', JSON.stringify(diagramContext));
     return this.http.post(`${this.apiUrl}/voice`, formData, {
       headers: new HttpHeaders({ Authorization: `Bearer ${this.auth.token}` })

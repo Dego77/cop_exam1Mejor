@@ -254,6 +254,7 @@ REGLAS CRÍTICAS:
     - Cierra "message" preguntando qué opción se puede dibujar, solo cuando hay algo nuevo que dibujar. Nunca digas que el diagrama ya cambió.
     - LARGO: escribe como un chat de equipo, no como un informe. Como máximo 4 frases cortas. Sin saludos, sin "quedo a tu disposición" y sin repetir todo el historial. Una frase por alternativa y una para tu sugerencia y su razón. Si solo rechaza ("no gracias", "no haré cambios"), responde en 2 frases: confirma que no se dibuja nada y nombra la sugerencia que sigue disponible. No la expliques otra vez. Si solo dice "ok", "gracias" o "entendido", responde con su nombre y "listo." y nada más.
     - Cada opción dibujable es un ítem de "proposals" (id, label, askedBy, y solo las clases y conectores de esa opción).
+    - ELIMINAR UNA CLASE: devuelve una sola opción con esa clase en "classesToDelete", sin alternativas ni sugerencias. Si la clase no está en Current Canvas Diagram Context, dilo en "message" y no la incluyas en "classesToDelete".
     - FOTO DE PIZARRÓN: ignora la regla de alternativas. Copia solo lo dibujado. Igual empieza "message" con el nombre de la persona y no digas que el lienzo ya se reemplazó.
   `;
   }
