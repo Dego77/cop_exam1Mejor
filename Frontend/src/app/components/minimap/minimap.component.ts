@@ -19,7 +19,17 @@ import { CursorData } from '../../core/services/websocket.service';
       </div>
 
       <!-- Cuerpo del minimapa -->
-      <div *ngIf="!isCollapsed" class="minimap-body" #minimapBox (click)="onMinimapClick($event)">
+      <div
+        *ngIf="!isCollapsed"
+        class="minimap-body"
+        #minimapBox
+        [class.read-only]="readOnly"
+        (click)="onMinimapClick($event)"
+        (pointerdown)="onRadarPointerDown($event)"
+        (pointermove)="onRadarPointerMove($event)"
+        (pointerup)="isNavigating = false"
+        (pointercancel)="isNavigating = false"
+      >
         <svg class="minimap-svg" [attr.viewBox]="svgViewBox">
           <!-- Capa de conectores -->
           <g *ngFor="let conn of connectors">
@@ -144,6 +154,9 @@ import { CursorData } from '../../core/services/websocket.service';
       cursor: crosshair;
       background: radial-gradient(circle, rgba(15, 23, 42, 0.8) 0%, rgba(7, 9, 14, 0.95) 100%);
     }
+    .minimap-body.read-only {
+      touch-action: none;
+    }
 
     .minimap-svg {
       width: 100%;
@@ -162,10 +175,15 @@ export class MinimapComponent {
   @Input() connectors: UMLConnector[] = [];
   @Input() remoteCursors: CursorData[] = [];
   @Input() zoomLevel: number = 1;
+  // Modo Ver: la vista se mueve con panX/panY en lugar de con scroll
+  @Input() readOnly: boolean = false;
+  @Input() panX: number = 0;
+  @Input() panY: number = 0;
 
   @Output() navigateTo = new EventEmitter<{ x: number; y: number }>();
 
   public isCollapsed: boolean = false;
+  public isNavigating: boolean = false;
 
   get svgViewBox(): string {
     if (!this.nodes || this.nodes.length === 0) {
@@ -196,6 +214,15 @@ export class MinimapComponent {
     const currentScrollLeft = parentContainer ? parentContainer.scrollLeft : 0;
     const currentScrollTop = parentContainer ? parentContainer.scrollTop : 0;
 
+    if (this.readOnly) {
+      return {
+        x: -this.panX / this.zoomLevel,
+        y: -this.panY / this.zoomLevel,
+        w: vw / this.zoomLevel,
+        h: vh / this.zoomLevel
+      };
+    }
+
     return {
       x: currentScrollLeft / this.zoomLevel,
       y: currentScrollTop / this.zoomLevel,
@@ -218,7 +245,28 @@ export class MinimapComponent {
     };
   }
 
+  onRadarPointerDown(event: PointerEvent): void {
+    if (!this.readOnly) return;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    this.isNavigating = true;
+    this.navigateToPointer(event);
+  }
+
+  onRadarPointerMove(event: PointerEvent): void {
+    if (this.isNavigating) this.navigateToPointer(event);
+  }
+
+  // Convierte el punto tocado a coordenadas del diagrama, respetando las bandas que deja el SVG
+  private navigateToPointer(event: PointerEvent): void {
+    const svg = (event.currentTarget as HTMLElement).querySelector('svg');
+    const matrix = svg?.getScreenCTM();
+    if (!matrix) return;
+    const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+    this.navigateTo.emit({ x: point.x, y: point.y });
+  }
+
   onMinimapClick(event: MouseEvent): void {
+    if (this.readOnly) return;
     const parentContainer = document.querySelector('.canvas-container');
     if (!parentContainer) return;
 

@@ -70,6 +70,7 @@ import { Subscription } from 'rxjs';
           [activeConnectorType]="activeConnectorType"
           [remoteCursors]="remoteCursorsList"
           (nodeMoved)="onNodeMoved($event)"
+          (nodeDragging)="onNodeDragging($event)"
           (selectNode)="onSelectNode($event)"
           (addNodeFromDrop)="onAddNodeFromDrop($event)"
           (deleteNode)="onDeleteNode($event)"
@@ -126,6 +127,7 @@ export class EditorComponent implements OnInit, OnDestroy {
   onlineUsers: any[] = [];
   activeRoomUsers: any[] = [];
   remoteCursorsMap = new Map<string, CursorData>();
+  private lastDragEmit = 0;
   localSessionStartTime = new Date().toISOString();
 
   private userAvatarColors = ['#00d4ff', '#a855f7', '#ec4899', '#22c55e', '#f59e0b', '#3b82f6', '#10b981'];
@@ -232,6 +234,11 @@ export class EditorComponent implements OnInit, OnDestroy {
         if (!current.some(c => c.id === connector.id)) {
           (this.diagramService as any).connectorsSubject.next([...current, connector]);
         }
+      })
+    );
+    this.subs.add(
+      this.wsService.connectorUpdated$.subscribe(({ connectorId, changes }) => {
+        this.diagramService.updateLocalConnector(connectorId, changes);
       })
     );
     this.subs.add(
@@ -749,6 +756,14 @@ export class EditorComponent implements OnInit, OnDestroy {
       this.wsService.emitNodeDragged(this.currentProject.id, node.id, node.positionX, node.positionY);
       this.wsService.emitNodeUpdated(this.currentProject.id, node);
     }
+  }
+
+  // Muestra el arrastre en vivo a los demás, como máximo cada 50 ms. Se guarda al soltar, en onNodeMoved
+  onNodeDragging(node: UMLNode): void {
+    const now = Date.now();
+    if (!this.currentProject?.id || now - this.lastDragEmit < 50) return;
+    this.lastDragEmit = now;
+    this.wsService.emitNodeDragging(this.currentProject.id, node.id, node.positionX, node.positionY);
   }
 
   onAddElement(elementType: string): void {

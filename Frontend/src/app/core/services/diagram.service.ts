@@ -3,6 +3,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { BehaviorSubject, Observable } from 'rxjs';
 import { AuthService } from './auth.service';
+import { WebSocketService } from './websocket.service';
 
 export interface UMLNode {
   id: string;
@@ -63,7 +64,7 @@ export class DiagramService {
   selectedNode$ = this.selectedNodeSubject.asObservable();
   labels$ = this.labelsSubject.asObservable();
 
-  constructor(private http: HttpClient, private auth: AuthService) {}
+  constructor(private http: HttpClient, private auth: AuthService, private wsService: WebSocketService) {}
 
   private get headers(): HttpHeaders {
     return new HttpHeaders({ Authorization: `Bearer ${this.auth.token}` });
@@ -460,12 +461,18 @@ export class DiagramService {
     const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(connectorId);
     if (connectorId && isUUID) {
       this.http.put(`${this.apiUrl}/connectors/${connectorId}`, changes, { headers: this.headers }).subscribe();
+      if (this.currentProjectId) this.wsService.emitConnectorUpdated(this.currentProjectId, connectorId, changes);
     }
     const updatedConns = this.connectorsSubject.value.map(c => c.id === connectorId ? { ...c, ...changes } : c);
     this.connectorsSubject.next(updatedConns);
     if (this.currentProjectId) {
       this.saveDiagramLocalSnapshot(this.currentProjectId, this.nodesSubject.value, updatedConns);
     }
+  }
+
+  // Aplica el cambio de otro usuario; el servidor ya lo guardó
+  updateLocalConnector(connectorId: string, changes: Partial<UMLConnector>): void {
+    this.connectorsSubject.next(this.connectorsSubject.value.map(c => c.id === connectorId ? { ...c, ...changes } : c));
   }
 
   updateLocalNode(node: UMLNode): void {

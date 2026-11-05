@@ -9,6 +9,13 @@ export interface CursorData {
   cursor: { x: number; y: number };
 }
 
+export interface CanvasActivity {
+  by?: string;
+  action: 'moved' | 'updated' | 'created' | 'deleted' | 'connector-created' | 'connector-updated' | 'connector-deleted';
+  nodeId?: string;
+  node?: any;
+}
+
 @Injectable({ providedIn: 'root' })
 export class WebSocketService {
   private socket: Socket | null = null;
@@ -23,8 +30,11 @@ export class WebSocketService {
   nodeCreated$ = new Subject<any>();
   nodeDeleted$ = new Subject<string>();
   connectorCreated$ = new Subject<any>();
+  connectorUpdated$ = new Subject<{ connectorId: string; changes: any }>();
   connectorDeleted$ = new Subject<string>();
   diagramReloaded$ = new Subject<any>();
+  // Quién hizo cada cambio. Se publica antes que el cambio, para poder compararlo con el estado anterior
+  activity$ = new Subject<CanvasActivity>();
   aiChatMessage$ = new Subject<any>();
   aiChatThinking$ = new Subject<{ projectId: string; userId: number; fullName: string; thinking: boolean }>();
   joinDenied$ = new Subject<{ projectId: string; reason: string }>();
@@ -49,12 +59,34 @@ export class WebSocketService {
     this.socket.on('user-joined', (data: any) => this.userJoined$.next(data));
     this.socket.on('user-left', (socketId: string) => this.userLeft$.next(socketId));
     this.socket.on('cursor-moved', (data: CursorData) => this.cursorMoved$.next(data));
-    this.socket.on('node-dragged', (data: any) => this.nodeDragged$.next(data));
-    this.socket.on('node-updated', (data: any) => this.nodeUpdated$.next(data.node));
-    this.socket.on('node-created', (data: any) => this.nodeCreated$.next(data.node));
-    this.socket.on('node-deleted', (data: any) => this.nodeDeleted$.next(data.nodeId));
-    this.socket.on('connector-created', (data: any) => this.connectorCreated$.next(data.connector));
-    this.socket.on('connector-deleted', (data: any) => this.connectorDeleted$.next(data.connectorId));
+    this.socket.on('node-dragged', (data: any) => {
+      this.activity$.next({ by: data.by, action: 'moved', nodeId: data.nodeId });
+      this.nodeDragged$.next(data);
+    });
+    this.socket.on('node-updated', (data: any) => {
+      this.activity$.next({ by: data.by, action: 'updated', node: data.node });
+      this.nodeUpdated$.next(data.node);
+    });
+    this.socket.on('node-created', (data: any) => {
+      this.activity$.next({ by: data.by, action: 'created', node: data.node });
+      this.nodeCreated$.next(data.node);
+    });
+    this.socket.on('node-deleted', (data: any) => {
+      this.activity$.next({ by: data.by, action: 'deleted', nodeId: data.nodeId });
+      this.nodeDeleted$.next(data.nodeId);
+    });
+    this.socket.on('connector-created', (data: any) => {
+      this.activity$.next({ by: data.by, action: 'connector-created' });
+      this.connectorCreated$.next(data.connector);
+    });
+    this.socket.on('connector-updated', (data: any) => {
+      this.activity$.next({ by: data.by, action: 'connector-updated' });
+      this.connectorUpdated$.next(data);
+    });
+    this.socket.on('connector-deleted', (data: any) => {
+      this.activity$.next({ by: data.by, action: 'connector-deleted' });
+      this.connectorDeleted$.next(data.connectorId);
+    });
     this.socket.on('diagram-reloaded', (data: any) => this.diagramReloaded$.next(data));
     this.socket.on('ai-chat-message', (data: any) => this.aiChatMessage$.next(data));
     this.socket.on('ai-chat-thinking', (data: any) => this.aiChatThinking$.next(data));
@@ -80,6 +112,10 @@ export class WebSocketService {
     this.socket?.emit('node-dragged', { projectId, nodeId, positionX, positionY });
   }
 
+  emitNodeDragging(projectId: string, nodeId: string, positionX: number, positionY: number): void {
+    this.socket?.emit('node-dragging', { projectId, nodeId, positionX, positionY });
+  }
+
   emitNodeUpdated(projectId: string, node: any): void {
     this.socket?.emit('node-updated', { projectId, node });
   }
@@ -94,6 +130,10 @@ export class WebSocketService {
 
   emitConnectorCreated(projectId: string, connector: any): void {
     this.socket?.emit('connector-created', { projectId, connector });
+  }
+
+  emitConnectorUpdated(projectId: string, connectorId: string, changes: any): void {
+    this.socket?.emit('connector-updated', { projectId, connectorId, changes });
   }
 
   emitConnectorDeleted(projectId: string, connectorId: string): void {

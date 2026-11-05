@@ -6,7 +6,7 @@ import { CanvasComponent } from '../../components/canvas/canvas.component';
 import { AuthService } from '../../core/services/auth.service';
 import { ProjectService } from '../../core/services/project.service';
 import { DiagramService, UMLNode, UMLConnector, CanvasLabel } from '../../core/services/diagram.service';
-import { WebSocketService } from '../../core/services/websocket.service';
+import { WebSocketService, CursorData, CanvasActivity } from '../../core/services/websocket.service';
 import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service';
 
 // "Modo Ver" (app móvil): muestra el diagrama del proyecto y el chat grupal de la IA en tiempo real,
@@ -44,8 +44,10 @@ import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service'
           [nodes]="nodes"
           [connectors]="connectors"
           [labels]="labels"
+          [remoteCursors]="remoteCursors"
           [readOnly]="true"
         ></app-canvas>
+        <div class="viewer-activity" *ngIf="activityText">{{ activityText }}</div>
       </div>
 
       <!-- Chat grupal de la IA, solo lectura -->
@@ -153,6 +155,22 @@ import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service'
       flex: 1;
       display: flex;
       min-height: 0;
+      position: relative;
+    }
+    .viewer-activity {
+      position: absolute;
+      top: 8px;
+      left: 12px;
+      right: 12px;
+      z-index: 110;
+      padding: 6px 10px;
+      font-size: 12px;
+      text-align: center;
+      color: var(--text-primary);
+      background: var(--bg-panel);
+      border: 1px solid var(--border-active);
+      border-radius: var(--radius-md);
+      pointer-events: none;
     }
     .viewer-state {
       padding: 24px 16px;
@@ -236,6 +254,11 @@ export class ViewerComponent implements OnInit, OnDestroy {
   showChat = false;
   chatMessages: AIMessage[] = [];
 
+  private remoteCursorsMap = new Map<string, CursorData>();
+  private usersWaitingAI: { userId: number; fullName: string }[] = [];
+  private activityMessage = '';
+  private activityTimer?: ReturnType<typeof setTimeout>;
+
   private subs = new Subscription();
   private hasFitted = false;
 
@@ -251,6 +274,18 @@ export class ViewerComponent implements OnInit, OnDestroy {
 
   get onlineNames(): string {
     return this.onlineUsers.map(u => u.fullName + (u.viewOnly ? ' (viendo)' : '')).join(', ');
+  }
+
+  get remoteCursors(): CursorData[] {
+    return Array.from(this.remoteCursorsMap.values());
+  }
+
+  // El aviso de la IA pensando se mantiene hasta que termina; los demás duran 4 segundos
+  get activityText(): string {
+    if (this.usersWaitingAI.length > 0) {
+      return `🤖 La IA está respondiendo a ${this.usersWaitingAI.map(u => u.fullName).join(', ')}...`;
+    }
+    return this.activityMessage;
   }
 
   ngOnInit(): void {
@@ -277,6 +312,7 @@ export class ViewerComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    clearTimeout(this.activityTimer);
     this.subs.unsubscribe();
     this.wsService.disconnect();
     this.diagramService.clearCanvas();
@@ -289,17 +325,75 @@ export class ViewerComponent implements OnInit, OnDestroy {
   // Zoom para que el diagrama entero quepa en la pantalla del teléfono (el tamaño de los nodos es estimado)
   fitToScreen(): void {
     if (!this.canvas || this.nodes.length === 0) return;
-    let maxX = 0;
-    let maxY = 0;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
     for (const n of this.nodes) {
       const rows = (n.attributes?.length || 0) + (n.methods?.length || 0);
+      minX = Math.min(minX, n.positionX || 0);
+      minY = Math.min(minY, n.positionY || 0);
       maxX = Math.max(maxX, (n.positionX || 0) + (n.width || 240));
       maxY = Math.max(maxY, (n.positionY || 0) + (n.height || 80 + rows * 20));
     }
     const availableW = window.innerWidth - 16;
     const availableH = window.innerHeight - 52 - 48;
-    const zoom = Math.min(availableW / (maxX + 40), availableH / (maxY + 40), 1);
+    const diagramW = maxX - minX;
+    const diagramH = maxY - minY;
+    const zoom = Math.min(availableW / (diagramW + 40), availableH / (diagramH + 40), 1);
     this.canvas.zoomLevel = Math.max(0.2, Math.round(zoom * 100) / 100);
+    this.canvas.centerOn({ x: minX + diagramW / 2, y: minY + diagramH / 2 });
+  }
+
+  private showActivity(text: string): void {
+    this.activityMessage = text;
+    clearTimeout(this.activityTimer);
+    this.activityTimer = setTimeout(() => this.activityMessage = '', 4000);
+  }
+
+  // Quita los cursores de quienes salieron de la sala
+  private removeStaleCursors(users: any[]): void {
+    const activeSockets = new Set(users.map(u => u.socketId));
+    for (const socketId of Array.from(this.remoteCursorsMap.keys())) {
+      if (!activeSockets.has(socketId)) this.remoteCursorsMap.delete(socketId);
+    }
+  }
+
+  // Se llama antes de aplicar el cambio, así que this.nodes aún tiene el estado anterior
+  private describeActivity(activity: CanvasActivity): void {
+    const by = activity.by || 'Un usuario';
+    const nodeId = activity.nodeId || activity.node?.id;
+    const previous = this.nodes.find(n => n.id === nodeId);
+    const name = activity.node?.name || previous?.name || 'una clase';
+
+    switch (activity.action) {
+      case 'moved':
+        this.showActivity(`✏️ ${by} está moviendo ${name}`);
+        break;
+      case 'updated': {
+        // node-updated también llega al soltar una clase; solo cuenta si cambió su contenido
+        const content = (n: UMLNode) => JSON.stringify([n.name, n.attributes, n.methods]);
+        if (previous && content(previous) !== content(activity.node)) {
+          this.showActivity(`✏️ ${by} editó ${name}`);
+        }
+        break;
+      }
+      case 'created':
+        this.showActivity(`✏️ ${by} creó la clase ${name}`);
+        break;
+      case 'deleted':
+        this.showActivity(`✏️ ${by} eliminó la clase ${name}`);
+        break;
+      case 'connector-created':
+        this.showActivity(`✏️ ${by} creó una relación`);
+        break;
+      case 'connector-updated':
+        this.showActivity(`✏️ ${by} editó una relación`);
+        break;
+      case 'connector-deleted':
+        this.showActivity(`✏️ ${by} eliminó una relación`);
+        break;
+    }
   }
 
   private loadDiagram(): void {
@@ -330,7 +424,17 @@ export class ViewerComponent implements OnInit, OnDestroy {
     this.subs.add(this.wsService.joinDenied$.subscribe(evt => {
       if (evt?.projectId === this.projectId) this.status = 'denied';
     }));
-    this.subs.add(this.wsService.roomUsers$.subscribe(users => this.onlineUsers = users || []));
+    this.subs.add(this.wsService.roomUsers$.subscribe(users => {
+      this.onlineUsers = users || [];
+      this.removeStaleCursors(this.onlineUsers);
+    }));
+    this.subs.add(this.wsService.cursorMoved$.subscribe(data => this.remoteCursorsMap.set(data.socketId, data)));
+    this.subs.add(this.wsService.activity$.subscribe(activity => this.describeActivity(activity)));
+    this.subs.add(this.wsService.aiChatThinking$.subscribe(evt => {
+      if (!evt || evt.projectId !== this.projectId) return;
+      this.usersWaitingAI = this.usersWaitingAI.filter(u => u.userId !== evt.userId);
+      if (evt.thinking) this.usersWaitingAI.push({ userId: evt.userId, fullName: evt.fullName });
+    }));
 
     this.subs.add(this.wsService.nodeDragged$.subscribe(data => {
       const target = this.nodes.find(n => n.id === data.nodeId);
@@ -354,6 +458,9 @@ export class ViewerComponent implements OnInit, OnDestroy {
         (this.diagramService as any).connectorsSubject.next([...current, connector]);
       }
     }));
+    this.subs.add(this.wsService.connectorUpdated$.subscribe(({ connectorId, changes }) => {
+      this.diagramService.updateLocalConnector(connectorId, changes);
+    }));
     this.subs.add(this.wsService.connectorDeleted$.subscribe(connectorId => {
       (this.diagramService as any).connectorsSubject.next(this.diagramService.currentConnectors.filter(c => c.id !== connectorId));
     }));
@@ -362,7 +469,10 @@ export class ViewerComponent implements OnInit, OnDestroy {
     this.subs.add(this.wsService.aiChatMessage$.subscribe(raw => {
       if (!raw || raw.projectId !== this.projectId) return;
       const msg = this.aiService.normalizeChatMessage(raw);
-      if (msg.id && this.chatMessages.some(m => m.id === msg.id)) {
+      const previous = this.chatMessages.find(m => m.id === msg.id);
+      if (msg.id && previous) {
+        const applied = msg.proposals?.find((p, i) => p.status === 'applied' && previous.proposals?.[i]?.status !== 'applied');
+        if (applied) this.showActivity(`🤖 ${applied.decidedBy || 'Un usuario'} aplicó un cambio de la IA`);
         this.chatMessages = this.chatMessages.map(m => m.id === msg.id ? msg : m);
         return;
       }

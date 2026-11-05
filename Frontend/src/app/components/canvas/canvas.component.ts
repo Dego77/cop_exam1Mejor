@@ -19,11 +19,15 @@ import { MinimapComponent } from '../minimap/minimap.component';
       (mousemove)="onMouseMove($event)"
       (click)="onCanvasClick($event)"
       (dblclick)="onCanvasDblClick($event)"
+      (pointerdown)="onPointerDown($event)"
+      (pointermove)="onPointerMove($event)"
+      (pointerup)="onPointerEnd($event)"
+      (pointercancel)="onPointerEnd($event)"
     >
       <!-- Vista única del lienzo (escala conectores SVG, nodos, etiquetas y cursores 1:1) -->
-      <div 
+      <div
         class="canvas-viewport"
-        [style.transform]="'scale(' + zoomLevel + ')'"
+        [style.transform]="'translate(' + panX + 'px, ' + panY + 'px) scale(' + zoomLevel + ')'"
         [style.transform-origin]="'0 0'"
       >
         <!-- Capa de conectores SVG (z-index: 25) -->
@@ -510,6 +514,8 @@ import { MinimapComponent } from '../minimap/minimap.component';
           *ngFor="let c of remoteCursors"
           [style.left.px]="c.cursor.x"
           [style.top.px]="c.cursor.y"
+          [style.transform]="readOnly ? 'scale(' + (1 / zoomLevel) + ')' : null"
+          [style.transform-origin]="'0 0'"
         >
           <svg class="cursor-pointer" width="16" height="16" viewBox="0 0 24 24">
             <path d="M0 0l16 12-7 2-2 7z" [attr.fill]="c.user.color || '#00d4ff'" />
@@ -634,6 +640,10 @@ import { MinimapComponent } from '../minimap/minimap.component';
         [connectors]="connectors"
         [remoteCursors]="remoteCursors"
         [zoomLevel]="zoomLevel"
+        [readOnly]="readOnly"
+        [panX]="panX"
+        [panY]="panY"
+        (navigateTo)="centerOn($event)"
       ></app-minimap>
 
       <!-- Barra inferior de estado y controles -->
@@ -673,6 +683,10 @@ import { MinimapComponent } from '../minimap/minimap.component';
     .canvas-container.read-only .canvas-viewport,
     .canvas-container.read-only .canvas-viewport * {
       pointer-events: none !important;
+    }
+    /* Modo Ver: los gestos los maneja el lienzo; si no, el navegador se queda con ellos */
+    .canvas-container.read-only {
+      touch-action: none;
     }
     .canvas-container {
       flex: 1;
@@ -1228,6 +1242,7 @@ export class CanvasComponent {
   @Input() readOnly = false;
 
   @Output() nodeMoved = new EventEmitter<UMLNode>();
+  @Output() nodeDragging = new EventEmitter<UMLNode>();
   @Output() selectNode = new EventEmitter<UMLNode | null>();
   @Output() addNodeFromDrop = new EventEmitter<{ type: string; x: number; y: number }>();
   @Output() deleteNode = new EventEmitter<string>();
@@ -1237,6 +1252,11 @@ export class CanvasComponent {
   showGrid = true;
   zoomLevel = 1.0;
   Math = Math;
+
+  // Desplazamiento de la vista en Modo Ver; en el editor siempre vale 0
+  panX = 0;
+  panY = 0;
+  private activePointers = new Map<number, { x: number; y: number }>();
 
   draggingNode: UMLNode | null = null;
   dragOffsetX = 0;
@@ -1453,6 +1473,7 @@ export class CanvasComponent {
     if (this.draggingNode) {
       this.draggingNode.positionX = Math.max(0, mouseCanvasX - this.dragOffsetX);
       this.draggingNode.positionY = Math.max(0, mouseCanvasY - this.dragOffsetY);
+      this.nodeDragging.emit(this.draggingNode);
     }
 
     if (this.draggingLabel) {
@@ -1751,7 +1772,73 @@ export class CanvasComponent {
   }
 
   changeZoom(delta: number): void {
+    if (this.readOnly) {
+      const container = document.querySelector('.canvas-container');
+      if (container) this.zoomAt(this.zoomLevel + delta, container.clientWidth / 2, container.clientHeight / 2);
+      return;
+    }
     this.zoomLevel = Math.max(0.5, Math.min(2.0, this.zoomLevel + delta));
+  }
+
+  // Modo Ver: aplica el zoom dejando fijo el punto (cx, cy) de la pantalla
+  private zoomAt(zoom: number, cx: number, cy: number): void {
+    const newZoom = Math.max(0.2, Math.min(2.0, zoom));
+    const ratio = newZoom / this.zoomLevel;
+    this.panX = cx - (cx - this.panX) * ratio;
+    this.panY = cy - (cy - this.panY) * ratio;
+    this.zoomLevel = newZoom;
+  }
+
+  // Modo Ver: deja el punto (x, y) del diagrama en el centro de la pantalla
+  centerOn(point: { x: number; y: number }): void {
+    const container = document.querySelector('.canvas-container');
+    if (!container) return;
+    this.panX = container.clientWidth / 2 - point.x * this.zoomLevel;
+    this.panY = container.clientHeight / 2 - point.y * this.zoomLevel;
+  }
+
+  private getPointerPosition(event: PointerEvent, container: HTMLElement): { x: number; y: number } {
+    const rect = container.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+
+  onPointerDown(event: PointerEvent): void {
+    if (!this.readOnly) return;
+    if ((event.target as HTMLElement).closest('.minimap-wrapper, .status-bar')) return;
+    const container = event.currentTarget as HTMLElement;
+    container.setPointerCapture(event.pointerId);
+    this.activePointers.set(event.pointerId, this.getPointerPosition(event, container));
+  }
+
+  // Un dedo desplaza la vista; dos dedos también hacen zoom
+  onPointerMove(event: PointerEvent): void {
+    const previous = this.activePointers.get(event.pointerId);
+    if (!previous) return;
+    const current = this.getPointerPosition(event, event.currentTarget as HTMLElement);
+    this.activePointers.set(event.pointerId, current);
+
+    if (this.activePointers.size === 1) {
+      this.panX += current.x - previous.x;
+      this.panY += current.y - previous.y;
+      return;
+    }
+
+    const other = [...this.activePointers.entries()].find(([id]) => id !== event.pointerId)?.[1];
+    if (this.activePointers.size !== 2 || !other) return;
+
+    const previousDistance = Math.hypot(previous.x - other.x, previous.y - other.y);
+    const currentDistance = Math.hypot(current.x - other.x, current.y - other.y);
+    const middleX = (current.x + other.x) / 2;
+    const middleY = (current.y + other.y) / 2;
+    this.panX += (current.x - previous.x) / 2;
+    this.panY += (current.y - previous.y) / 2;
+    if (previousDistance > 0) {
+      this.zoomAt(this.zoomLevel * currentDistance / previousDistance, middleX, middleY);
+    }
+  }
+
+  onPointerEnd(event: PointerEvent): void {
+    this.activePointers.delete(event.pointerId);
   }
 
   getNodeHeight(node: UMLNode | undefined): number {

@@ -5,6 +5,11 @@ import { prisma } from '../config/prisma';
 // Mapa de projectId -> mapa de socketId a usuario
 const roomUsers = new Map<string, Map<string, any>>();
 
+// Nombre de quien hizo un cambio, para que la app móvil pueda mostrarlo
+function actorName(socket: Socket, projectId: string): string | undefined {
+  return roomUsers.get(projectId)?.get(socket.id)?.fullName;
+}
+
 // "Modo Ver" (app móvil): el usuario sale del JWT verificado, nunca del cuerpo del mensaje, y
 // tiene que ser el dueño o un colaborador. Devuelve el usuario, o null si no puede entrar.
 async function resolveViewer(projectId: string, token: string | undefined) {
@@ -133,11 +138,17 @@ export const setupCollaborationSockets = (io: Server) => {
       });
     });
 
+    // Posición mientras se arrastra: solo se reenvía; se guarda al soltar con 'node-dragged'
+    socket.on('node-dragging', ({ projectId, nodeId, positionX, positionY }) => {
+      if (socket.data.viewOnly) return; // Modo Ver: read-only
+      socket.to(projectId).emit('node-dragged', { nodeId, positionX, positionY, by: actorName(socket, projectId) });
+    });
+
     // Arrastre de nodos en tiempo real y autoguardado
     socket.on('node-dragged', async ({ projectId, nodeId, positionX, positionY }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only
       // Enviar a la sala de inmediato para que se dibuje fluido
-      socket.to(projectId).emit('node-dragged', { nodeId, positionX, positionY });
+      socket.to(projectId).emit('node-dragged', { nodeId, positionX, positionY, by: actorName(socket, projectId) });
 
       // Guardar la posición en la base compartida (la fuente única)
       try {
@@ -153,7 +164,7 @@ export const setupCollaborationSockets = (io: Server) => {
     // Actualización en tiempo real del contenido del nodo (atributos y métodos)
     socket.on('node-updated', async ({ projectId, node }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only
-      socket.to(projectId).emit('node-updated', { node });
+      socket.to(projectId).emit('node-updated', { node, by: actorName(socket, projectId) });
 
       try {
         await prisma.node.update({
@@ -173,25 +184,31 @@ export const setupCollaborationSockets = (io: Server) => {
     // Creación de nodos en tiempo real
     socket.on('node-created', async ({ projectId, node }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only
-      socket.to(projectId).emit('node-created', { node });
+      socket.to(projectId).emit('node-created', { node, by: actorName(socket, projectId) });
     });
 
     // Borrado de nodos en tiempo real
     socket.on('node-deleted', async ({ projectId, nodeId }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only
-      socket.to(projectId).emit('node-deleted', { nodeId });
+      socket.to(projectId).emit('node-deleted', { nodeId, by: actorName(socket, projectId) });
     });
 
     // Creación de conectores en tiempo real
     socket.on('connector-created', async ({ projectId, connector }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only
-      socket.to(projectId).emit('connector-created', { connector });
+      socket.to(projectId).emit('connector-created', { connector, by: actorName(socket, projectId) });
     });
 
     // Borrado de conectores en tiempo real
     socket.on('connector-deleted', async ({ projectId, connectorId }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only
-      socket.to(projectId).emit('connector-deleted', { connectorId });
+      socket.to(projectId).emit('connector-deleted', { connectorId, by: actorName(socket, projectId) });
+    });
+
+    // Edición de un conector (multiplicidad, tipo, etiqueta); ya se guardó por la API REST
+    socket.on('connector-updated', ({ projectId, connectorId, changes }) => {
+      if (socket.data.viewOnly) return; // Modo Ver: read-only
+      socket.to(projectId).emit('connector-updated', { connectorId, changes, by: actorName(socket, projectId) });
     });
 
     // Recarga completa del diagrama en tiempo real (operaciones de la IA y cambios masivos)
