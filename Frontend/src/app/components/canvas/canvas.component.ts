@@ -640,7 +640,6 @@ import { MinimapComponent } from '../minimap/minimap.component';
         [connectors]="connectors"
         [remoteCursors]="remoteCursors"
         [zoomLevel]="zoomLevel"
-        [readOnly]="readOnly"
         [panX]="panX"
         [panY]="panY"
         (navigateTo)="centerOn($event)"
@@ -1253,10 +1252,11 @@ export class CanvasComponent {
   zoomLevel = 1.0;
   Math = Math;
 
-  // Desplazamiento de la vista en Modo Ver; en el editor siempre vale 0
+  // Desplazamiento de la vista: con gestos en Modo Ver y con el radar en ambos modos
   panX = 0;
   panY = 0;
   private activePointers = new Map<number, { x: number; y: number }>();
+  private panDistance = 0;
 
   draggingNode: UMLNode | null = null;
   dragOffsetX = 0;
@@ -1321,9 +1321,7 @@ export class CanvasComponent {
     }
 
     event.stopPropagation();
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    const x = Math.max(20, (event.clientX - rect.left) / this.zoomLevel);
-    const y = Math.max(20, (event.clientY - rect.top) / this.zoomLevel);
+    const { x, y } = this.toCanvas(event, event.currentTarget as HTMLElement);
 
     const newLabel: CanvasLabel = {
       id: 'label_' + Date.now(),
@@ -1359,13 +1357,10 @@ export class CanvasComponent {
     event.stopPropagation();
     this.draggingLabel = label;
 
-    const container = (event.currentTarget as HTMLElement).closest('.canvas-container');
-    const rect = container ? container.getBoundingClientRect() : { left: 0, top: 0 };
-    const mouseCanvasX = (event.clientX - rect.left) / this.zoomLevel;
-    const mouseCanvasY = (event.clientY - rect.top) / this.zoomLevel;
+    const mouse = this.toCanvas(event, (event.currentTarget as HTMLElement).closest('.canvas-container'));
 
-    this.labelDragOffsetX = mouseCanvasX - label.positionX;
-    this.labelDragOffsetY = mouseCanvasY - label.positionY;
+    this.labelDragOffsetX = mouse.x - label.positionX;
+    this.labelDragOffsetY = mouse.y - label.positionY;
   }
 
   findNode(idOrName?: string): UMLNode | undefined {
@@ -1465,20 +1460,18 @@ export class CanvasComponent {
   }
 
   onMouseMove(event: MouseEvent): void {
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    const mouseCanvasX = (event.clientX - rect.left) / this.zoomLevel;
-    const mouseCanvasY = (event.clientY - rect.top) / this.zoomLevel;
+    const { x: mouseCanvasX, y: mouseCanvasY } = this.toCanvas(event, event.currentTarget as HTMLElement);
     this.cursorMove.emit({ x: mouseCanvasX, y: mouseCanvasY });
 
     if (this.draggingNode) {
-      this.draggingNode.positionX = Math.max(0, mouseCanvasX - this.dragOffsetX);
-      this.draggingNode.positionY = Math.max(0, mouseCanvasY - this.dragOffsetY);
+      this.draggingNode.positionX = mouseCanvasX - this.dragOffsetX;
+      this.draggingNode.positionY = mouseCanvasY - this.dragOffsetY;
       this.nodeDragging.emit(this.draggingNode);
     }
 
     if (this.draggingLabel) {
-      this.draggingLabel.positionX = Math.max(0, mouseCanvasX - this.labelDragOffsetX);
-      this.draggingLabel.positionY = Math.max(0, mouseCanvasY - this.labelDragOffsetY);
+      this.draggingLabel.positionX = mouseCanvasX - this.labelDragOffsetX;
+      this.draggingLabel.positionY = mouseCanvasY - this.labelDragOffsetY;
     }
 
     if (this.draggingMultiplicity) {
@@ -1564,13 +1557,10 @@ export class CanvasComponent {
     this.editingConnector = null;
     this.draggingNode = node;
 
-    const container = (event.currentTarget as HTMLElement).closest('.canvas-container');
-    const rect = container ? container.getBoundingClientRect() : { left: 0, top: 0 };
-    const mouseCanvasX = (event.clientX - rect.left) / this.zoomLevel;
-    const mouseCanvasY = (event.clientY - rect.top) / this.zoomLevel;
+    const mouse = this.toCanvas(event, (event.currentTarget as HTMLElement).closest('.canvas-container'));
 
-    this.dragOffsetX = mouseCanvasX - node.positionX;
-    this.dragOffsetY = mouseCanvasY - node.positionY;
+    this.dragOffsetX = mouse.x - node.positionX;
+    this.dragOffsetY = mouse.y - node.positionY;
   }
 
   onNodeClick(event: MouseEvent, node: UMLNode): void {
@@ -1619,6 +1609,11 @@ export class CanvasComponent {
   }
 
   onCanvasClick(event: MouseEvent): void {
+    // El click que llega al soltar tras desplazar la vista no debe deseleccionar
+    if (this.panDistance > 4) {
+      this.panDistance = 0;
+      return;
+    }
     this.selectNode.emit(null);
     this.selectedConnector = null;
     this.connectingSourceId = null;
@@ -1708,9 +1703,7 @@ export class CanvasComponent {
     if (this.readOnly) return;
     const type = event.dataTransfer?.getData('text/plain');
     if (type) {
-      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
+      const { x, y } = this.toCanvas(event, event.currentTarget as HTMLElement);
       this.addNodeFromDrop.emit({ type, x, y });
     }
   }
@@ -1772,29 +1765,50 @@ export class CanvasComponent {
   }
 
   changeZoom(delta: number): void {
-    if (this.readOnly) {
-      const container = document.querySelector('.canvas-container');
-      if (container) this.zoomAt(this.zoomLevel + delta, container.clientWidth / 2, container.clientHeight / 2);
-      return;
-    }
-    this.zoomLevel = Math.max(0.5, Math.min(2.0, this.zoomLevel + delta));
+    const container = document.querySelector('.canvas-container');
+    if (container) this.zoomAt(this.zoomLevel + delta, container.clientWidth / 2, container.clientHeight / 2);
   }
 
-  // Modo Ver: aplica el zoom dejando fijo el punto (cx, cy) de la pantalla
+  // Convierte la posición del mouse a coordenadas del diagrama
+  private toCanvas(event: MouseEvent, container: Element | null): { x: number; y: number } {
+    const rect = container ? container.getBoundingClientRect() : { left: 0, top: 0 };
+    return {
+      x: (event.clientX - rect.left - this.panX) / this.zoomLevel,
+      y: (event.clientY - rect.top - this.panY) / this.zoomLevel
+    };
+  }
+
+  // Aplica el zoom dejando fijo el punto (cx, cy) de la pantalla
   private zoomAt(zoom: number, cx: number, cy: number): void {
-    const newZoom = Math.max(0.2, Math.min(2.0, zoom));
+    const newZoom = Math.max(this.readOnly ? 0.2 : 0.5, Math.min(2.0, zoom));
     const ratio = newZoom / this.zoomLevel;
     this.panX = cx - (cx - this.panX) * ratio;
     this.panY = cy - (cy - this.panY) * ratio;
     this.zoomLevel = newZoom;
   }
 
-  // Modo Ver: deja el punto (x, y) del diagrama en el centro de la pantalla
+  // Deja el punto (x, y) del diagrama en el centro de la pantalla
   centerOn(point: { x: number; y: number }): void {
     const container = document.querySelector('.canvas-container');
     if (!container) return;
     this.panX = container.clientWidth / 2 - point.x * this.zoomLevel;
     this.panY = container.clientHeight / 2 - point.y * this.zoomLevel;
+  }
+
+  // Centro de la pantalla en coordenadas del diagrama
+  getViewCenter(): { x: number; y: number } {
+    const container = document.querySelector('.canvas-container');
+    const width = container ? container.clientWidth : 0;
+    const height = container ? container.clientHeight : 0;
+    return {
+      x: (width / 2 - this.panX) / this.zoomLevel,
+      y: (height / 2 - this.panY) / this.zoomLevel
+    };
+  }
+
+  resetPan(): void {
+    this.panX = 0;
+    this.panY = 0;
   }
 
   private getPointerPosition(event: PointerEvent, container: HTMLElement): { x: number; y: number } {
@@ -1803,8 +1817,11 @@ export class CanvasComponent {
   }
 
   onPointerDown(event: PointerEvent): void {
-    if (!this.readOnly) return;
+    // En el editor solo se desplaza con clic izquierdo sobre el fondo
+    const isBackgroundLeftClick = event.button === 0 && event.target === event.currentTarget;
+    if (!this.readOnly && !isBackgroundLeftClick) return;
     if ((event.target as HTMLElement).closest('.minimap-wrapper, .status-bar')) return;
+    this.panDistance = 0;
     const container = event.currentTarget as HTMLElement;
     container.setPointerCapture(event.pointerId);
     this.activePointers.set(event.pointerId, this.getPointerPosition(event, container));
@@ -1820,6 +1837,7 @@ export class CanvasComponent {
     if (this.activePointers.size === 1) {
       this.panX += current.x - previous.x;
       this.panY += current.y - previous.y;
+      this.panDistance += Math.hypot(current.x - previous.x, current.y - previous.y);
       return;
     }
 

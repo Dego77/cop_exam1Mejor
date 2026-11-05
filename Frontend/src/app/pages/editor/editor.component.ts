@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NavbarComponent } from '../../components/navbar/navbar.component';
@@ -113,6 +113,8 @@ import { Subscription } from 'rxjs';
   `]
 })
 export class EditorComponent implements OnInit, OnDestroy {
+  @ViewChild(CanvasComponent) canvas?: CanvasComponent;
+
   projects: Project[] = [];
   currentProject: Project | null = null;
 
@@ -622,6 +624,7 @@ export class EditorComponent implements OnInit, OnDestroy {
 
   async onSelectProject(p: Project): Promise<void> {
     if (this.currentProject && this.currentProject.id !== p.id) {
+      this.canvas?.resetPan();
       const oldProjectId = this.currentProject.id;
       const oldDiagramId = this.diagramService.diagramId;
       const oldNodes = [...this.diagramService.currentNodes];
@@ -767,11 +770,13 @@ export class EditorComponent implements OnInit, OnDestroy {
   }
 
   onAddElement(elementType: string): void {
+    // Cerca del centro de lo que se está viendo, con algo de azar para que no queden encimadas
+    const center = this.canvas?.getViewCenter() ?? { x: 250, y: 200 };
     const newNode: Partial<UMLNode> = {
       name: `New${elementType}`,
       stereotype: elementType,
-      positionX: 200 + Math.random() * 100,
-      positionY: 150 + Math.random() * 100,
+      positionX: center.x - 100 + Math.random() * 100,
+      positionY: center.y - 100 + Math.random() * 100,
       attributes: [],
       methods: []
     };

@@ -189,6 +189,10 @@ export class EaExporterService {
     }
     const assocClassContentMap = new Map<string, { attrsXml: string; methodsXml: string; generalizationsXml: string }>();
 
+    // El lienzo admite posiciones negativas; en el archivo todo el diagrama queda en valores positivos
+    const offsetX = Math.min(0, ...(nodes || []).map(n => n.positionX || 0));
+    const offsetY = Math.min(0, ...(nodes || []).map(n => n.positionY || 0));
+
     // 1. Mapeo de todos los nodos y clases
     if (nodes && nodes.length > 0) {
       nodes.forEach((node, idx) => {
@@ -264,8 +268,8 @@ export class EaExporterService {
         </element>`;
 
         // Posición visual del diagrama en Enterprise Architect
-        const left = Math.round(node.positionX || (100 + idx * 240));
-        const top = Math.round(node.positionY || (100 + (idx % 2) * 180));
+        const left = Math.round((node.positionX || (100 + idx * 240)) - offsetX);
+        const top = Math.round((node.positionY || (100 + (idx % 2) * 180)) - offsetY);
         const right = left + 220;
         const bottom = top + 150;
 

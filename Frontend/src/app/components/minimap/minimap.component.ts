@@ -23,8 +23,6 @@ import { CursorData } from '../../core/services/websocket.service';
         *ngIf="!isCollapsed"
         class="minimap-body"
         #minimapBox
-        [class.read-only]="readOnly"
-        (click)="onMinimapClick($event)"
         (pointerdown)="onRadarPointerDown($event)"
         (pointermove)="onRadarPointerMove($event)"
         (pointerup)="isNavigating = false"
@@ -153,8 +151,6 @@ import { CursorData } from '../../core/services/websocket.service';
       position: relative;
       cursor: crosshair;
       background: radial-gradient(circle, rgba(15, 23, 42, 0.8) 0%, rgba(7, 9, 14, 0.95) 100%);
-    }
-    .minimap-body.read-only {
       touch-action: none;
     }
 
@@ -175,8 +171,6 @@ export class MinimapComponent {
   @Input() connectors: UMLConnector[] = [];
   @Input() remoteCursors: CursorData[] = [];
   @Input() zoomLevel: number = 1;
-  // Modo Ver: la vista se mueve con panX/panY en lugar de con scroll
-  @Input() readOnly: boolean = false;
   @Input() panX: number = 0;
   @Input() panY: number = 0;
 
@@ -211,21 +205,9 @@ export class MinimapComponent {
     const vw = parentContainer ? parentContainer.clientWidth : 1200;
     const vh = parentContainer ? parentContainer.clientHeight : 800;
 
-    const currentScrollLeft = parentContainer ? parentContainer.scrollLeft : 0;
-    const currentScrollTop = parentContainer ? parentContainer.scrollTop : 0;
-
-    if (this.readOnly) {
-      return {
-        x: -this.panX / this.zoomLevel,
-        y: -this.panY / this.zoomLevel,
-        w: vw / this.zoomLevel,
-        h: vh / this.zoomLevel
-      };
-    }
-
     return {
-      x: currentScrollLeft / this.zoomLevel,
-      y: currentScrollTop / this.zoomLevel,
+      x: -this.panX / this.zoomLevel,
+      y: -this.panY / this.zoomLevel,
       w: vw / this.zoomLevel,
       h: vh / this.zoomLevel
     };
@@ -246,7 +228,6 @@ export class MinimapComponent {
   }
 
   onRadarPointerDown(event: PointerEvent): void {
-    if (!this.readOnly) return;
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     this.isNavigating = true;
     this.navigateToPointer(event);
@@ -263,27 +244,5 @@ export class MinimapComponent {
     if (!matrix) return;
     const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
     this.navigateTo.emit({ x: point.x, y: point.y });
-  }
-
-  onMinimapClick(event: MouseEvent): void {
-    if (this.readOnly) return;
-    const parentContainer = document.querySelector('.canvas-container');
-    if (!parentContainer) return;
-
-    const targetBox = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    const clickRelX = (event.clientX - targetBox.left) / targetBox.width;
-    const clickRelY = (event.clientY - targetBox.top) / targetBox.height;
-
-    const viewBoxParts = this.svgViewBox.split(' ').map(Number);
-    const vbMinX = viewBoxParts[0];
-    const vbMinY = viewBoxParts[1];
-    const vbW = viewBoxParts[2];
-    const vbH = viewBoxParts[3];
-
-    const targetCanvasX = vbMinX + clickRelX * vbW;
-    const targetCanvasY = vbMinY + clickRelY * vbH;
-
-    parentContainer.scrollLeft = (targetCanvasX - parentContainer.clientWidth / 2) * this.zoomLevel;
-    parentContainer.scrollTop = (targetCanvasY - parentContainer.clientHeight / 2) * this.zoomLevel;
   }
 }
