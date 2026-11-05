@@ -23,6 +23,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
       (pointermove)="onPointerMove($event)"
       (pointerup)="onPointerEnd($event)"
       (pointercancel)="onPointerEnd($event)"
+      (wheel)="onWheel($event)"
     >
       <!-- Vista única del lienzo (escala conectores SVG, nodos, etiquetas y cursores 1:1) -->
       <div
@@ -1811,7 +1812,15 @@ export class CanvasComponent {
     this.panY = 0;
   }
 
-  private getPointerPosition(event: PointerEvent, container: HTMLElement): { x: number; y: number } {
+  // La rueda acerca o aleja alrededor del mouse
+  onWheel(event: WheelEvent): void {
+    if ((event.target as HTMLElement).closest('.connector-modal, .connector-quick-panel')) return;
+    event.preventDefault();
+    const point = this.getPointerPosition(event, event.currentTarget as HTMLElement);
+    this.zoomAt(this.zoomLevel * (event.deltaY < 0 ? 1.1 : 1 / 1.1), point.x, point.y);
+  }
+
+  private getPointerPosition(event: MouseEvent, container: HTMLElement): { x: number; y: number } {
     const rect = container.getBoundingClientRect();
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
