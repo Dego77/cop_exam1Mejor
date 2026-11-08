@@ -8,6 +8,7 @@ import { ProjectService } from '../../core/services/project.service';
 import { DiagramService, UMLNode, UMLConnector, CanvasLabel } from '../../core/services/diagram.service';
 import { WebSocketService, CursorData, CanvasActivity } from '../../core/services/websocket.service';
 import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service';
+import { ChatTextComponent } from '../../components/chat-text/chat-text.component';
 
 // "Modo Ver" (app móvil): muestra el diagrama del proyecto y el chat grupal de la IA en tiempo real,
 // solo lectura. No se edita ni se escribe a la IA. El servidor también ignora cualquier evento de
@@ -15,7 +16,7 @@ import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service'
 @Component({
   selector: 'app-viewer',
   standalone: true,
-  imports: [CommonModule, CanvasComponent],
+  imports: [CommonModule, CanvasComponent, ChatTextComponent],
   template: `
     <div class="viewer-layout">
       <header class="viewer-header">
@@ -64,9 +65,11 @@ import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service'
               <span *ngIf="msg.sender === 'AI' && msg.user"> · respondiendo a {{ msg.user.fullName }}</span>
               <span class="vc-time" *ngIf="msg.timestamp">{{ msg.timestamp | date:'HH:mm' }}</span>
             </div>
-            <div class="vc-text">{{ msg.content }}</div>
+            <div class="vc-text"><app-chat-text [text]="msg.content" [classNames]="classNames" [emphasizeClasses]="msg.sender === 'AI'"></app-chat-text></div>
             <div class="vc-text" *ngFor="let proposal of msg.proposals">{{ proposal.label }} · {{ proposal.status === 'applied' ? 'aplicado' : (proposal.status === 'rejected' ? 'no permitido' : 'pendiente') }}</div>
           </div>
+          <div class="vc-status" *ngFor="let peer of usersWaitingAI">Agente IA está respondiendo a {{ peer.fullName }}</div>
+          <div class="vc-status" *ngFor="let peer of typers">{{ peer.fullName }} está escribiendo…</div>
         </div>
       </aside>
     </div>
@@ -239,6 +242,10 @@ import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service'
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .vc-status {
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
   `]
 })
 export class ViewerComponent implements OnInit, OnDestroy {
@@ -255,7 +262,9 @@ export class ViewerComponent implements OnInit, OnDestroy {
   chatMessages: AIMessage[] = [];
 
   private remoteCursorsMap = new Map<string, CursorData>();
-  private usersWaitingAI: { userId: number; fullName: string }[] = [];
+  usersWaitingAI: { userId: number; fullName: string }[] = [];
+  typers: { userId: number; fullName: string }[] = [];
+  private typerTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private activityMessage = '';
   private activityTimer?: ReturnType<typeof setTimeout>;
 
@@ -271,6 +280,10 @@ export class ViewerComponent implements OnInit, OnDestroy {
     private wsService: WebSocketService,
     private aiService: AIAgentService
   ) { }
+
+  get classNames(): string[] {
+    return this.nodes.map(node => node.name);
+  }
 
   get onlineNames(): string {
     return this.onlineUsers.map(u => u.fullName + (u.viewOnly ? ' (viendo)' : '')).join(', ');
@@ -430,6 +443,16 @@ export class ViewerComponent implements OnInit, OnDestroy {
     }));
     this.subs.add(this.wsService.cursorMoved$.subscribe(data => this.remoteCursorsMap.set(data.socketId, data)));
     this.subs.add(this.wsService.activity$.subscribe(activity => this.describeActivity(activity)));
+    this.subs.add(this.wsService.chatTyping$.subscribe(evt => {
+      if (!evt || evt.projectId !== this.projectId) return;
+      this.typers = this.typers.filter(peer => peer.userId !== evt.userId);
+      clearTimeout(this.typerTimers.get(evt.userId));
+      if (!evt.active) return;
+      this.typers = [...this.typers, { userId: evt.userId, fullName: evt.fullName }];
+      this.typerTimers.set(evt.userId, setTimeout(() => {
+        this.typers = this.typers.filter(peer => peer.userId !== evt.userId);
+      }, 3000));
+    }));
     this.subs.add(this.wsService.aiChatThinking$.subscribe(evt => {
       if (!evt || evt.projectId !== this.projectId) return;
       this.usersWaitingAI = this.usersWaitingAI.filter(u => u.userId !== evt.userId);

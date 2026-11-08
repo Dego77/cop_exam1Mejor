@@ -13,6 +13,7 @@ import { EaImporterService } from '../../core/services/ea-importer.service';
 import { WebSocketService, CursorData } from '../../core/services/websocket.service';
 import { AuthService } from '../../core/services/auth.service';
 import { SupportAgentService } from '../../core/services/support-agent.service';
+import { colorForUser } from '../../core/utils/avatar-color';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -80,12 +81,16 @@ import { Subscription } from 'rxjs';
 
         <!-- Barra derecha: IA multimodal y código/sincronización -->
         <app-right-sidebar
-          [style.width.px]="rightSidebarWidth"
+          [style.width.px]="chatCollapsed ? 40 : rightSidebarWidth"
           [sidebarWidth]="rightSidebarWidth"
           (sidebarWidthChange)="rightSidebarWidth = $event"
           [projectId]="currentProject?.id || ''"
           [projectName]="currentProject?.name || ''"
           [hasCollaborators]="(currentProject?.collaborators?.length || 0) > 0"
+          [onlineUsers]="onlineUsers"
+          [selectedNode]="selectedNode"
+          [collapsed]="chatCollapsed"
+          (collapsedChange)="chatCollapsed = $event"
           (diagramUpdated)="onAIDiagramUpdated()"
         ></app-right-sidebar>
       </div>
@@ -125,6 +130,7 @@ export class EditorComponent implements OnInit, OnDestroy {
   activeConnectorType: string | null = null;
   leftSidebarWidth = 200;
   rightSidebarWidth = 320;
+  chatCollapsed = false;
 
   onlineUsers: any[] = [];
   activeRoomUsers: any[] = [];
@@ -132,7 +138,6 @@ export class EditorComponent implements OnInit, OnDestroy {
   private lastDragEmit = 0;
   localSessionStartTime = new Date().toISOString();
 
-  private userAvatarColors = ['#00d4ff', '#a855f7', '#ec4899', '#22c55e', '#f59e0b', '#3b82f6', '#10b981'];
 
   private subs = new Subscription();
 
@@ -484,13 +489,7 @@ export class EditorComponent implements OnInit, OnDestroy {
   }
 
   private getColorForUser(idOrEmail: any): string {
-    const str = String(idOrEmail || '');
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      hash = str.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    const index = Math.abs(hash) % this.userAvatarColors.length;
-    return this.userAvatarColors[index];
+    return colorForUser(idOrEmail);
   }
 
   updateOnlineCollaboratorsList(): void {

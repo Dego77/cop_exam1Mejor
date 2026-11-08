@@ -33,6 +33,7 @@ export interface AIMessage {
   content: string;
   mediaUrl?: string;
   proposals?: AIDiagramProposal[];
+  clientMessageId?: string;
   timestamp?: Date;
   createdAt?: string;
 }
@@ -52,8 +53,10 @@ export class AIAgentService {
   }
 
   // isPrivate: la IA se comporta igual, pero la conversación no se guarda ni se comparte con los colaboradores
-  sendTextPrompt(projectId: string, prompt: string, model?: string, diagramContext?: any, isPrivate = false, history?: any[]): Observable<any> {
-    return this.http.post(`${this.apiUrl}/chat`, { projectId, prompt, model, diagramContext, isPrivate, history }, { headers: this.headers });
+  sendTextPrompt(projectId: string, prompt: string, model?: string, diagramContext?: any, isPrivate = false, history?: any[], clientMessageId?: string, selectedNode?: { id: string; name: string } | null): Observable<any> {
+    return this.http.post(`${this.apiUrl}/chat`, {
+      projectId, prompt, model, diagramContext, isPrivate, history, clientMessageId, selectedNode,
+    }, { headers: this.headers });
   }
 
   decideProposal(projectId: string, decision: 'apply' | 'reject', messageId?: string, proposalId?: string, proposal?: AIDiagramProposal): Observable<any> {

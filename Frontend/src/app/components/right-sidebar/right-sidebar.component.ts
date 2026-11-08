@@ -9,13 +9,16 @@ import { ProjectService } from '../../core/services/project.service';
 import { DiagramService } from '../../core/services/diagram.service';
 import { WebSocketService } from '../../core/services/websocket.service';
 import { AuthService } from '../../core/services/auth.service';
+import { ChatTextComponent } from '../chat-text/chat-text.component';
+import { colorForUser } from '../../core/utils/avatar-color';
 
 @Component({
   selector: 'app-right-sidebar',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, ChatTextComponent],
   template: `
-    <aside class="right-sidebar" id="right-sidebar-ai">
+    <button *ngIf="collapsed" class="sidebar-reopen" (click)="collapsedChange.emit(false)" title="Abrir Agente IA">IA</button>
+    <aside class="right-sidebar" id="right-sidebar-ai" *ngIf="!collapsed">
       <!-- Barra para cambiar el ancho (arrastre horizontal) -->
       <div 
         class="sidebar-resizer" 
@@ -40,6 +43,7 @@ import { AuthService } from '../../core/services/auth.service';
         >
           <span>Code & Sync</span>
         </button>
+        <button class="tab-btn tab-close" (click)="collapsedChange.emit(true)" title="Cerrar panel">✕</button>
       </div>
 
 
@@ -100,7 +104,7 @@ import { AuthService } from '../../core/services/auth.service';
                 </span>
                 <span class="msg-time" *ngIf="msg.timestamp">{{ msg.timestamp | date:'HH:mm' }}</span>
               </div>
-              <div class="msg-text">{{ msg.content }}</div>
+              <div class="msg-text"><app-chat-text [text]="msg.content" [classNames]="diagramClassNames" [emphasizeClasses]="msg.sender === 'AI'"></app-chat-text></div>
               <div class="proposal" *ngFor="let proposal of msg.proposals">
                 <div class="proposal-label">{{ proposal.label }}</div>
                 <div class="proposal-actions" *ngIf="(!proposal.status || proposal.status === 'pending') && isOwnMessage(msg)">
@@ -114,12 +118,16 @@ import { AuthService } from '../../core/services/auth.service';
 
             <div class="ai-loading" *ngIf="isProcessing">
               <span class="dot animate-pulse">●</span>
-              <span>Generando arquitectura UML...</span>
+              <span>Agente IA está respondiendo a {{ myName }}</span>
             </div>
 
             <div class="ai-loading" *ngFor="let peer of (isPrivateChat ? [] : peersWaitingAI)">
               <span class="dot animate-pulse">●</span>
-              <span>La IA está respondiendo a {{ peer.fullName }}...</span>
+              <span>Agente IA está respondiendo a {{ peer.fullName }}</span>
+            </div>
+
+            <div class="ai-loading" *ngFor="let peer of typers">
+              <span>{{ peer.fullName }} está escribiendo…</span>
             </div>
           </div>
 
@@ -150,12 +158,19 @@ import { AuthService } from '../../core/services/auth.service';
           </div>
 
           <!-- Caja para escribir el pedido -->
+          <div class="mention-menu" *ngIf="showMentions && mentionOptions.length">
+            <button type="button" class="mention-item" *ngFor="let option of mentionOptions" (click)="selectMention(option)">
+              <span class="msg-avatar" *ngIf="option.kind === 'user'" [style.background]="option.color">{{ option.initial }}</span>
+              {{ option.token }}
+            </button>
+          </div>
           <div class="chat-input-row">
             <input 
               type="text" 
               class="input-field" 
               [(ngModel)]="textPrompt" 
-              placeholder="Ej. 'Agrega la clase Payment con id y monto'..." 
+              placeholder="Escribe @ para mencionar a Agente IA o al equipo" 
+              (ngModelChange)="onPromptChange()"
               (keyup.enter)="sendTextPrompt()"
             />
             <button class="btn btn-primary" (click)="sendTextPrompt()" [disabled]="isProcessing">
@@ -348,6 +363,40 @@ import { AuthService } from '../../core/services/auth.service';
       flex-shrink: 0;
       z-index: 30;
     }
+    .sidebar-reopen {
+      width: 40px;
+      height: calc(100vh - var(--navbar-height));
+      border: none;
+      border-left: 1px solid var(--border);
+      background: var(--bg-panel);
+      color: var(--cyan);
+      writing-mode: vertical-rl;
+      cursor: pointer;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+    .tab-close { flex: 0 0 auto; min-width: 36px; }
+    .mention-menu {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 6px;
+    }
+    .mention-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-align: left;
+      background: transparent;
+      color: var(--text-primary);
+      border: none;
+      cursor: pointer;
+      padding: 4px 6px;
+    }
+    .proposal-state { color: var(--text-secondary); font-size: 11px; }
     .right-sidebar {
       width: 100%;
       background: var(--bg-panel);
@@ -1002,8 +1051,12 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   @Input() projectName = '';
   @Input() hasCollaborators = false;
   @Input() sidebarWidth = 320;
+  @Input() onlineUsers: { id?: number | string; fullName?: string; color?: string }[] = [];
+  @Input() selectedNode: { id: string; name: string } | null = null;
+  @Input() collapsed = false;
   @Output() diagramUpdated = new EventEmitter<void>();
   @Output() sidebarWidthChange = new EventEmitter<number>();
+  @Output() collapsedChange = new EventEmitter<boolean>();
 
   isResizing = false;
   private startX = 0;
@@ -1057,6 +1110,11 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   isDeciding = false;
   // Colaboradores cuyo pedido a la IA todavía se está procesando (chat grupal)
   peersWaitingAI: { userId: number; fullName: string }[] = [];
+  typers: { userId: number; fullName: string }[] = [];
+  showMentions = false;
+  mentionQuery = '';
+  private typingTimer: any;
+  private typerTimers = new Map<number, any>();
   private chatSocketSub?: Subscription;
   @ViewChild('chatScroll') chatScroll?: ElementRef<HTMLDivElement>;
 
@@ -1183,13 +1241,21 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     this.chatSocketSub = this.wsService.aiChatMessage$.subscribe((raw) => {
       if (!raw || raw.projectId !== this.projectId) return;
       const msg = this.aiService.normalizeChatMessage(raw);
+      const provisional = msg.clientMessageId
+        ? this.chatHistory.findIndex(m => m.clientMessageId && m.clientMessageId === msg.clientMessageId)
+        : -1;
+      if (provisional >= 0) {
+        this.chatHistory[provisional] = msg;
+        this.scrollChatToBottom();
+        return;
+      }
       const idx = msg.id ? this.chatHistory.findIndex(m => m.id === msg.id) : -1;
       if (idx >= 0) {
         this.chatHistory[idx] = msg;
         this.scrollChatToBottom();
         return;
       }
-      if (this.isOwnMessage(raw)) return;
+      if (msg.sender === 'USER' && this.isOwnMessage(raw)) return;
       this.chatHistory.push(msg);
       this.scrollChatToBottom();
     });
@@ -1200,6 +1266,16 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
       this.scrollChatToBottom();
     }));
     // "Nuevo chat → Para todos" de cualquier miembro borra el chat grupal para todos
+    this.chatSocketSub.add(this.wsService.chatTyping$.subscribe((evt) => {
+      if (!evt || evt.projectId !== this.projectId || this.isOwnMessage({ userId: evt.userId } as AIMessage)) return;
+      this.typers = this.typers.filter(peer => peer.userId !== evt.userId);
+      clearTimeout(this.typerTimers.get(evt.userId));
+      if (!evt.active) return;
+      this.typers = [...this.typers, { userId: evt.userId, fullName: evt.fullName }];
+      this.typerTimers.set(evt.userId, setTimeout(() => {
+        this.typers = this.typers.filter(peer => peer.userId !== evt.userId);
+      }, 3000));
+    }));
     this.chatSocketSub.add(this.wsService.aiChatCleared$.subscribe((evt) => {
       if (!evt || evt.projectId !== this.projectId) return;
       this.chatHistory = [];
@@ -1285,7 +1361,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
           proposal.status = decision === 'apply' ? 'applied' : 'rejected';
           proposal.decidedBy = this.auth.currentUser?.fullName;
         }
-        if (decision === 'apply') this.applyDiagramResult(res);
+        if (decision === 'apply' && !msg.id) this.applyDiagramResult(res);
       },
       error: () => { this.isDeciding = false; }
     });
@@ -1330,10 +1406,51 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   authorColor(msg: AIMessage): string {
-    const key = String(msg.user?.id ?? msg.userId ?? '');
-    let hash = 0;
-    for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) | 0;
-    return `hsl(${Math.abs(hash) % 360}, 65%, 50%)`;
+    return colorForUser(msg.user?.id ?? msg.userId ?? '');
+  }
+
+  get myName(): string {
+    return this.auth.currentUser?.fullName || 'ti';
+  }
+
+  get diagramClassNames(): string[] {
+    return this.diagramService.currentNodes.map(node => node.name);
+  }
+
+  get mentionOptions(): { token: string; name: string; kind: string; color?: string; initial?: string }[] {
+    const query = this.mentionQuery.toLocaleLowerCase();
+    const options = [
+      { token: '@Agente IA', name: 'Agente IA', kind: 'assistant' },
+      { token: '@all', name: 'Todos', kind: 'all' },
+      ...this.onlineUsers.map(user => ({
+        token: `@${user.fullName || 'Usuario'}`,
+        name: user.fullName || 'Usuario',
+        kind: 'user',
+        color: user.color || colorForUser(user.id),
+        initial: (user.fullName || '?').trim().charAt(0).toUpperCase(),
+      })),
+    ];
+    return options.filter(option => option.name.toLocaleLowerCase().includes(query) || option.token.toLocaleLowerCase().includes(query));
+  }
+
+  onPromptChange(): void {
+    const match = this.textPrompt.match(/(^|\s)@([^\s@]*)$/);
+    this.showMentions = !!match;
+    this.mentionQuery = match ? match[2] : '';
+    if (this.isPrivateChat || !this.projectId) return;
+    if (!this.textPrompt.trim()) {
+      clearTimeout(this.typingTimer);
+      this.wsService.emitChatTyping(this.projectId, false);
+      return;
+    }
+    this.wsService.emitChatTyping(this.projectId, true);
+    clearTimeout(this.typingTimer);
+    this.typingTimer = setTimeout(() => this.wsService.emitChatTyping(this.projectId, false), 3000);
+  }
+
+  selectMention(option: { token: string }): void {
+    this.textPrompt = this.textPrompt.replace(/(^|\s)@[^\s@]*$/, `$1${option.token} `);
+    this.showMentions = false;
   }
 
   private scrollChatToBottom(): void {
@@ -1357,30 +1474,42 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
 
   sendTextPrompt(): void {
     if (!this.textPrompt.trim()) return;
-    const prompt = this.textPrompt;
+    const prompt = this.textPrompt.trim();
+    const asksAgent = this.isPrivateChat || /@agente\s*ia\b/i.test(prompt);
     // Se fija al enviar, para que una respuesta tardía de la IA quede en el chat donde se preguntó
     const isPrivate = this.isPrivateChat;
     const target = this.activeChatTarget();
-    target.push({ sender: 'USER', mode: 'CHAT', content: prompt, timestamp: new Date() });
+    const clientMessageId = crypto.randomUUID();
+    target.push({ sender: 'USER', mode: 'CHAT', content: prompt, timestamp: new Date(), clientMessageId });
     this.textPrompt = '';
-    this.isProcessing = true;
+    this.showMentions = false;
+    if (this.projectId) this.wsService.emitChatTyping(this.projectId, false);
+    this.isProcessing = asksAgent;
 
     if (this.projectId) {
       const history = this.priorHistory(isPrivate, target);
-      this.aiService.sendTextPrompt(this.projectId, prompt, this.selectedAgent.id, undefined, isPrivate, history).subscribe({
+      const selected = this.selectedNode ? { id: this.selectedNode.id, name: this.selectedNode.name } : null;
+      this.aiService.sendTextPrompt(this.projectId, prompt, this.selectedAgent.id, undefined, isPrivate, history, clientMessageId, selected).subscribe({
         next: (res) => {
           this.isProcessing = false;
+          if (!res?.aiMessage && !res?.aiResponse) {
+            this.scrollChatToBottom();
+            return;
+          }
           const reply = this.serverAiMessage(res, 'CHAT');
-          target.push(reply);
+          const existing = reply.id ? target.findIndex(item => item.id === reply.id) : -1;
+          if (existing >= 0) target[existing] = reply;
+          else target.push(reply);
           this.speakText(reply.content);
           this.scrollChatToBottom();
         },
         error: () => {
           this.isProcessing = false;
+          if (!asksAgent) return;
           target.push({
             sender: 'AI',
             mode: 'CHAT',
-            content: 'No se pudo conectar con el servicio de IA. El diagrama no cambió.',
+            content: 'No se pudo conectar con el servicio de IA. El diagrama no cambió. Tu mensaje quedó en el chat.',
             timestamp: new Date()
           });
         }
