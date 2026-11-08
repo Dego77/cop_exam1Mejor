@@ -166,15 +166,16 @@ import { colorForUser } from '../../core/utils/avatar-color';
             </button>
           </div>
           <div class="chat-input-row">
-            <input 
+            <textarea
               #chatPrompt
-              type="text" 
-              class="input-field" 
-              [(ngModel)]="textPrompt" 
-              placeholder="Escribe @ para mencionar a Agente IA o al equipo" 
+              class="input-field"
+              rows="1"
+              [(ngModel)]="textPrompt"
+              placeholder="Escribe @ para mencionar a Agente IA o al equipo"
               (ngModelChange)="onPromptChange()"
+              (input)="resizePrompt()"
               (keydown)="onPromptKeydown($event)"
-            />
+            ></textarea>
             <button class="btn btn-primary" (click)="sendTextPrompt()" [disabled]="isProcessing">
               <span>Enviar</span>
             </button>
@@ -648,11 +649,19 @@ import { colorForUser } from '../../core/utils/avatar-color';
     }
     .chat-input-row {
       display: flex;
+      align-items: flex-end;
       gap: 6px;
       width: 100%;
     }
-    .chat-input-row input {
+    .chat-input-row textarea {
       flex: 1;
+      resize: none;
+      min-height: 38px;
+      max-height: 140px;
+      line-height: 1.4;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
     .chat-actions-row {
       display: flex;
@@ -1125,7 +1134,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   private typerTimers = new Map<number, any>();
   private chatSocketSub?: Subscription;
   @ViewChild('chatScroll') chatScroll?: ElementRef<HTMLDivElement>;
-  @ViewChild('chatPrompt') chatPrompt?: ElementRef<HTMLInputElement>;
+  @ViewChild('chatPrompt') chatPrompt?: ElementRef<HTMLTextAreaElement>;
 
   isRecording = false;
   isPaused = false;
@@ -1458,11 +1467,18 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     this.typingTimer = setTimeout(() => this.wsService.emitChatTyping(this.projectId, false), 3000);
   }
 
+  resizePrompt(): void {
+    const box = this.chatPrompt?.nativeElement;
+    if (!box) return;
+    box.style.height = 'auto';
+    box.style.height = `${Math.min(box.scrollHeight, 140)}px`;
+  }
+
   onPromptKeydown(event: KeyboardEvent): void {
     const options = this.mentionOptions;
     const menuOpen = this.showMentions && options.length > 0;
     if (!menuOpen) {
-      if (event.key === 'Enter') {
+      if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         this.sendTextPrompt();
       }
@@ -1488,7 +1504,10 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     this.textPrompt = this.textPrompt.replace(/(^|\s)@[^\s@]*$/, `$1${option.token} `);
     this.showMentions = false;
     this.mentionIndex = 0;
-    setTimeout(() => this.chatPrompt?.nativeElement.focus());
+    setTimeout(() => {
+      this.chatPrompt?.nativeElement.focus();
+      this.resizePrompt();
+    });
   }
 
   private scrollChatToBottom(): void {
@@ -1521,6 +1540,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     target.push({ sender: 'USER', mode: 'CHAT', content: prompt, timestamp: new Date(), clientMessageId });
     this.textPrompt = '';
     this.showMentions = false;
+    setTimeout(() => this.resizePrompt());
     if (this.projectId) this.wsService.emitChatTyping(this.projectId, false);
     this.isProcessing = asksAgent;
 
