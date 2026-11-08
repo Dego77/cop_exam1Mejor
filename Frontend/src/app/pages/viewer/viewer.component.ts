@@ -69,7 +69,7 @@ import { ChatTextComponent } from '../../components/chat-text/chat-text.componen
             <div class="vc-text" *ngFor="let proposal of msg.proposals">{{ proposal.label }} · {{ proposal.status === 'applied' ? 'aplicado' : (proposal.status === 'rejected' ? 'no permitido' : 'pendiente') }}</div>
           </div>
           <div class="vc-status" *ngFor="let peer of usersWaitingAI">Agente IA está respondiendo a {{ peer.fullName }}</div>
-          <div class="vc-status" *ngFor="let peer of typers">{{ peer.fullName }} está escribiendo…</div>
+          <div class="vc-status" *ngIf="typingLabel">{{ typingLabel }}</div>
         </div>
       </aside>
     </div>
@@ -264,6 +264,14 @@ export class ViewerComponent implements OnInit, OnDestroy {
   private remoteCursorsMap = new Map<string, CursorData>();
   usersWaitingAI: { userId: number; fullName: string }[] = [];
   typers: { userId: number; fullName: string }[] = [];
+
+  get typingLabel(): string {
+    if (this.typers.length === 0) return '';
+    const names = this.typers.map(peer => (peer.fullName || 'Alguien').trim().split(/\s+/)[0]);
+    if (names.length === 1) return `${names[0]} está escribiendo…`;
+    if (names.length === 2) return `${names[0]} y ${names[1]} están escribiendo…`;
+    return `${names[0]}, ${names[1]} y ${names.length - 2} más están escribiendo…`;
+  }
   private typerTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private activityMessage = '';
   private activityTimer?: ReturnType<typeof setTimeout>;
@@ -444,7 +452,7 @@ export class ViewerComponent implements OnInit, OnDestroy {
     this.subs.add(this.wsService.cursorMoved$.subscribe(data => this.remoteCursorsMap.set(data.socketId, data)));
     this.subs.add(this.wsService.activity$.subscribe(activity => this.describeActivity(activity)));
     this.subs.add(this.wsService.chatTyping$.subscribe(evt => {
-      if (!evt || evt.projectId !== this.projectId) return;
+      if (!evt || evt.projectId !== this.projectId || String(evt.userId) === String(this.auth.currentUser?.id)) return;
       this.typers = this.typers.filter(peer => peer.userId !== evt.userId);
       clearTimeout(this.typerTimers.get(evt.userId));
       if (!evt.active) return;

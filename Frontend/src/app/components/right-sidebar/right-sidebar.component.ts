@@ -125,10 +125,11 @@ import { colorForUser } from '../../core/utils/avatar-color';
               <span class="dot animate-pulse">●</span>
               <span>Agente IA está respondiendo a {{ peer.fullName }}</span>
             </div>
+          </div>
 
-            <div class="ai-loading" *ngFor="let peer of typers">
-              <span>{{ peer.fullName }} está escribiendo…</span>
-            </div>
+          <div class="typing-line" *ngIf="typingLabel">
+            <span class="typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+            <span>{{ typingLabel }}</span>
           </div>
 
           <!-- Menú del modelo o agente de IA (estilo imagen 3) -->
@@ -169,9 +170,9 @@ import { colorForUser } from '../../core/utils/avatar-color';
             <textarea
               #chatPrompt
               class="input-field"
-              rows="1"
+              rows="2"
               [(ngModel)]="textPrompt"
-              placeholder="Escribe @ para mencionar a Agente IA o al equipo"
+              placeholder="Escribe @ para mencionar&#10;a Agente IA o al equipo"
               (ngModelChange)="onPromptChange()"
               (input)="resizePrompt()"
               (keydown)="onPromptKeydown($event)"
@@ -558,6 +559,33 @@ import { colorForUser } from '../../core/utils/avatar-color';
       font-size: 11px;
       color: var(--cyan);
     }
+    .typing-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 2px 2px 4px;
+      font-size: 12px;
+      font-style: italic;
+      color: #94a3b8;
+    }
+    .typing-dots {
+      display: inline-flex;
+      gap: 3px;
+      align-items: center;
+    }
+    .typing-dots span {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: typing-bounce 1.2s infinite ease-in-out;
+    }
+    .typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+    .typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes typing-bounce {
+      0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+      30% { opacity: 1; transform: translateY(-2px); }
+    }
     .agent-selector-wrapper {
       position: relative;
       margin-top: 4px;
@@ -656,12 +684,17 @@ import { colorForUser } from '../../core/utils/avatar-color';
     .chat-input-row textarea {
       flex: 1;
       resize: none;
-      min-height: 38px;
-      max-height: 140px;
-      line-height: 1.4;
+      box-sizing: border-box;
+      min-height: 64px;
+      max-height: 160px;
+      line-height: 1.35;
       overflow-y: auto;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
+    }
+    .chat-input-row textarea::placeholder {
+      color: #94a3b8;
+      white-space: pre-line;
     }
     .chat-actions-row {
       display: flex;
@@ -1127,6 +1160,14 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   // Colaboradores cuyo pedido a la IA todavía se está procesando (chat grupal)
   peersWaitingAI: { userId: number; fullName: string }[] = [];
   typers: { userId: number; fullName: string }[] = [];
+
+  get typingLabel(): string {
+    if (this.isPrivateChat || this.typers.length === 0) return '';
+    const names = this.typers.map(peer => (peer.fullName || 'Alguien').trim().split(/\s+/)[0]);
+    if (names.length === 1) return `${names[0]} está escribiendo…`;
+    if (names.length === 2) return `${names[0]} y ${names[1]} están escribiendo…`;
+    return `${names[0]}, ${names[1]} y ${names.length - 2} más están escribiendo…`;
+  }
   showMentions = false;
   mentionQuery = '';
   mentionIndex = 0;
@@ -1471,7 +1512,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     const box = this.chatPrompt?.nativeElement;
     if (!box) return;
     box.style.height = 'auto';
-    box.style.height = `${Math.min(box.scrollHeight, 140)}px`;
+    box.style.height = `${Math.min(Math.max(box.scrollHeight, 64), 160)}px`;
   }
 
   onPromptKeydown(event: KeyboardEvent): void {
