@@ -159,19 +159,21 @@ import { colorForUser } from '../../core/utils/avatar-color';
 
           <!-- Caja para escribir el pedido -->
           <div class="mention-menu" *ngIf="showMentions && mentionOptions.length">
-            <button type="button" class="mention-item" *ngFor="let option of mentionOptions" (click)="selectMention(option)">
+            <button type="button" class="mention-item" *ngFor="let option of mentionOptions; let i = index"
+              [class.active]="i === mentionIndex" (mouseenter)="mentionIndex = i" (click)="selectMention(option)">
               <span class="msg-avatar" *ngIf="option.kind === 'user'" [style.background]="option.color">{{ option.initial }}</span>
               {{ option.token }}
             </button>
           </div>
           <div class="chat-input-row">
             <input 
+              #chatPrompt
               type="text" 
               class="input-field" 
               [(ngModel)]="textPrompt" 
               placeholder="Escribe @ para mencionar a Agente IA o al equipo" 
               (ngModelChange)="onPromptChange()"
-              (keyup.enter)="sendTextPrompt()"
+              (keydown)="onPromptKeydown($event)"
             />
             <button class="btn btn-primary" (click)="sendTextPrompt()" [disabled]="isProcessing">
               <span>Enviar</span>
@@ -393,8 +395,13 @@ import { colorForUser } from '../../core/utils/avatar-color';
       background: transparent;
       color: var(--text-primary);
       border: none;
+      border-radius: 4px;
       cursor: pointer;
       padding: 4px 6px;
+    }
+    .mention-item.active {
+      background: rgba(0, 210, 255, 0.16);
+      color: var(--cyan);
     }
     .proposal-state { color: var(--text-secondary); font-size: 11px; }
     .right-sidebar {
@@ -1113,10 +1120,12 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   typers: { userId: number; fullName: string }[] = [];
   showMentions = false;
   mentionQuery = '';
+  mentionIndex = 0;
   private typingTimer: any;
   private typerTimers = new Map<number, any>();
   private chatSocketSub?: Subscription;
   @ViewChild('chatScroll') chatScroll?: ElementRef<HTMLDivElement>;
+  @ViewChild('chatPrompt') chatPrompt?: ElementRef<HTMLInputElement>;
 
   isRecording = false;
   isPaused = false;
@@ -1437,6 +1446,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     const match = this.textPrompt.match(/(^|\s)@([^\s@]*)$/);
     this.showMentions = !!match;
     this.mentionQuery = match ? match[2] : '';
+    this.mentionIndex = 0;
     if (this.isPrivateChat || !this.projectId) return;
     if (!this.textPrompt.trim()) {
       clearTimeout(this.typingTimer);
@@ -1448,9 +1458,37 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     this.typingTimer = setTimeout(() => this.wsService.emitChatTyping(this.projectId, false), 3000);
   }
 
+  onPromptKeydown(event: KeyboardEvent): void {
+    const options = this.mentionOptions;
+    const menuOpen = this.showMentions && options.length > 0;
+    if (!menuOpen) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        this.sendTextPrompt();
+      }
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      this.mentionIndex = (this.mentionIndex + 1) % options.length;
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      this.mentionIndex = (this.mentionIndex - 1 + options.length) % options.length;
+    } else if (event.key === 'Tab' || event.key === 'Enter') {
+      event.preventDefault();
+      const option = options[Math.min(this.mentionIndex, options.length - 1)];
+      if (option) this.selectMention(option);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      this.showMentions = false;
+    }
+  }
+
   selectMention(option: { token: string }): void {
     this.textPrompt = this.textPrompt.replace(/(^|\s)@[^\s@]*$/, `$1${option.token} `);
     this.showMentions = false;
+    this.mentionIndex = 0;
+    setTimeout(() => this.chatPrompt?.nativeElement.focus());
   }
 
   private scrollChatToBottom(): void {
