@@ -104,6 +104,7 @@ export function buildGroupChatPrompt(input: {
   relevant: { autor: string; tipo: string; texto: string }[];
   diagram: DiagramContext;
   selected: { nodeId: string; name: string } | null;
+  appliedChanges?: AppliedChange[];
 }): string {
   const rules = `
 Eres ClassForge AI, el Agente IA de un editor colaborativo de diagramas de clases UML.
@@ -146,7 +147,8 @@ REGLAS:
 8. No inventes clases ni miembros cuando el pedido es crear o dibujar solo lo que nombraron. Si piden recomendación, sí propones los atributos concretos que falten. Conserva ñ, á, é, í, ó, ú y ü.
    Identificadores: en una clase entidad el atributo id va primero. Si ya existe, di en qué posición está y no lo dupliques. Si no es el primero, prepara dejarlo primero. Si no existe y preguntaron por la llave, o pidieron recomendación para persistir esa entidad, propon "id: Long" al inicio.
    Clase de asociación: si un conector trae associationClassName, el tipo es AssociationClass o las dos multiplicidades son de muchos, esa clase se identifica por las entidades que une. No le des un id propio. Sus atributos son datos de la relación, no una copia de las llaves de los padres. Si ya tiene id, explica por qué sobra y prepara quitarlo.
-9. Si el pedido ordena agregar una clase, un atributo, un método o una relación que todavía no existe, dilo como algo que ya queda en el diagrama. No pidas Permitir. Una pregunta de recomendación o de concepto no es un pedido de dibujar: explícala y deja la sugerencia en Permitir. Si la clase ya existe, no la pongas en classesGenerated y dilo. Si el atributo, el método o la relación del mismo tipo ya existen, no los repitas y dilo. Pide Permitir también para borrar, quitar, editar, renombrar o cambiar una relación existente. message tiene como máximo 6 frases cortas. Devuelve solo el JSON pedido, sin markdown.
+9. Si el pedido ordena agregar una clase, un atributo, un método o una relación que todavía no existe, dilo como algo que ya queda en el diagrama. No pidas Permitir. Una pregunta de recomendación o de concepto no es un pedido de dibujar: explícala y deja la sugerencia en Permitir. Si la clase ya existe, no la pongas en classesGenerated y dilo. Si el atributo, el método o la relación del mismo tipo ya existen, no los repitas y dilo. Pide Permitir también para borrar, quitar, editar, renombrar o cambiar una relación existente.
+10. cambios_aplicados son los cambios que sí quedaron en el diagrama, del más antiguo al más nuevo. El que tiene ultimo_cambio true es el último. No digas que no hubo cambios si esa lista tiene elementos. message tiene como máximo 6 frases cortas. Devuelve solo el JSON pedido, sin markdown.
 `.trim();
 
   const consulta = {
@@ -158,6 +160,13 @@ REGLAS:
     mensajes_anteriores_relevantes: input.relevant,
     elemento_seleccionado: input.selected,
     diagrama_actual: input.diagram,
+    cambios_aplicados: (input.appliedChanges || []).map((change, index, all) => ({
+      etiqueta: change.label,
+      pedido_por: change.askedBy,
+      aplicado_por: change.decidedBy || change.askedBy,
+      ultimo_cambio: index === all.length - 1,
+      resumen: change.summary,
+    })),
   };
 
   return `${rules}\n\nCONSULTA:\n${JSON.stringify(consulta, null, 2)}`;
@@ -173,6 +182,102 @@ const ORDER = /(?:^|[\s,.;:!?¿¡])(a[nñ]ade|agrega|crea|elimina|borra|quita|re
 export function asksForAdvice(question: string): boolean {
   const text = String(question || '');
   return ADVICE.test(text) && !ORDER.test(text);
+}
+
+export interface AppliedChange {
+  label: string;
+  askedBy: string;
+  decidedBy?: string;
+  summary: string;
+  payload: any;
+}
+
+const UNDO_LAST = /deshac|deshaz|revierte|revertir/i;
+const UNDO_TARGET = /últim|ultim|lo que (?:hiciste|hicieron|se hizo)|el cambio/i;
+
+export function asksToUndoLast(question: string): boolean {
+  const text = String(question || '');
+  return UNDO_LAST.test(text) && UNDO_TARGET.test(text);
+}
+
+export function summarizePayload(payload: any): string {
+  const parts: string[] = [];
+  for (const item of asArray(payload?.classesGenerated)) parts.push(`creó la clase ${item?.name || item}`);
+  for (const item of asArray(payload?.classesModified)) {
+    const attributes = asArray(item?.attributesToAdd || item?.attributes).map((attr) => attr?.name).filter(Boolean);
+    const methods = asArray(item?.methodsToAdd || item?.methods).map((method) => method?.name).filter(Boolean);
+    if (attributes.length) parts.push(`agregó ${attributes.join(', ')} a ${item?.name}`);
+    if (methods.length) parts.push(`agregó el método ${methods.join(', ')} a ${item?.name}`);
+  }
+  for (const item of asArray(payload?.classesToDelete)) parts.push(`eliminó la clase ${item?.name || item}`);
+  for (const item of asArray(payload?.classesToRename)) parts.push(`renombró ${item?.oldName} a ${item?.newName}`);
+  for (const item of asArray(payload?.attributesToRemove)) parts.push(`quitó ${item?.attributeName} de ${item?.className}`);
+  for (const item of asArray(payload?.methodsToRemove)) parts.push(`quitó el método ${item?.methodName} de ${item?.className}`);
+  for (const item of asArray(payload?.connectorsGenerated)) parts.push(`creó la relación entre ${item?.sourceClassName} y ${item?.targetClassName}`);
+  for (const item of asArray(payload?.connectorsToDelete)) parts.push(`eliminó una relación${item?.sourceClassName ? ` entre ${item.sourceClassName} y ${item.targetClassName}` : ''}`);
+  for (const item of asArray(payload?.connectorsModified)) parts.push(`cambió la relación entre ${item?.sourceClassName} y ${item?.targetClassName}`);
+  return parts.join('; ') || 'cambió el diagrama';
+}
+
+export function collectAppliedChanges(messages: { proposals?: any }[]): AppliedChange[] {
+  const changes: AppliedChange[] = [];
+  for (const message of messages) {
+    const list = Array.isArray(message?.proposals) ? message.proposals : [];
+    for (const item of list) {
+      if (item?.status !== 'applied' || item?.replaceDiagram || !item?.payload) continue;
+      changes.push({
+        label: String(item.label || 'Cambio aplicado'),
+        askedBy: String(item.askedBy || ''),
+        decidedBy: item.decidedBy ? String(item.decidedBy) : undefined,
+        summary: summarizePayload(item.payload),
+        payload: item.payload,
+      });
+    }
+  }
+  return changes.slice(-5);
+}
+
+export function inverseChange(payload: any): any {
+  const inverse: any = {};
+  const created = asArray(payload?.classesGenerated);
+  if (created.length) inverse.classesToDelete = created.map((item) => ({ name: item?.name || item }));
+  const attributesToRemove: any[] = [];
+  const methodsToRemove: any[] = [];
+  for (const item of asArray(payload?.classesModified)) {
+    for (const attr of asArray(item?.attributesToAdd || item?.attributes)) {
+      if (attr?.name) attributesToRemove.push({ className: item?.name, attributeName: attr.name });
+    }
+    for (const method of asArray(item?.methodsToAdd || item?.methods)) {
+      if (method?.name) methodsToRemove.push({ className: item?.name, methodName: method.name });
+    }
+  }
+  if (attributesToRemove.length) inverse.attributesToRemove = attributesToRemove;
+  if (methodsToRemove.length) inverse.methodsToRemove = methodsToRemove;
+  const connectors = asArray(payload?.connectorsGenerated);
+  if (connectors.length) {
+    inverse.connectorsToDelete = connectors.map((item) => ({
+      sourceClassName: item?.sourceClassName,
+      targetClassName: item?.targetClassName,
+      type: item?.type,
+    }));
+  }
+  const renamed = asArray(payload?.classesToRename);
+  if (renamed.length) {
+    inverse.classesToRename = renamed
+      .filter((item) => item?.oldName && item?.newName)
+      .map((item) => ({ nodeId: item.nodeId, oldName: item.newName, newName: item.oldName }));
+  }
+  const deleted = asArray(payload?.classesToDelete);
+  if (deleted.length) {
+    inverse.classesGenerated = deleted
+      .map((item) => ({ name: typeof item === 'string' ? item : item?.name, stereotype: 'Entity', attributes: [], methods: [] }))
+      .filter((item) => item.name);
+  }
+  return inverse;
+}
+
+function asArray(value: any): any[] {
+  return Array.isArray(value) ? value : [];
 }
 
 export function userConfirmedDeletion(question: string, recent: { tipo?: string; texto?: string }[]): boolean {

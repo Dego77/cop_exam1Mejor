@@ -8,6 +8,10 @@ import {
   canDecideProposal,
   clarifyPendingApply,
   asksForAdvice,
+  asksToUndoLast,
+  collectAppliedChanges,
+  inverseChange,
+  summarizePayload,
   mentionsAgent,
   personalizeAiReply,
   describeDirectApply,
@@ -91,6 +95,14 @@ function payloadFrom(source: any): any {
 
 function payloadHasWork(payload: any): boolean {
   return MUTATION_KEYS.some((key) => Array.isArray(payload?.[key]) && payload[key].length > 0);
+}
+
+function mergePayload(base: any, extra: any): any {
+  const next = { ...(base || {}) };
+  for (const key of MUTATION_KEYS) {
+    if (Array.isArray(extra?.[key]) && extra[key].length) next[key] = [...(next[key] || []), ...extra[key]];
+  }
+  return next;
 }
 
 function clientHistory(req: AuthRequest): AIConversationTurn[] {
@@ -792,6 +804,7 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
         })),
       };
       const advice = asksForAdvice(stripAgentMention(prompt));
+      let appliedPayload: any = null;
       for (const item of proposals) {
         const checked = validateMutationPayload(item.payload, snapshot);
         item.payload = checked.payload;
@@ -806,6 +819,7 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
         if (!suggestion && payloadHasWork(review.safe)) {
           await applyMutationPayload(diagram.id, review.safe);
           appliedDirectly = true;
+          appliedPayload = mergePayload(appliedPayload, review.safe);
           item.payload = review.critical;
         } else if (suggestion) {
           item.payload = { ...review.critical, ...review.safe };
@@ -816,13 +830,25 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
       for (let index = proposals.length - 1; index >= 0; index -= 1) {
         if (!payloadHasWork(proposals[index].payload)) proposals.splice(index, 1);
       }
+      if (payloadHasWork(appliedPayload)) {
+        proposals.push({
+          id: 'aplicado',
+          label: summarizePayload(appliedPayload).slice(0, 180),
+          askedBy: askerName,
+          decidedBy: askerName,
+          status: 'applied',
+          replaceDiagram: false,
+          payload: appliedPayload,
+        });
+      }
     }
-    if (!aiResponse.error) {
+    if (!aiResponse.error && proposals.some((item) => item.id !== 'aplicado' && item.id !== 'deshacer' && item.status !== 'applied')) {
       aiResponse.message = buildDeletionConfirmation(diagram, proposals, askerName, aiResponse.message);
     }
     if (!isPrivate) aiResponse.message = personalizeAiReply(aiResponse.message, askerName, firstReply);
-    if (!aiResponse.error && proposals.length) aiResponse.message = clarifyPendingApply(aiResponse.message, true);
-    if (!aiResponse.error && !isPrivate) aiResponse.message = describeDirectApply(aiResponse.message, appliedDirectly, proposals.length > 0);
+    const pendingProposal = proposals.some((item) => !item.status || item.status === 'pending');
+    if (!aiResponse.error && pendingProposal) aiResponse.message = clarifyPendingApply(aiResponse.message, true);
+    if (!aiResponse.error && !isPrivate) aiResponse.message = describeDirectApply(aiResponse.message, appliedDirectly, pendingProposal);
     if (appliedDirectly) req.app.get('io')?.to(projectId).emit('diagram-reloaded', { projectId });
 
     let aiMessage: ChatMessageRecord | null = null;
@@ -868,6 +894,29 @@ async function answerGroupChat(
       createdAt: row.createdAt,
     }));
   const stored = await prisma.aIChatContext.findUnique({ where: { projectId } });
+  const appliedChanges = collectAppliedChanges(rows);
+  if (asksToUndoLast(question)) {
+    const last = appliedChanges[appliedChanges.length - 1];
+    const inverse = last ? inverseChange(last.payload) : {};
+    const message = !last
+      ? 'No hay un cambio aplicado reciente para deshacer.'
+      : payloadHasWork(inverse)
+        ? `El último cambio fue «${last.label}»: ${last.summary}. Dejo preparada la reversa para que pulses Permitir.`
+        : `El último cambio fue «${last.label}»: ${last.summary}. No guardé datos suficientes para revertirlo.`;
+    return {
+      aiResponse: {
+        message,
+        action: 'MODIFY_CLASSES',
+        proposals: payloadHasWork(inverse) ? [{
+          id: 'deshacer',
+          label: `Deshacer: ${last.label}`.slice(0, 180),
+          askedBy: askerName,
+          ...inverse,
+        }] : [],
+      },
+      firstReply: !prior,
+    };
+  }
   const selected = selectChatContext(turns, question, stored?.summary || '');
   const diagramContext = buildDiagramContext(diagram);
   const selectedElement = selectedNode?.id
@@ -882,6 +931,7 @@ async function answerGroupChat(
     relevant: selected.relevant,
     diagram: diagramContext,
     selected: selectedElement,
+    appliedChanges,
   });
   const aiResponse = await AIAgentService.processGroupChatPrompt(fullPrompt, model);
   if (!aiResponse.error) {

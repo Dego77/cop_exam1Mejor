@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   asksForAdvice,
+  asksToUndoLast,
   buildGroupChatPrompt,
   canDecideProposal,
   clarifyPendingApply,
+  collectAppliedChanges,
   describeDirectApply,
   holdUnconfirmedDeletes,
+  inverseChange,
   mentionsAgent,
   personalizeAiReply,
   selectChatContext,
@@ -122,6 +125,18 @@ describe('chat grupal', () => {
     assert.equal(asksForAdvice('qué es una llave primaria'), true);
     assert.equal(asksForAdvice('añade atributos a la clase Producto, como ser nombre, descripcion'), false);
     assert.equal(asksForAdvice('crea la clase Cliente'), false);
+    assert.equal(asksToUndoLast('deshaz el ultimo cambio'), true);
+    assert.equal(asksToUndoLast('deshaz la clase DetalleVenta'), false);
+  });
+
+  it('recuerda el último cambio aplicado y prepara su reversa', () => {
+    const applied = collectAppliedChanges([
+      { proposals: [{ status: 'pending', label: 'Pendiente', payload: { classesGenerated: [{ name: 'Vieja' }] } }] },
+      { proposals: [{ status: 'applied', label: 'Convertir DetalleVenta', askedBy: 'miguel', decidedBy: 'miguel', payload: { classesModified: [{ name: 'DetalleVenta', attributesToAdd: [{ name: 'cantidad' }] }] } }] },
+    ]);
+    assert.equal(applied.length, 1);
+    assert.equal(applied[0].summary, 'agregó cantidad a DetalleVenta');
+    assert.deepEqual(inverseChange(applied[0].payload).attributesToRemove, [{ className: 'DetalleVenta', attributeName: 'cantidad' }]);
   });
 });
 
