@@ -7,16 +7,16 @@ import {
   buildGroupChatPrompt,
   canDecideProposal,
   clarifyPendingApply,
-  holdUnconfirmedDeletes,
+  asksForAdvice,
   mentionsAgent,
   personalizeAiReply,
-  userConfirmedDeletion,
+  describeDirectApply,
   RECENT_LIMIT,
   selectChatContext,
   stripAgentMention,
   SUMMARY_TRIGGER,
 } from '../services/chat-prompt';
-import { validateMutationPayload } from '../services/diagram-commands';
+import { validateMutationPayload, reviewDiagramChange } from '../services/diagram-commands';
 
 const CHAT_AUTHOR_SELECT = { id: true, fullName: true, avatarUrl: true };
 
@@ -184,6 +184,13 @@ const RELATION_NAMES: Record<string, string> = {
   Dependency: 'dependencia',
 };
 
+function withIdentifierFirst(attrs: any[]): any[] {
+  const list = Array.isArray(attrs) ? attrs : [];
+  const keys = list.filter((item) => String(item?.name || '').toLocaleLowerCase() === 'id');
+  const rest = list.filter((item) => String(item?.name || '').toLocaleLowerCase() !== 'id');
+  return [...keys, ...rest];
+}
+
 function joinList(items: string[]): string {
   if (items.length < 2) return items[0] || '';
   return `${items.slice(0, -1).join(', ')} y ${items[items.length - 1]}`;
@@ -307,6 +314,7 @@ function buildDiagramContext(diagram: any): { nodes: any[]; connectors: any[] } 
       type: c.type,
       sourceMultiplicity: c.sourceMultiplicity,
       targetMultiplicity: c.targetMultiplicity,
+      associationClassName: c.associationClassNodeId ? (nodesById.get(c.associationClassNodeId)?.name || null) : null,
     }))
     .filter((c: any) => c.sourceClassName && c.targetClassName);
   return { nodes, connectors };
@@ -539,7 +547,7 @@ async function applyClassMutations(
         : existingNodes.find(n => n.name.toLowerCase() === clsName?.toLowerCase());
       if (matchNode) {
         const currentAttrs = (matchNode.attributes as any[]) || [];
-        const updatedAttrs = currentAttrs.filter(a => a.name?.toLowerCase() !== attrName?.toLowerCase());
+        const updatedAttrs = withIdentifierFirst(currentAttrs.filter(a => a.name?.toLowerCase() !== attrName?.toLowerCase()));
         const updated = await prisma.node.update({
           where: { id: matchNode.id },
           data: { attributes: updatedAttrs },
@@ -581,7 +589,7 @@ async function applyClassMutations(
         const newAttrs = mod.attributesToAdd || mod.attributes || [];
         const newMeths = mod.methodsToAdd || mod.methods || [];
 
-        const updatedAttrs = [...currentAttrs];
+        const updatedAttrs = withIdentifierFirst([...currentAttrs]);
         for (const a of newAttrs) {
           if (!updatedAttrs.some(x => x.name?.toLowerCase() === a.name?.toLowerCase())) {
             updatedAttrs.push(a);
@@ -594,12 +602,13 @@ async function applyClassMutations(
             updatedMeths.push(m);
           }
         }
+        const orderedAttrs = withIdentifierFirst(updatedAttrs);
 
         const updated = await prisma.node.update({
           where: { id: matchNode.id },
-          data: { attributes: updatedAttrs, methods: updatedMeths },
+          data: { attributes: orderedAttrs, methods: updatedMeths },
         });
-        matchNode.attributes = updatedAttrs;
+        matchNode.attributes = orderedAttrs;
         matchNode.methods = updatedMeths;
         updatedNodes.push(updated);
       }
@@ -619,12 +628,13 @@ async function applyClassMutations(
         const newAttrs = cls.attributes || [];
         const newMeths = cls.methods || [];
 
-        const updatedAttrs = [...currentAttrs];
+        const updatedAttrs = withIdentifierFirst([...currentAttrs]);
         for (const a of newAttrs) {
           if (!updatedAttrs.some(x => x.name?.toLowerCase() === a.name?.toLowerCase())) {
             updatedAttrs.push(a);
           }
         }
+        const orderedAttrs = withIdentifierFirst(updatedAttrs);
 
         const updatedMeths = [...currentMeths];
         for (const m of newMeths) {
@@ -635,9 +645,9 @@ async function applyClassMutations(
 
         const updated = await prisma.node.update({
           where: { id: matchNode.id },
-          data: { attributes: updatedAttrs, methods: updatedMeths },
+          data: { attributes: orderedAttrs, methods: updatedMeths },
         });
-        matchNode.attributes = updatedAttrs;
+        matchNode.attributes = orderedAttrs;
         matchNode.methods = updatedMeths;
         updatedNodes.push(updated);
       } else {
@@ -646,7 +656,7 @@ async function applyClassMutations(
             diagramId,
             name: cls.name,
             stereotype: cls.stereotype || 'Entity',
-            attributes: cls.attributes || [],
+            attributes: withIdentifierFirst(cls.attributes || []),
             methods: cls.methods || [],
             positionX: currentX,
             positionY: currentY,
@@ -764,13 +774,43 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
     }
 
     const proposals = aiResponse.error ? [] : buildStoredProposals(aiResponse, askerName);
+    let appliedDirectly = false;
     if (!aiResponse.error && !isPrivate) {
       const snapshot = diagramSnapshot(diagram);
+      const nodesById = new Map((diagram.nodes || []).map((node: any) => [node.id, node]));
+      const reviewDiagram = {
+        nodes: (diagram.nodes || []).map((node: any) => ({
+          id: node.id,
+          name: node.name,
+          attributes: node.attributes || [],
+          methods: node.methods || [],
+        })),
+        connectors: (diagram.connectors || []).map((item: any) => ({
+          type: item.type,
+          sourceClassName: nodesById.get(item.sourceNodeId)?.name,
+          targetClassName: nodesById.get(item.targetNodeId)?.name,
+        })),
+      };
+      const advice = asksForAdvice(stripAgentMention(prompt));
       for (const item of proposals) {
         const checked = validateMutationPayload(item.payload, snapshot);
         item.payload = checked.payload;
         for (const note of checked.notes) {
           if (!aiResponse.message.includes(note)) aiResponse.message = `${aiResponse.message} ${note}`.trim();
+        }
+        const review = reviewDiagramChange(item.payload, reviewDiagram);
+        for (const note of review.notes) {
+          if (!aiResponse.message.includes(note)) aiResponse.message = `${aiResponse.message} ${note}`.trim();
+        }
+        const suggestion = advice || String(item.askedBy || '').trim().toLocaleLowerCase() === 'ia';
+        if (!suggestion && payloadHasWork(review.safe)) {
+          await applyMutationPayload(diagram.id, review.safe);
+          appliedDirectly = true;
+          item.payload = review.critical;
+        } else if (suggestion) {
+          item.payload = { ...review.critical, ...review.safe };
+        } else {
+          item.payload = review.critical;
         }
       }
       for (let index = proposals.length - 1; index >= 0; index -= 1) {
@@ -782,6 +822,8 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
     }
     if (!isPrivate) aiResponse.message = personalizeAiReply(aiResponse.message, askerName, firstReply);
     if (!aiResponse.error && proposals.length) aiResponse.message = clarifyPendingApply(aiResponse.message, true);
+    if (!aiResponse.error && !isPrivate) aiResponse.message = describeDirectApply(aiResponse.message, appliedDirectly, proposals.length > 0);
+    if (appliedDirectly) req.app.get('io')?.to(projectId).emit('diagram-reloaded', { projectId });
 
     let aiMessage: ChatMessageRecord | null = null;
     if (!isPrivate) {
@@ -857,10 +899,6 @@ async function answerGroupChat(
     const checked = validateMutationPayload(aiResponse, snapshot);
     Object.assign(aiResponse, checked.payload);
     if (checked.notes.length) aiResponse.message = `${aiResponse.message} ${checked.notes.join(' ')}`.trim();
-    const confirmed = userConfirmedDeletion(question, selected.recent);
-    if (holdUnconfirmedDeletes(aiResponse, confirmed)) {
-      aiResponse.message = `${aiResponse.message} No preparé el borrado para aplicar. Si confirmas en el siguiente mensaje, dejo la propuesta.`.trim();
-    }
   }
   return { aiResponse, firstReply: !prior };
 }

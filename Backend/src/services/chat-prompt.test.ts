@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  asksForAdvice,
   buildGroupChatPrompt,
   canDecideProposal,
   clarifyPendingApply,
+  describeDirectApply,
   holdUnconfirmedDeletes,
   mentionsAgent,
   personalizeAiReply,
@@ -11,7 +13,7 @@ import {
   stripAgentMention,
   userConfirmedDeletion,
 } from './chat-prompt';
-import { affectedConnectors, validateMutationPayload } from './diagram-commands';
+import { affectedConnectors, reviewDiagramChange, validateMutationPayload } from './diagram-commands';
 
 const diagram = {
   nodes: [
@@ -79,10 +81,13 @@ describe('chat grupal', () => {
     assert.match(prompt, /c-91/);
     assert.match(prompt, /connectorId/);
     assert.match(prompt, /No aceptes automáticamente toda solicitud de borrado/);
-    assert.match(prompt, /no generes comandos todavía/);
+    assert.match(prompt, /pulsen Permitir/);
     assert.match(prompt, /attributesToAdd/);
     assert.match(prompt, /connectorsGenerated/);
     assert.match(prompt, /Editar un atributo/);
+    assert.match(prompt, /id va primero/);
+    assert.match(prompt, /clase de asociación/);
+    assert.match(prompt, /atributos esenciales/);
   });
 
   it('no deja listo un borrado hasta que la persona confirme', () => {
@@ -104,6 +109,19 @@ describe('chat grupal', () => {
     assert.match(said, /Permitir/);
     assert.equal(clarifyPendingApply('Isaac, dejo la relación lista. Usa Permitir.', true), 'Isaac, dejo la relación lista. Usa Permitir.');
     assert.equal(clarifyPendingApply('Isaac, no hay cambios.', false), 'Isaac, no hay cambios.');
+  });
+
+  it('un agregado directo no pide Permitir', () => {
+    const said = describeDirectApply('Isaac, dejo preparada la modificación para que pulses Permitir.', true, false);
+    assert.match(said, /ya quedó en el diagrama/);
+    assert.doesNotMatch(said, /Permitir/);
+  });
+
+  it('una recomendación o un concepto no es un pedido de dibujar', () => {
+    assert.equal(asksForAdvice('eres un senior, recomiéndame cual agregar'), true);
+    assert.equal(asksForAdvice('qué es una llave primaria'), true);
+    assert.equal(asksForAdvice('añade atributos a la clase Producto, como ser nombre, descripcion'), false);
+    assert.equal(asksForAdvice('crea la clase Cliente'), false);
   });
 });
 
@@ -134,5 +152,32 @@ describe('comandos del diagrama', () => {
   it('un JSON inválido no es una respuesta de diagrama', () => {
     const raw = 'no es json';
     assert.throws(() => JSON.parse(raw));
+  });
+
+  it('no vuelve a crear una clase ni un atributo que ya existen', () => {
+    const canvas = {
+      nodes: [{ id: 'cliente', name: 'Cliente', attributes: [{ name: 'nombre' }], methods: [] }],
+      connectors: [],
+    };
+    const result = reviewDiagramChange({
+      classesGenerated: [{ name: 'Cliente', attributes: [{ name: 'nombre' }, { name: 'email', type: 'String' }] }],
+    }, canvas);
+    assert.equal(result.safe.classesGenerated, undefined);
+    assert.deepEqual(result.safe.classesModified[0].attributesToAdd.map((item: any) => item.name), ['email']);
+    assert.match(result.notes.join(' '), /ya está en el diagrama/);
+    assert.match(result.notes.join(' '), /ya tiene el atributo nombre/);
+  });
+
+  it('un borrado sigue siendo crítico y un atributo nuevo es directo', () => {
+    const canvas = {
+      nodes: [{ id: 'producto', name: 'Producto', attributes: [{ name: 'precio' }], methods: [] }],
+      connectors: [],
+    };
+    const result = reviewDiagramChange({
+      classesModified: [{ name: 'Producto', attributesToAdd: [{ name: 'descripcion', type: 'String' }] }],
+      classesToDelete: [{ nodeId: 'producto', name: 'Producto' }],
+    }, canvas);
+    assert.equal(result.safe.classesModified[0].attributesToAdd[0].name, 'descripcion');
+    assert.equal(result.critical.classesToDelete.length, 1);
   });
 });

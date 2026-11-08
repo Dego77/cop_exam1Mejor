@@ -107,3 +107,134 @@ export function affectedConnectors(nodeId: string, diagram: DiagramSnapshot) {
     .filter((item) => item.sourceNodeId === nodeId || item.targetNodeId === nodeId)
     .map((item) => item.id);
 }
+
+const SAFE_CHANGE_KEYS = ['classesGenerated', 'classesModified', 'connectorsGenerated', 'classesToReposition'] as const;
+const CRITICAL_CHANGE_KEYS = [
+  'classesToDelete', 'connectorsToDelete', 'classesToRename',
+  'attributesToRemove', 'methodsToRemove', 'connectorsModified',
+] as const;
+
+export interface ReviewDiagram {
+  nodes: { id: string; name: string; attributes?: { name?: string }[]; methods?: { name?: string }[] }[];
+  connectors: { sourceClassName?: string; targetClassName?: string; type?: string }[];
+}
+
+function memberName(item: any): string {
+  return String(item?.name || '').trim();
+}
+
+function namesOf(items: { name?: string }[] | undefined): Set<string> {
+  return new Set((items || []).map((item) => memberName(item).toLocaleLowerCase()).filter(Boolean));
+}
+
+export function reviewDiagramChange(payload: any, diagram: ReviewDiagram): { safe: any; critical: any; notes: string[] } {
+  const notes: string[] = [];
+  const source = { ...(payload || {}) };
+  const nodes = diagram?.nodes || [];
+  const connectors = diagram?.connectors || [];
+
+  const generated: any[] = [];
+  const modified = asList(source.classesModified).map((item) => ({ ...item }));
+  for (const cls of asList(source.classesGenerated)) {
+    const existing = nodes.find((node) => sameName(node.name, cls?.name));
+    if (!existing) {
+      generated.push(cls);
+      continue;
+    }
+    notes.push(`La clase ${existing.name} ya está en el diagrama. No creé otra.`);
+    const knownAttributes = namesOf(existing.attributes);
+    const knownMethods = namesOf(existing.methods);
+    const attributesToAdd = asList(cls?.attributes).filter((item) => {
+      const name = memberName(item);
+      if (!name) return false;
+      if (knownAttributes.has(name.toLocaleLowerCase())) {
+        notes.push(`La clase ${existing.name} ya tiene el atributo ${name}.`);
+        return false;
+      }
+      return true;
+    });
+    const methodsToAdd = asList(cls?.methods).filter((item) => {
+      const name = memberName(item);
+      if (!name) return false;
+      if (knownMethods.has(name.toLocaleLowerCase())) {
+        notes.push(`La clase ${existing.name} ya tiene el método ${name}.`);
+        return false;
+      }
+      return true;
+    });
+    if (attributesToAdd.length || methodsToAdd.length) {
+      const current = modified.find((item) => sameName(item.name, existing.name));
+      if (current) {
+        current.attributesToAdd = [...asList(current.attributesToAdd), ...attributesToAdd];
+        current.methodsToAdd = [...asList(current.methodsToAdd), ...methodsToAdd];
+      } else {
+        modified.push({ name: existing.name, attributesToAdd, methodsToAdd });
+      }
+    }
+  }
+  source.classesGenerated = generated;
+
+  const keptModified: any[] = [];
+  for (const mod of modified) {
+    const existing = nodes.find((node) => sameName(node.name, mod?.name));
+    if (!existing) {
+      notes.push(`No agregué miembros a ${mod?.name || 'una clase'} porque esa clase no está en el diagrama.`);
+      continue;
+    }
+    const knownAttributes = namesOf(existing.attributes);
+    const knownMethods = namesOf(existing.methods);
+    const attributesToAdd = asList(mod.attributesToAdd || mod.attributes).filter((item) => {
+      const name = memberName(item);
+      if (!name) return false;
+      if (knownAttributes.has(name.toLocaleLowerCase())) {
+        notes.push(`La clase ${existing.name} ya tiene el atributo ${name}.`);
+        return false;
+      }
+      knownAttributes.add(name.toLocaleLowerCase());
+      return true;
+    });
+    const methodsToAdd = asList(mod.methodsToAdd || mod.methods).filter((item) => {
+      const name = memberName(item);
+      if (!name) return false;
+      if (knownMethods.has(name.toLocaleLowerCase())) {
+        notes.push(`La clase ${existing.name} ya tiene el método ${name}.`);
+        return false;
+      }
+      knownMethods.add(name.toLocaleLowerCase());
+      return true;
+    });
+    if (attributesToAdd.length || methodsToAdd.length) {
+      keptModified.push({ name: existing.name, attributesToAdd, methodsToAdd });
+    }
+  }
+  source.classesModified = keptModified;
+
+  const keptConnectors: any[] = [];
+  for (const conn of asList(source.connectorsGenerated)) {
+    const sourceName = conn?.sourceClassName;
+    const targetName = conn?.targetClassName;
+    const hasEnds = nodes.some((node) => sameName(node.name, sourceName)) && nodes.some((node) => sameName(node.name, targetName));
+    if (!hasEnds) {
+      notes.push(`No creé la relación entre ${sourceName || '?'} y ${targetName || '?'} porque falta una de las clases.`);
+      continue;
+    }
+    const samePair = connectors.some((item) => {
+      const direct = sameName(item.sourceClassName, sourceName) && sameName(item.targetClassName, targetName);
+      const swapped = sameName(item.sourceClassName, targetName) && sameName(item.targetClassName, sourceName);
+      if (!direct && !swapped) return false;
+      return !conn?.type || !item.type || sameName(item.type, conn.type);
+    });
+    if (samePair) {
+      notes.push(`La relación entre ${sourceName} y ${targetName} ya está en el diagrama. No creé otra.`);
+      continue;
+    }
+    keptConnectors.push(conn);
+  }
+  source.connectorsGenerated = keptConnectors;
+
+  const safe: any = {};
+  const critical: any = {};
+  for (const key of SAFE_CHANGE_KEYS) if (asList(source[key]).length) safe[key] = source[key];
+  for (const key of CRITICAL_CHANGE_KEYS) if (asList(source[key]).length) critical[key] = source[key];
+  return { safe, critical, notes };
+}
