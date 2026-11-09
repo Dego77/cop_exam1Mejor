@@ -5,6 +5,7 @@ export interface ImportedDiagram {
   projectName: string;
   nodes: UMLNode[];
   connectors: UMLConnector[];
+  error?: string;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -13,6 +14,14 @@ export class EaImporterService {
     const cleanProjectName = fileName.replace(/\.(eap|eapx|qeax|xmi|xml)$/i, '');
     const parser = new DOMParser();
     const xmlDoc = parser.parseFromString(xmlString, 'text/xml');
+    if (!xmlString.trim().startsWith('<') || xmlDoc.getElementsByTagName('parsererror').length > 0) {
+      return {
+        projectName: cleanProjectName,
+        nodes: [],
+        connectors: [],
+        error: 'Ese archivo no es un XMI. En Enterprise Architect usa Publicar → XML y abre el .xml o el .xmi.',
+      };
+    }
 
     const nodes: UMLNode[] = [];
     const connectors: UMLConnector[] = [];
@@ -66,62 +75,18 @@ export class EaImporterService {
 
       if ((type.includes('Class') || type.includes('Interface') || type.includes('Enumeration')) && name) {
         // Saltar solo si este xmi:id exacto ya se leyó
-        if (nodeMap.has(id)) continue;
-
-        const attributes: any[] = [];
-        const methods: any[] = [];
-
-        // Leer atributos (<ownedAttribute> o <attribute>)
-        const attrNodes = [...Array.from(el.getElementsByTagName('ownedAttribute')), ...Array.from(el.getElementsByTagName('attribute'))];
-        for (let j = 0; j < attrNodes.length; j++) {
-          const attrEl = attrNodes[j];
-          const attrName = attrEl.getAttribute('name');
-          if (!attrName) continue;
-
-          const vis = attrEl.getAttribute('visibility') || attrEl.getAttribute('scope') || 'public';
-          const visibility = vis === 'private' ? '-' : vis === 'protected' ? '#' : '+';
-
-          let attrType = 'String';
-          const propsEl = attrEl.getElementsByTagName('properties')[0];
-          if (propsEl && propsEl.getAttribute('type')) {
-            attrType = propsEl.getAttribute('type') || 'String';
-          } else {
-            const typeChild = attrEl.getElementsByTagName('type')[0];
-            if (typeChild) {
-              const href = typeChild.getAttribute('href') || typeChild.getAttribute('name') || typeChild.getAttribute('type') || '';
-              if (href.includes('#')) {
-                attrType = href.split('#')[1] || 'String';
-              } else if (href) {
-                attrType = href;
-              }
-            }
-          }
-
-          attributes.push({ visibility, name: attrName, type: attrType });
+        if (nodeMap.has(id)) {
+          this.mergeAttributes(nodeMap.get(id)!, el);
+          continue;
         }
 
-        // Leer métodos (<ownedOperation> o <operation>)
-        const methodNodes = [...Array.from(el.getElementsByTagName('ownedOperation')), ...Array.from(el.getElementsByTagName('operation'))];
-        for (let k = 0; k < methodNodes.length; k++) {
-          const mEl = methodNodes[k];
-          const mName = mEl.getAttribute('name');
-          if (!mName) continue;
-
-          const vis = mEl.getAttribute('visibility') || mEl.getAttribute('scope') || 'public';
-          const visibility = vis === 'private' ? '-' : vis === 'protected' ? '#' : '+';
-
-          let returnType = 'void';
-          const propsEl = mEl.getElementsByTagName('properties')[0];
-          if (propsEl && propsEl.getAttribute('type')) {
-            returnType = propsEl.getAttribute('type') || 'void';
-          }
-
-          methods.push({ visibility, name: mName, returnType });
-        }
+        const attributes = this.readAttributes(el);
+        const methods = this.readMethods(el);
 
         let stereotype = 'Entity';
-        if (type.includes('Interface')) stereotype = 'Interface';
-        if (type.includes('Enumeration')) stereotype = 'Enum';
+        if (type.includes('AssociationClass')) stereotype = 'AssociationClass';
+        else if (type.includes('Interface')) stereotype = 'Interface';
+        else if (type.includes('Enumeration')) stereotype = 'Enum';
 
         // Ver si hay geometría para este xmi:id o subject
         let pos = geometryMap.get(id);
@@ -317,6 +282,68 @@ export class EaImporterService {
       nodes,
       connectors
     };
+  }
+
+  private mergeAttributes(node: UMLNode, el: Element): void {
+    const incoming = this.readAttributes(el);
+    if (incoming.length === 0) return;
+    const names = new Set((node.attributes || []).map(attr => attr.name));
+    node.attributes = [...(node.attributes || []), ...incoming.filter(attr => !names.has(attr.name))];
+  }
+
+  private readAttributes(el: Element): { visibility: string; name: string; type: string }[] {
+    const attrs: { visibility: string; name: string; type: string }[] = [];
+    const seen = new Set<string>();
+    const attrNodes = [...Array.from(el.getElementsByTagName('ownedAttribute')), ...Array.from(el.getElementsByTagName('attribute'))];
+    for (const attrEl of attrNodes) {
+      if (attrEl.getAttribute('association')) continue;
+      const attrName = attrEl.getAttribute('name') || '';
+      if (!attrName || /^[*0-9.]+$/.test(attrName) || seen.has(attrName)) continue;
+      seen.add(attrName);
+      const vis = (attrEl.getAttribute('visibility') || attrEl.getAttribute('scope') || 'public').toLowerCase();
+      const visibility = vis === 'private' ? '-' : vis === 'protected' ? '#' : '+';
+      attrs.push({ visibility, name: attrName, type: this.readAttributeType(attrEl) });
+    }
+    return attrs;
+  }
+
+  private readAttributeType(attrEl: Element): string {
+    const props = Array.from(attrEl.getElementsByTagName('properties')).find(prop => prop.getAttribute('type'));
+    const declared = props?.getAttribute('type');
+    if (declared && declared.toLowerCase() !== 'class') return this.normalizeEaType(declared);
+    const typeChild = attrEl.getElementsByTagName('type')[0];
+    const idref = typeChild?.getAttribute('xmi:idref') || typeChild?.getAttribute('idref') || '';
+    if (idref.startsWith('EAJava_')) return this.normalizeEaType(idref.slice('EAJava_'.length));
+    const href = typeChild?.getAttribute('href') || typeChild?.getAttribute('name') || '';
+    if (href.includes('#')) return this.normalizeEaType(href.split('#').pop() || 'String');
+    if (href) return this.normalizeEaType(href);
+    return 'String';
+  }
+
+  private normalizeEaType(raw: string): string {
+    const value = raw.trim();
+    const lower = value.toLowerCase();
+    if (lower === 'int' || lower === 'integer') return 'int';
+    if (lower === 'long') return 'long';
+    if (lower === 'double' || lower === 'float' || lower === 'decimal' || lower === 'number') return 'double';
+    if (lower === 'boolean' || lower === 'bool') return 'boolean';
+    if (lower === 'date' || lower === 'datetime' || lower === 'timestamp') return 'Date';
+    if (lower === 'string' || lower === 'char' || lower === 'varchar') return 'String';
+    return value;
+  }
+
+  private readMethods(el: Element): { visibility: string; name: string; returnType: string }[] {
+    const methods: { visibility: string; name: string; returnType: string }[] = [];
+    const methodNodes = [...Array.from(el.getElementsByTagName('ownedOperation')), ...Array.from(el.getElementsByTagName('operation'))];
+    for (const methodEl of methodNodes) {
+      const name = methodEl.getAttribute('name');
+      if (!name) continue;
+      const vis = (methodEl.getAttribute('visibility') || methodEl.getAttribute('scope') || 'public').toLowerCase();
+      const visibility = vis === 'private' ? '-' : vis === 'protected' ? '#' : '+';
+      const props = methodEl.getElementsByTagName('properties')[0];
+      methods.push({ visibility, name, returnType: props?.getAttribute('type') || 'void' });
+    }
+    return methods;
   }
 
   private extractMultiplicityWithVisibility(endpointEl: Element, isTarget: boolean = false, connectorEl?: Element): string {

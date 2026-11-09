@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "tsx --test src/services/chat-prompt.test.ts",
+    "test": "tsx --test src/services/chat-prompt.test.ts src/services/sql.service.test.ts src/services/schema-relations.test.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev"
   },

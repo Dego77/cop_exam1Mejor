@@ -65,7 +65,7 @@ export class ProjectService {
   generateSQL(projectId: string): Observable<{ sql: string }> {
     return this.http.post<{ sql: string }>(
       `${API_BASE}/api/sql/generate/${projectId}`,
-      {},
+      { projectId },
       { headers: this.headers }
     );
   }

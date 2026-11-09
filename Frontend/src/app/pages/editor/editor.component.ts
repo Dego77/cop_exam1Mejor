@@ -890,17 +890,26 @@ export class EditorComponent implements OnInit, OnDestroy {
 
   onExportSQL(): void {
     if (!this.currentProject) return;
+    const projectName = this.currentProject.name || 'schema';
     this.projectService.generateSQL(this.currentProject.id).subscribe({
       next: (res) => {
+        if (!res.sql) {
+          alert('No se pudo armar el script SQL de este diagrama.');
+          return;
+        }
         const blob = new Blob([res.sql], { type: 'text/sql' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
+        const safeName = projectName.replace(/[^\w\-]+/g, '_');
         a.href = url;
-        a.download = `${this.currentProject?.name || 'schema'}.sql`;
+        a.download = `${safeName}.sql`;
+        document.body.appendChild(a);
         a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
       },
       error: () => {
-        alert('Script SQL DDL PostgreSQL generado con éxito.');
+        alert('No se pudo generar el script SQL. Inténtalo de nuevo.');
       }
     });
   }
@@ -1019,6 +1028,14 @@ export class EditorComponent implements OnInit, OnDestroy {
 
   private processOpenedFile(fileName: string, xmlContent: string): void {
     const imported = this.eaImporterService.parseXMI(fileName, xmlContent);
+    if (imported.error) {
+      alert(imported.error);
+      return;
+    }
+    if ((imported.nodes || []).length === 0) {
+      alert('El archivo se abrió, pero no tiene clases para mostrar.');
+      return;
+    }
     const projName = imported.projectName || fileName.replace(/\.(eap|xmi|xml|eapx)$/i, '');
 
     // Quitar duplicados de la lista de proyectos del menú
@@ -1051,6 +1068,7 @@ export class EditorComponent implements OnInit, OnDestroy {
         (this.diagramService as any).nodesSubject.next(nodesToImport);
         (this.diagramService as any).connectorsSubject.next(connectorsToImport);
         this.diagramService.saveDiagramLocalSnapshot(proj.id, nodesToImport, connectorsToImport);
+        setTimeout(() => this.canvas?.fitToNodes(nodesToImport));
 
         // Guardar en PostgreSQL los nodos y conectores importados, mapeando los UUID
         this.diagramService.saveCurrentDiagram().subscribe({
@@ -1088,6 +1106,7 @@ export class EditorComponent implements OnInit, OnDestroy {
           (this.diagramService as any).nodesSubject.next(imported.nodes || []);
           (this.diagramService as any).connectorsSubject.next(imported.connectors || []);
           this.diagramService.saveDiagramLocalSnapshot(fallbackProj.id, imported.nodes || [], imported.connectors || []);
+          setTimeout(() => this.canvas?.fitToNodes(imported.nodes || []));
         }
       });
     }

@@ -6,6 +6,7 @@ const router = Router();
 
 router.use(authenticateToken);
 
+router.post('/generate/:projectId', generatePostgreSQLScript);
 router.post('/generate', generatePostgreSQLScript);
 
 export default router;

@@ -5,7 +5,8 @@ import { PostgreSQLGeneratorService } from '../services/sql.service';
 
 export const generatePostgreSQLScript = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { projectId, options } = req.body;
+    const projectId = req.params.projectId || req.body?.projectId;
+    const options = req.body?.options;
 
     if (!projectId) {
       res.status(400).json({ error: 'projectId es obligatorio.' });
@@ -41,6 +42,7 @@ export const generatePostgreSQLScript = async (req: AuthRequest, res: Response):
       sourceMultiplicity: c.sourceMultiplicity || '',
       targetMultiplicity: c.targetMultiplicity || '',
       label: c.label || '',
+      associationClassNodeId: c.associationClassNodeId || null,
     }));
 
     const sqlScript = PostgreSQLGeneratorService.generateDDL(nodes, connectors, options);
@@ -48,6 +50,7 @@ export const generatePostgreSQLScript = async (req: AuthRequest, res: Response):
     res.json({
       projectId,
       diagramId: diagram.id,
+      sql: sqlScript,
       sqlScript,
       generatedAt: new Date().toISOString(),
     });
