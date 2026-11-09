@@ -949,11 +949,27 @@ public interface ${className}Repository extends JpaRepository<${className}, ${pk
     const repoVar = `${varName}Repository`;
     const pkType = ent.effectivePk ? ent.effectivePk.type : 'Long';
     const pkImport = this.extraModelImport(pkType, className);
+    const links = (ent.relationships || []).filter((rel: any) => rel.type === 'MANY_TO_ONE');
+    const repos = new Map<string, string>();
+    for (const rel of links) {
+      repos.set(rel.targetEntity, `${this.sanitizeFieldName(rel.targetEntity)}Repository`);
+    }
+    const linkImports = [...repos.keys()]
+      .map((target) => `import com.examen.backend.repository.${target}Repository;\n`)
+      .join('');
+    const linkFields = [...repos.entries()]
+      .map(([target, repo]) => `    @Autowired\n    private ${target}Repository ${repo};\n\n`)
+      .join('');
+    const reattach = links.map((rel: any) => {
+      const pascal = rel.fieldName.charAt(0).toUpperCase() + rel.fieldName.slice(1);
+      const repo = repos.get(rel.targetEntity);
+      return `        if (entity.get${pascal}() != null && entity.get${pascal}().getId() != null) {\n            entity.set${pascal}(${repo}.getReferenceById(entity.get${pascal}().getId()));\n        }\n`;
+    }).join('');
 
     return `package com.examen.backend.service;
 
 import com.examen.backend.model.${className};
-${pkImport}import com.examen.backend.repository.${className}Repository;
+${pkImport}${linkImports}import com.examen.backend.repository.${className}Repository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.util.List;
@@ -965,7 +981,7 @@ public class ${className}Service {
     @Autowired
     private ${className}Repository ${repoVar};
 
-    public List<${className}> findAll() {
+${linkFields}    public List<${className}> findAll() {
         return ${repoVar}.findAll();
     }
 
@@ -974,7 +990,7 @@ public class ${className}Service {
     }
 
     public ${className} save(${className} entity) {
-        return ${repoVar}.save(entity);
+${reattach}        return ${repoVar}.save(entity);
     }
 
     public void deleteById(${pkType} id) {
