@@ -31,6 +31,7 @@ import { Subscription } from 'rxjs';
     <div class="editor-layout">
       <!-- Barra superior -->
       <app-navbar
+        #navbar
         [currentProject]="currentProject"
         [projects]="projects"
         [onlineUsers]="onlineUsers"
@@ -119,6 +120,7 @@ import { Subscription } from 'rxjs';
 })
 export class EditorComponent implements OnInit, OnDestroy {
   @ViewChild(CanvasComponent) canvas?: CanvasComponent;
+  @ViewChild('navbar') navbar?: NavbarComponent;
 
   projects: Project[] = [];
   currentProject: Project | null = null;
@@ -938,6 +940,7 @@ export class EditorComponent implements OnInit, OnDestroy {
   onExportBackend(): void {
     const projectId = this.currentProject?.id || '';
     const projectName = this.currentProject?.name || 'ExamenBackend';
+    this.navbar?.setGeneratingBackend(true);
 
     this.projectService.downloadSpringBootZip(projectId, this.nodes, this.connectors, projectName).subscribe({
       next: (blob: Blob) => {
@@ -945,11 +948,15 @@ export class EditorComponent implements OnInit, OnDestroy {
         const a = document.createElement('a');
         a.href = url;
         a.download = `${projectName.toLowerCase()}_springboot.zip`;
+        document.body.appendChild(a);
         a.click();
+        a.remove();
         window.URL.revokeObjectURL(url);
+        this.navbar?.setGeneratingBackend(false);
       },
       error: (err) => {
         console.error('Error generando Backend Spring Boot:', err);
+        this.navbar?.setGeneratingBackend(false);
         alert('Error al empaquetar el proyecto Spring Boot en ZIP.');
       }
     });

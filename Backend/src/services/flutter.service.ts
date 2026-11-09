@@ -1314,7 +1314,11 @@ flutter run -d 5d53339f
     const assetsFolder = root.folder('assets')!;
     assetsFolder.file('schema_context.json', this.generateSchemaContextJson(entities, projectName));
     if (voskPath) {
-      assetsFolder.folder('models')!.file('vosk-model-small-es-0.42.zip', fs.readFileSync(voskPath));
+      assetsFolder.folder('models')!.file(
+        'vosk-model-small-es-0.42.zip',
+        fs.readFileSync(voskPath),
+        { compression: 'STORE' }
+      );
     }
   }
 
