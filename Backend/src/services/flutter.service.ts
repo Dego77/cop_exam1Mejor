@@ -1,3 +1,4 @@
+import fs from 'fs';
 import JSZip from 'jszip';
 
 /**
@@ -73,10 +74,11 @@ export class FlutterGeneratorService {
   // pubspec.yaml / configuración
   // ---------------------------------------------------------------------
 
-  private static generatePubspecYaml(projectName: string): string {
+  private static generatePubspecYaml(projectName: string, includeVosk: boolean): string {
     const pkgName = `${this.toDartFileName(projectName)}_app`;
+    const voskAsset = includeVosk ? '\n    - assets/models/vosk-model-small-es-0.42.zip' : '';
     return `name: ${pkgName}
-description: "App Flutter generada automaticamente por ClassForge para ${projectName}: CRUD contra el backend Spring Boot generado, mas un agente de chat y voz con IA local (Gemma on-device)."
+description: "App Flutter generada automaticamente por ClassForge para ${projectName}: guarda por voz sin internet y sincroniza con el backend Spring Boot."
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -88,10 +90,14 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.8
   http: ^1.6.0
-  speech_to_text: ^7.5.0
   flutter_tts: ^4.2.5
   flutter_gemma: ^1.8.3
   flutter_gemma_litertlm: ^1.6.4
+  vosk_flutter_2: ^1.0.0
+  sqflite: ^2.4.2
+  path: ^1.9.1
+  permission_handler: ^11.4.0
+  file_picker: ^8.1.7
 
 dev_dependencies:
   flutter_test:
@@ -101,7 +107,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/schema_context.json
+    - assets/schema_context.json${voskAsset}
 `;
   }
 
@@ -581,23 +587,123 @@ ${buildItemFromControllers}
   // IA local on-device (Gemma via flutter_gemma) + pantalla de chat/voz
   // ---------------------------------------------------------------------
 
+  private static generateLocalStoreDart(): string {
+    return `import 'package:path/path.dart' as p;
+import 'package:sqflite/sqflite.dart';
+
+class PendingOp {
+  final int id;
+  final String entidad;
+  final String endpoint;
+  final String payload;
+  final bool synced;
+  final String createdAt;
+
+  PendingOp({
+    required this.id,
+    required this.entidad,
+    required this.endpoint,
+    required this.payload,
+    required this.synced,
+    required this.createdAt,
+  });
+
+  factory PendingOp.fromRow(Map<String, Object?> row) {
+    return PendingOp(
+      id: row['id'] as int,
+      entidad: row['entidad'] as String,
+      endpoint: row['endpoint'] as String,
+      payload: row['payload'] as String,
+      synced: (row['synced'] as int) == 1,
+      createdAt: row['created_at'] as String,
+    );
+  }
+}
+
+/// Cola local. La orden de voz se guarda aqui primero y solo despues se envia al backend.
+class LocalStore {
+  static Database? _db;
+
+  static Future<Database> _open() async {
+    if (_db != null) return _db!;
+    final path = p.join(await getDatabasesPath(), 'classforge_local.db');
+    _db = await openDatabase(
+      path,
+      version: 1,
+      onCreate: (db, version) async {
+        await db.execute('''
+          CREATE TABLE pending_ops (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entidad TEXT NOT NULL,
+            endpoint TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            synced INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+          )
+        ''');
+      },
+    );
+    return _db!;
+  }
+
+  static Future<int> insert({
+    required String entidad,
+    required String endpoint,
+    required String payload,
+  }) async {
+    final db = await _open();
+    return db.insert('pending_ops', {
+      'entidad': entidad,
+      'endpoint': endpoint,
+      'payload': payload,
+      'synced': 0,
+      'created_at': DateTime.now().toIso8601String(),
+    });
+  }
+
+  static Future<List<PendingOp>> pending() async {
+    final db = await _open();
+    final rows = await db.query('pending_ops', where: 'synced = 0', orderBy: 'id DESC');
+    return rows.map(PendingOp.fromRow).toList();
+  }
+
+  static Future<void> markSynced(int id) async {
+    final db = await _open();
+    await db.update('pending_ops', {'synced': 1}, where: 'id = ?', whereArgs: [id]);
+  }
+}
+`;
+  }
+
   private static generateLocalAiServiceDart(): string {
-    return `import 'package:flutter/services.dart' show rootBundle;
+    return `import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_gemma/flutter_gemma.dart';
 
-/// Envoltorio sobre flutter_gemma (LLM Gemma on-device, sin llamadas a la nube en tiempo
-/// de ejecucion) generado por ClassForge. Usa tipos dinamicos para el modelo/chat porque la
-/// version exacta de la API puede variar entre releases de flutter_gemma; si el compilador
-/// se queja de un metodo/propiedad aqui, revisa el README del paquete instalado
-/// (pub.dev/packages/flutter_gemma) y ajusta esta clase — el resto de la app no depende de
-/// los tipos internos de flutter_gemma, solo de ask()/ensureModelReady()/dispose().
+class VoiceCommand {
+  final String accion;
+  final String entidad;
+  final String endpoint;
+  final Map<String, dynamic> datos;
+
+  VoiceCommand({
+    required this.accion,
+    required this.entidad,
+    required this.endpoint,
+    required this.datos,
+  });
+}
+
+/// Gemma 3 1B en el telefono. No conversa: convierte una frase en una orden JSON
+/// usando las clases del diagrama que ClassForge dejo en assets/schema_context.json.
 class LocalAiService {
-  // Modelo Gemma cuantizado pequeno (~1B params) en formato .litertlm. Se descarga la
-  // primera vez que se ejecuta la app (requiere internet); despues corre 100% offline.
-  // Los modelos Gemma en Hugging Face suelen requerir cuenta + token (ver README.md).
   static const String _modelFileName = 'Gemma3-1B-IT_multi-prefill-seq_q4_ekv4096.litertlm';
   static const String _modelUrl =
       'https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/Gemma3-1B-IT_multi-prefill-seq_q4_ekv4096.litertlm';
+  static const String _phoneDownloadPath =
+      '/storage/emulated/0/Download/Gemma3-1B-IT_multi-prefill-seq_q4_ekv4096.litertlm';
 
   dynamic _model;
   dynamic _chat;
@@ -608,17 +714,30 @@ class LocalAiService {
     _schemaContext = await rootBundle.loadString('assets/schema_context.json');
   }
 
-  /// Descarga el modelo si aun no esta instalado en el dispositivo. [onProgress] recibe
-  /// valores 0-100. [hfToken] es opcional: solo necesario si el modelo en Hugging Face
-  /// esta protegido (ver README.md sobre --dart-define=HF_TOKEN=...).
-  Future<void> ensureModelReady({void Function(double progress)? onProgress, String? hfToken}) async {
+  Future<void> ensureModelReady({
+    void Function(double progress)? onProgress,
+    String? hfToken,
+    String? pickedFilePath,
+  }) async {
     final installed = await FlutterGemma.isModelInstalled(_modelFileName);
     if (installed) return;
 
-    await FlutterGemma.installModel(
+    final installer = FlutterGemma.installModel(
       modelType: ModelType.gemmaIt,
       fileType: ModelFileType.litertlm,
-    )
+    );
+    String? localPath = pickedFilePath;
+    if (localPath == null) {
+      try {
+        if (File(_phoneDownloadPath).existsSync()) localPath = _phoneDownloadPath;
+      } catch (_) {}
+    }
+    if (localPath != null) {
+      await installer.fromFile(localPath).install();
+      return;
+    }
+
+    await installer
         .fromNetwork(_modelUrl, token: hfToken)
         .withProgress((progress) => onProgress?.call(progress.toDouble()))
         .install();
@@ -627,20 +746,71 @@ class LocalAiService {
   Future<void> _ensureChat() async {
     if (_chat != null) return;
     await _loadSchemaContext();
-    _model = await FlutterGemma.getActiveModel(maxTokens: 2048);
+    _model = await FlutterGemma.getActiveModel(maxTokens: 512);
     _chat = await _model.createChat(
-      systemInstruction: 'Eres el agente de IA local de esta app (generada por ClassForge). '
-          'Responde siempre en espanol, de forma breve y precisa, usando como contexto el '
-          'siguiente esquema de datos en JSON del backend: \$_schemaContext',
+      systemInstruction: 'Eres el interprete de ordenes de esta app. '
+          'Responde unicamente con un JSON valido, sin markdown ni texto extra, de esta forma: '
+          '{"accion":"REGISTRAR","entidad":"NombreDeLaClase","datos":{"campo":"valor"}}. '
+          'La entidad tiene que ser una clase del esquema. Los campos de datos tienen que ser atributos de esa clase. '
+          'No inventes clases ni campos. Si la frase no pide registrar nada, usa "accion":"DESCONOCIDA". '
+          'Esquema: \$_schemaContext',
     );
   }
 
-  /// Envia [prompt] al modelo local y devuelve su respuesta como texto.
-  Future<String> ask(String prompt) async {
+  Future<VoiceCommand> interpret(String phrase) async {
+    await _loadSchemaContext();
+    _chat = null;
     await _ensureChat();
-    await _chat.addQueryChunk(Message.text(text: prompt, isUser: true));
+    await _chat.addQueryChunk(Message.text(text: phrase, isUser: true));
     final response = await _chat.generateChatResponse();
-    return response.toString();
+    final raw = response.toString();
+    final match = RegExp(r'\\{[\\s\\S]*\\}').firstMatch(raw);
+    if (match == null) {
+      throw Exception('Gemma no devolvio una orden. Dijo: \$raw');
+    }
+    final decoded = jsonDecode(match.group(0)!);
+    if (decoded is! Map) {
+      throw Exception('La orden no es un objeto JSON.');
+    }
+    final accion = (decoded['accion'] ?? '').toString().toUpperCase();
+    final entidadPedida = (decoded['entidad'] ?? '').toString();
+    final datosRaw = decoded['datos'];
+    final datos = datosRaw is Map ? Map<String, dynamic>.from(datosRaw) : <String, dynamic>{};
+
+    final schema = jsonDecode(_schemaContext!) as Map<String, dynamic>;
+    final entidades = (schema['entidades'] as List<dynamic>? ?? const []);
+    Map<String, dynamic>? entidad;
+    for (final item in entidades) {
+      if (item is Map && (item['entidad'] ?? '').toString().toLowerCase() == entidadPedida.toLowerCase()) {
+        entidad = Map<String, dynamic>.from(item);
+        break;
+      }
+    }
+    if (accion != 'REGISTRAR' || entidad == null) {
+      throw Exception('No entendi una orden de registro. Gemma respondio: \$raw');
+    }
+
+    final atributos = (entidad['atributos'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .map((a) => Map<String, dynamic>.from(a))
+        .toList();
+    final payload = <String, dynamic>{};
+    datos.forEach((key, value) {
+      final attr = atributos.cast<Map<String, dynamic>?>().firstWhere(
+        (a) => (a?['nombre'] ?? '').toString().toLowerCase() == key.toString().toLowerCase(),
+        orElse: () => null,
+      );
+      if (attr != null && attr['pk'] != true && value != null && value.toString().trim().isNotEmpty) {
+        payload[attr['nombre'].toString()] = value;
+      }
+    });
+
+    return VoiceCommand(
+      accion: 'REGISTRAR',
+      entidad: entidad['entidad'].toString(),
+      endpoint: entidad['tabla'].toString(),
+      datos: payload,
+    );
   }
 
   Future<void> dispose() async {
@@ -653,18 +823,21 @@ class LocalAiService {
   }
 
   private static generateAiChatScreenDart(): string {
-    return `import 'package:flutter/material.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
+    return `import 'dart:async';
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:vosk_flutter_2/vosk_flutter_2.dart';
+
+import '../config/api_config.dart';
 import '../services/local_ai_service.dart';
+import '../services/local_store.dart';
+import 'package:http/http.dart' as http;
 
-class _ChatMessage {
-  final String text;
-  final bool isUser;
-  _ChatMessage(this.text, this.isUser);
-}
-
-/// Pantalla de agente conversacional (chat + voz) con IA local, generada por ClassForge.
+/// Pantalla de voz. Vosk oye sin internet, Gemma arma la orden y SQLite la guarda.
 class AiChatScreen extends StatefulWidget {
   const AiChatScreen({super.key});
 
@@ -674,170 +847,262 @@ class AiChatScreen extends StatefulWidget {
 
 class _AiChatScreenState extends State<AiChatScreen> {
   final LocalAiService _ai = LocalAiService();
-  final stt.SpeechToText _speech = stt.SpeechToText();
   final FlutterTts _tts = FlutterTts();
-  final TextEditingController _controller = TextEditingController();
-  final List<_ChatMessage> _messages = [];
+  final List<PendingOp> _pending = [];
 
+  SpeechService? _speech;
+  StreamSubscription<String>? _partialSub;
+  StreamSubscription<String>? _resultSub;
+  String _heard = '';
+  String _status = 'Preparando la voz y el modelo...';
   bool _modelReady = false;
+  bool _listening = false;
+  bool _busy = false;
   bool _downloading = false;
   double _downloadProgress = 0;
-  bool _listening = false;
-  bool _sending = false;
 
   @override
   void initState() {
     super.initState();
     _tts.setLanguage('es-ES');
-    _prepareModel();
+    _prepare();
   }
 
-  Future<void> _prepareModel() async {
+  Future<void> _prepare() async {
+    await _reloadPending();
+    try {
+      final mic = await Permission.microphone.request();
+      if (!mic.isGranted) {
+        setState(() => _status = 'Sin permiso de microfono no puedo oir.');
+        return;
+      }
+      final vosk = VoskFlutterPlugin.instance();
+      final modelPath = await ModelLoader().loadFromAssets('assets/models/vosk-model-small-es-0.42.zip');
+      final model = await vosk.createModel(modelPath);
+      final recognizer = await vosk.createRecognizer(model: model, sampleRate: 16000);
+      _speech = await vosk.initSpeechService(recognizer);
+      _partialSub = _speech!.onPartial().listen((raw) {
+        final text = _textFromVosk(raw);
+        if (text.isEmpty || !mounted) return;
+        setState(() => _heard = text);
+      });
+      _resultSub = _speech!.onResult().listen((raw) {
+        final text = _textFromVosk(raw);
+        if (text.isEmpty || !mounted) return;
+        setState(() => _heard = text);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _status = 'No pude cargar el modelo de voz. Copia vosk-model-small-es-0.42.zip dentro de assets/models. Detalle: \$e');
+      return;
+    }
+
     setState(() => _downloading = true);
-    // Token opcional para modelos Gemma protegidos en Hugging Face. Se pasa en build/run
-    // con: flutter run --dart-define=HF_TOKEN=tu_token (ver README.md). Nunca lo hardcodees.
     const hfToken = String.fromEnvironment('HF_TOKEN');
     try {
       await _ai.ensureModelReady(
-        onProgress: (p) => setState(() => _downloadProgress = p),
+        onProgress: (p) {
+          if (mounted) setState(() => _downloadProgress = p);
+        },
         hfToken: hfToken.isEmpty ? null : hfToken,
       );
       if (!mounted) return;
       setState(() {
         _modelReady = true;
         _downloading = false;
+        _status = 'Listo. Pulsa el microfono y dicta la orden.';
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _downloading = false);
-      _messages.add(_ChatMessage(
-        'No se pudo descargar/inicializar el modelo de IA local: \$e\\n'
-        'Revisa tu conexion a internet y, si el modelo requiere autenticacion en Hugging '
-        'Face, configura --dart-define=HF_TOKEN=tu_token (ver README.md).',
-        false,
-      ));
+      setState(() {
+        _downloading = false;
+        _status = 'Gemma no esta en el telefono. Elige el archivo .litertlm o descarga con HF_TOKEN. Detalle: \$e';
+      });
     }
   }
 
-  Future<void> _send(String text) async {
-    if (text.trim().isEmpty || !_modelReady || _sending) return;
-    setState(() {
-      _messages.add(_ChatMessage(text, true));
-      _sending = true;
-    });
-    _controller.clear();
+  String _textFromVosk(String raw) {
     try {
-      final reply = await _ai.ask(text);
-      if (!mounted) return;
-      setState(() => _messages.add(_ChatMessage(reply, false)));
-      await _tts.speak(reply);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _messages.add(_ChatMessage('Error del agente de IA local: \$e', false)));
-    } finally {
-      if (mounted) setState(() => _sending = false);
-    }
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final text = decoded['text'] ?? decoded['partial'];
+        if (text is String) return text.trim();
+      }
+    } catch (_) {}
+    return raw.trim();
+  }
+
+  Future<void> _reloadPending() async {
+    final rows = await LocalStore.pending();
+    if (!mounted) return;
+    setState(() {
+      _pending
+        ..clear()
+        ..addAll(rows);
+    });
   }
 
   Future<void> _toggleListening() async {
+    final speech = _speech;
+    if (speech == null || !_modelReady || _busy) return;
     if (_listening) {
-      await _speech.stop();
+      await speech.stop();
       setState(() => _listening = false);
+      final phrase = _heard.trim();
+      if (phrase.isNotEmpty) await _register(phrase);
       return;
     }
-    final available = await _speech.initialize();
-    if (!available) return;
-    setState(() => _listening = true);
-    await _speech.listen(
-      localeId: 'es_ES',
-      onResult: (result) {
-        _controller.text = result.recognizedWords;
-        if (result.finalResult) {
-          setState(() => _listening = false);
-          _send(result.recognizedWords);
+    setState(() {
+      _heard = '';
+      _listening = true;
+      _status = 'Te escucho...';
+    });
+    await speech.start();
+  }
+
+  Future<void> _register(String phrase) async {
+    setState(() {
+      _busy = true;
+      _status = 'Interpretando: \$phrase';
+    });
+    try {
+      final command = await _ai.interpret(phrase);
+      final payload = jsonEncode(command.datos);
+      await LocalStore.insert(entidad: command.entidad, endpoint: command.endpoint, payload: payload);
+      await _reloadPending();
+      final spoken = 'Guarde \${command.entidad} en el telefono.';
+      setState(() => _status = spoken);
+      await _tts.speak(spoken);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _status = 'No pude registrar esa orden. \$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _pickGemma() async {
+    final result = await FilePicker.platform.pickFiles();
+    final path = result?.files.single.path;
+    if (path == null) return;
+    setState(() {
+      _downloading = true;
+      _status = 'Copiando Gemma al telefono...';
+    });
+    try {
+      await _ai.ensureModelReady(pickedFilePath: path);
+      if (!mounted) return;
+      setState(() {
+        _modelReady = true;
+        _downloading = false;
+        _status = 'Listo. Pulsa el microfono y dicta la orden.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _downloading = false;
+        _status = 'No pude instalar ese archivo. \$e';
+      });
+    }
+  }
+
+  Future<void> _sync() async {
+    setState(() => _busy = true);
+    var sent = 0;
+    var failed = 0;
+    final rows = await LocalStore.pending();
+    for (final op in rows) {
+      try {
+        final res = await http.post(
+          Uri.parse('\${ApiConfig.baseUrl}/\${op.endpoint}'),
+          headers: {'Content-Type': 'application/json'},
+          body: op.payload,
+        );
+        if (res.statusCode == 200 || res.statusCode == 201) {
+          await LocalStore.markSynced(op.id);
+          sent++;
+        } else {
+          failed++;
         }
-      },
-    );
+      } catch (_) {
+        failed++;
+      }
+    }
+    await _reloadPending();
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _status = failed == 0
+          ? 'Sincronice \$sent registro(s) con el servidor.'
+          : 'Enviados: \$sent. Sin red o con error: \$failed. Se quedan en el telefono.';
+    });
   }
 
   @override
   void dispose() {
+    _partialSub?.cancel();
+    _resultSub?.cancel();
+    _speech?.stop();
     _ai.dispose();
     _tts.stop();
-    _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Agente IA Local')),
-      body: Column(
-        children: [
-          if (_downloading)
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  Text('Descargando modelo de IA local... \${_downloadProgress.toStringAsFixed(0)}%'),
-                  const SizedBox(height: 8),
-                  LinearProgressIndicator(value: _downloadProgress / 100),
-                ],
+      appBar: AppBar(title: const Text('Voz sin internet')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(_status),
+            if (_downloading) ...[
+              const SizedBox(height: 8),
+              LinearProgressIndicator(value: _downloadProgress > 0 ? _downloadProgress / 100 : null),
+            ],
+            const SizedBox(height: 12),
+            Text(_heard.isEmpty ? 'Aun no oigo nada.' : _heard, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _modelReady && !_busy ? _toggleListening : null,
+              icon: Icon(_listening ? Icons.stop : Icons.mic),
+              label: Text(_listening ? 'Detener y guardar' : 'Hablar'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton(
+              onPressed: _modelReady || _busy ? null : _pickGemma,
+              child: const Text('Elegir archivo de Gemma'),
+            ),
+            const SizedBox(height: 8),
+            FilledButton.tonal(
+              onPressed: _busy ? null : _sync,
+              child: const Text('Sincronizar con el servidor'),
+            ),
+            const SizedBox(height: 16),
+            Text('Guardados en el telefono: \${_pending.length}'),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView.builder(
+                itemCount: _pending.length,
+                itemBuilder: (context, index) {
+                  final op = _pending[index];
+                  return ListTile(
+                    title: Text(op.entidad),
+                    subtitle: Text(op.payload),
+                  );
+                },
               ),
             ),
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) {
-                final m = _messages[index];
-                return Align(
-                  alignment: m.isUser ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 4),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: m.isUser ? Colors.indigo.shade100 : Colors.grey.shade200,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(m.text),
-                  ),
-                );
-              },
-            ),
-          ),
-          if (_sending) const LinearProgressIndicator(),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: Icon(_listening ? Icons.mic : Icons.mic_none),
-                  onPressed: _modelReady ? _toggleListening : null,
-                ),
-                Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    enabled: _modelReady && !_sending,
-                    decoration: const InputDecoration(hintText: 'Preguntale algo al agente...'),
-                    onSubmitted: _send,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.send),
-                  onPressed: _modelReady && !_sending ? () => _send(_controller.text) : null,
-                ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 `;
   }
-
   // ---------------------------------------------------------------------
   // main.dart (navegación entre pantallas de entidades + agente IA)
   // ---------------------------------------------------------------------
@@ -895,8 +1160,8 @@ class _HomeScreenState extends State<HomeScreen> {
   int _index = 0;
 
   final List<Widget> _screens = [
-${screenEntries}
     const AiChatScreen(),
+${screenEntries}
   ];
 
   @override
@@ -907,8 +1172,8 @@ ${screenEntries}
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
         destinations: [
+          const NavigationDestination(icon: Icon(Icons.mic_none), label: 'Voz'),
 ${destinationEntries}
-          const NavigationDestination(icon: Icon(Icons.smart_toy_outlined), label: 'Agente IA'),
         ],
       ),
     );
@@ -970,30 +1235,26 @@ Edita \`lib/config/api_config.dart\` y ajusta \`baseUrl\` segun donde corra tu b
 - iOS Simulator / desktop: \`http://localhost:8080/api/v1\`.
 - Dispositivo fisico: la IP real de tu maquina en la red local.
 
-## 4. IA local (Gemma on-device)
+## 4. Voz sin internet
 
-El agente descarga un modelo Gemma cuantizado (~1B parametros, formato \`.litertlm\`) la
-**primera vez** que abres la pantalla "Agente IA" (necesita internet esa vez); despues corre
-100% offline en el dispositivo, sin llamar a ningun servicio en la nube.
+La primera pestaña oye con Vosk, interpreta la frase con Gemma 3 1B y guarda el registro en SQLite.
+El botón **Sincronizar con el servidor** envía lo pendiente a \`ApiConfig.baseUrl\`.
 
-Los modelos Gemma en Hugging Face suelen estar protegidos (requieren cuenta gratuita +
-aceptar la licencia + un access token). Si la descarga falla con un error de autenticacion:
+1. Copia \`vosk-model-small-es-0.42.zip\` a \`assets/models/\` si el zip generado no lo trajo.
+2. Después de \`flutter create\`, abre \`android/app/src/main/AndroidManifest.xml\` y, dentro de \`<manifest>\`, agrega:
 
-1. Crea una cuenta en https://huggingface.co y acepta la licencia del modelo
-   \`litert-community/Gemma3-1B-IT\`.
-2. Genera un access token en tu perfil de Hugging Face.
-3. Corre la app pasando el token por variable de compilacion (nunca lo hardcodees ni lo
-   subas a git):
-
+   \`\`\`xml
+   <uses-permission android:name="android.permission.RECORD_AUDIO"/>
    \`\`\`
-   flutter run --dart-define=HF_TOKEN=tu_token_de_huggingface
-   \`\`\`
+
+3. Pasa el archivo de Gemma al teléfono (carpeta Download) o elige el \`.litertlm\` la primera vez, con Wi-Fi. Después de instalarlo, la voz funciona en modo avión.
+4. En un teléfono físico cambia \`lib/config/api_config.dart\` a la IP de tu computadora, por ejemplo \`http://192.168.1.20:8080/api/v1\`.
 
 ## 5. Ejecutar
 
 \`\`\`
 flutter pub get
-flutter run
+flutter run -d 5d53339f
 \`\`\`
 
 ## Limitaciones conocidas (alcance de esta primera version generada)
@@ -1017,8 +1278,9 @@ flutter run
   // ---------------------------------------------------------------------
 
   public static addFlutterAppToZip(parentFolder: JSZip, folderName: string, entities: any[], projectName: string): void {
+    const voskPath = this.findVoskModel();
     const root = parentFolder.folder(folderName)!;
-    root.file('pubspec.yaml', this.generatePubspecYaml(projectName));
+    root.file('pubspec.yaml', this.generatePubspecYaml(projectName, voskPath != null));
     root.file('analysis_options.yaml', this.generateAnalysisOptions());
     root.file('README.md', this.generateReadme(projectName));
 
@@ -1045,10 +1307,22 @@ flutter run
     });
 
     servicesFolder.file('api_service.dart', this.generateApiServiceDart(crudEntities));
+    servicesFolder.file('local_store.dart', this.generateLocalStoreDart());
     servicesFolder.file('local_ai_service.dart', this.generateLocalAiServiceDart());
     screensFolder.file('ai_chat_screen.dart', this.generateAiChatScreenDart());
 
     const assetsFolder = root.folder('assets')!;
     assetsFolder.file('schema_context.json', this.generateSchemaContextJson(entities, projectName));
+    if (voskPath) {
+      assetsFolder.folder('models')!.file('vosk-model-small-es-0.42.zip', fs.readFileSync(voskPath));
+    }
+  }
+
+  private static findVoskModel(): string | null {
+    const candidates = [
+      'D:\\modelos-examen\\vosk-model-small-es-0.42.zip',
+      'C:\\Users\\EVELYN\\Downloads\\Compressed\\vosk-model-small-es-0.42.zip',
+    ];
+    return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
   }
 }
