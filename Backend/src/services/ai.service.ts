@@ -388,6 +388,53 @@ REGLAS CRÍTICAS:
     }
   }
 
+  // Chat grupal: el texto ya trae las reglas y la consulta en JSON. Si el modelo no devuelve JSON, no se toca el diagrama.
+  public static async processGroupChatPrompt(fullPrompt: string, model?: string): Promise<AIServiceResponse> {
+    try {
+      const text = await this.generateWithRetry(
+        fullPrompt,
+        { responseMimeType: 'application/json', temperature: 0.3 },
+        model,
+        'GroupChat'
+      );
+      return this.parseGroupChatResponse(text);
+    } catch (error: any) {
+      return this.buildFailureResponse(error, 'GroupChat');
+    }
+  }
+
+  public static async summarizeTeamChat(previous: string, lines: string): Promise<string> {
+    const prompt = `Resume en español, en máximo 800 caracteres, las decisiones de diseño y los nombres de clases de este chat de equipo. No saludes.\nResumen anterior:\n${previous || '(ninguno)'}\nMensajes:\n${lines}`;
+    const text = await this.generateWithRetry(prompt, undefined, undefined, 'Summary');
+    return String(text || '').trim().slice(0, 2000);
+  }
+
+  private static parseGroupChatResponse(rawText: string): AIServiceResponse {
+    const invalid = {
+      message: 'No pude interpretar la respuesta de Agente IA. Tu mensaje quedó guardado en el chat.',
+      action: 'GENERAL_RESPONSE' as const,
+      error: true,
+    };
+    const cleaned = String(rawText || '').replace(/```json/gi, '').replace(/```/g, '').trim();
+    const tryParse = (value: string) => {
+      const parsed = JSON.parse(value);
+      if (!parsed || typeof parsed !== 'object' || typeof parsed.message !== 'string') return null;
+      return this.normalizeAIResponse(parsed);
+    };
+    try {
+      return tryParse(cleaned) || invalid;
+    } catch {
+      const first = cleaned.indexOf('{');
+      const last = cleaned.lastIndexOf('}');
+      if (first === -1 || last <= first) return invalid;
+      try {
+        return tryParse(cleaned.slice(first, last + 1)) || invalid;
+      } catch {
+        return invalid;
+      }
+    }
+  }
+
   private static composePrompt(
     prompt: string,
     contextStr: string,

@@ -1788,6 +1788,29 @@ export class CanvasComponent {
     this.zoomLevel = newZoom;
   }
 
+  fitToNodes(nodes: { positionX: number; positionY: number; width?: number; height?: number; attributes?: unknown[]; methods?: unknown[] }[]): void {
+    if (!nodes.length) return;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const node of nodes) {
+      const rows = (node.attributes?.length || 0) + (node.methods?.length || 0);
+      minX = Math.min(minX, node.positionX || 0);
+      minY = Math.min(minY, node.positionY || 0);
+      maxX = Math.max(maxX, (node.positionX || 0) + (node.width || 240));
+      maxY = Math.max(maxY, (node.positionY || 0) + (node.height || 80 + rows * 20));
+    }
+    const container = document.querySelector('.canvas-container');
+    const availableW = container ? container.clientWidth : window.innerWidth - 280;
+    const availableH = container ? container.clientHeight : window.innerHeight - 80;
+    const diagramW = Math.max(maxX - minX, 1);
+    const diagramH = Math.max(maxY - minY, 1);
+    const zoom = Math.min(availableW / (diagramW + 80), availableH / (diagramH + 80), 1);
+    this.zoomLevel = Math.max(this.readOnly ? 0.2 : 0.5, Math.round(zoom * 100) / 100);
+    this.centerOn({ x: minX + diagramW / 2, y: minY + diagramH / 2 });
+  }
+
   // Deja el punto (x, y) del diagrama en el centro de la pantalla
   centerOn(point: { x: number; y: number }): void {
     const container = document.querySelector('.canvas-container');

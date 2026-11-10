@@ -128,6 +128,19 @@ export const setupCollaborationSockets = (io: Server) => {
       socket.to(projectId).emit('user-joined', { user: userData, socketId: socket.id });
     });
 
+    // "Nombre está escribiendo…": no se guarda. Caduca en el cliente.
+    socket.on('chat-typing', ({ projectId, active }) => {
+      if (!projectId || socket.data.viewOnly) return;
+      const user = roomUsers.get(projectId)?.get(socket.id);
+      if (!user?.id) return;
+      socket.to(projectId).emit('chat-typing', {
+        projectId,
+        userId: user.id,
+        fullName: user.fullName,
+        active: active === true,
+      });
+    });
+
     // Seguimiento del cursor en tiempo real
     socket.on('cursor-move', ({ projectId, cursor, user }) => {
       if (socket.data.viewOnly) return; // Modo Ver: read-only

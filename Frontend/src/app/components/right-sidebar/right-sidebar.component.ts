@@ -9,13 +9,16 @@ import { ProjectService } from '../../core/services/project.service';
 import { DiagramService } from '../../core/services/diagram.service';
 import { WebSocketService } from '../../core/services/websocket.service';
 import { AuthService } from '../../core/services/auth.service';
+import { ChatTextComponent } from '../chat-text/chat-text.component';
+import { colorForUser } from '../../core/utils/avatar-color';
 
 @Component({
   selector: 'app-right-sidebar',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, ChatTextComponent],
   template: `
-    <aside class="right-sidebar" id="right-sidebar-ai">
+    <button *ngIf="collapsed" class="sidebar-reopen" (click)="collapsedChange.emit(false)" title="Abrir Agente IA">IA</button>
+    <aside class="right-sidebar" id="right-sidebar-ai" *ngIf="!collapsed">
       <!-- Barra para cambiar el ancho (arrastre horizontal) -->
       <div 
         class="sidebar-resizer" 
@@ -40,6 +43,7 @@ import { AuthService } from '../../core/services/auth.service';
         >
           <span>Code & Sync</span>
         </button>
+        <button class="tab-btn tab-close" (click)="collapsedChange.emit(true)" title="Cerrar panel">✕</button>
       </div>
 
 
@@ -67,6 +71,23 @@ import { AuthService } from '../../core/services/auth.service';
             (click)="aiMode = 'PHOTO'"
           >
             Foto Pizarrón
+          </button>
+        </div>
+
+        <div class="voice-preference" *ngIf="!isPrivateChat">
+          <span>Voz IA</span>
+          <select class="voice-preference-select" [value]="aiVoiceChoice"
+            aria-label="Elegir voz de Chirp" (change)="setAIVoiceChoice($any($event.target).value)">
+            <option value="Puck">Puck</option>
+            <option value="Leda">Leda</option>
+          </select>
+          <button type="button" class="voice-preference-toggle"
+            [class.enabled]="aiVoiceEnabled"
+            [attr.aria-pressed]="aiVoiceEnabled"
+            [disabled]="!speechSynthesisSupported"
+            [title]="speechSynthesisSupported ? (aiVoiceEnabled ? 'Deshabilitar voz para este usuario' : 'Habilitar voz para este usuario') : 'La voz no está disponible en este navegador'"
+            (click)="toggleAIVoice()">
+            {{ speechSynthesisSupported ? (aiVoiceEnabled ? 'ON' : 'OFF') : 'No disponible' }}
           </button>
         </div>
 
@@ -100,27 +121,40 @@ import { AuthService } from '../../core/services/auth.service';
                 </span>
                 <span class="msg-time" *ngIf="msg.timestamp">{{ msg.timestamp | date:'HH:mm' }}</span>
               </div>
-              <div class="msg-text">{{ msg.content }}</div>
+              <div class="msg-text"><app-chat-text [text]="msg.content" [classNames]="diagramClassNames" [emphasizeClasses]="msg.sender === 'AI'"></app-chat-text></div>
               <div class="proposal" *ngFor="let proposal of msg.proposals">
+                <div class="proposal-header">
+                  <strong>Propuesta para el diagrama</strong>
+                  <span class="proposal-count">{{ proposalChangeCount(proposal) }} {{ proposalChangeCount(proposal) === 1 ? 'cambio' : 'cambios' }}</span>
+                </div>
                 <div class="proposal-label">{{ proposal.label }}</div>
+                <ul class="proposal-changes" *ngIf="proposalChangeLines(proposal).length">
+                  <li *ngFor="let change of proposalChangeLines(proposal)">{{ change }}</li>
+                </ul>
                 <div class="proposal-actions" *ngIf="(!proposal.status || proposal.status === 'pending') && isOwnMessage(msg)">
-                  <button class="btn btn-primary btn-sm" (click)="decideProposal(msg, proposal, 'apply')" [disabled]="isDeciding">Permitir</button>
-                  <button class="btn btn-ghost btn-sm" (click)="decideProposal(msg, proposal, 'reject')" [disabled]="isDeciding">No permitir</button>
+                  <button class="proposal-apply" (click)="decideProposal(msg, proposal, 'apply')" [disabled]="isDeciding">✓ Aplicar al diagrama</button>
+                  <button class="proposal-discard" (click)="decideProposal(msg, proposal, 'reject')" [disabled]="isDeciding">Descartar</button>
                 </div>
                 <div class="proposal-state" *ngIf="proposal.status === 'applied'">Aplicado por {{ proposal.decidedBy }}</div>
-                <div class="proposal-state" *ngIf="proposal.status === 'rejected'">No permitido por {{ proposal.decidedBy }}</div>
+                <div class="proposal-state" *ngIf="proposal.status === 'rejected'">Descartado por {{ proposal.decidedBy }}</div>
+                <div class="proposal-state" *ngIf="(!proposal.status || proposal.status === 'pending') && !isOwnMessage(msg)">Pendiente de decisión de {{ msg.user?.fullName || 'la persona que hizo la consulta' }}</div>
               </div>
             </div>
 
             <div class="ai-loading" *ngIf="isProcessing">
               <span class="dot animate-pulse">●</span>
-              <span>Generando arquitectura UML...</span>
+              <span>Agente IA está respondiendo a {{ myName }}</span>
             </div>
 
             <div class="ai-loading" *ngFor="let peer of (isPrivateChat ? [] : peersWaitingAI)">
               <span class="dot animate-pulse">●</span>
-              <span>La IA está respondiendo a {{ peer.fullName }}...</span>
+              <span>Agente IA está respondiendo a {{ peer.fullName }}</span>
             </div>
+          </div>
+
+          <div class="typing-line" *ngIf="typingLabel">
+            <span class="typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+            <span>{{ typingLabel }}</span>
           </div>
 
           <!-- Menú del modelo o agente de IA (estilo imagen 3) -->
@@ -150,14 +184,24 @@ import { AuthService } from '../../core/services/auth.service';
           </div>
 
           <!-- Caja para escribir el pedido -->
+          <div class="mention-menu" *ngIf="showMentions && mentionOptions.length">
+            <button type="button" class="mention-item" *ngFor="let option of mentionOptions; let i = index"
+              [class.active]="i === mentionIndex" (mouseenter)="mentionIndex = i" (click)="selectMention(option)">
+              <span class="msg-avatar" *ngIf="option.kind === 'user'" [style.background]="option.color">{{ option.initial }}</span>
+              {{ option.token }}
+            </button>
+          </div>
           <div class="chat-input-row">
-            <input 
-              type="text" 
-              class="input-field" 
-              [(ngModel)]="textPrompt" 
-              placeholder="Ej. 'Agrega la clase Payment con id y monto'..." 
-              (keyup.enter)="sendTextPrompt()"
-            />
+            <textarea
+              #chatPrompt
+              class="input-field"
+              rows="2"
+              [(ngModel)]="textPrompt"
+              placeholder="Escribe @ para mencionar&#10;a Agente IA o al equipo"
+              (ngModelChange)="onPromptChange()"
+              (input)="resizePrompt()"
+              (keydown)="onPromptKeydown($event)"
+            ></textarea>
             <button class="btn btn-primary" (click)="sendTextPrompt()" [disabled]="isProcessing">
               <span>Enviar</span>
             </button>
@@ -348,6 +392,44 @@ import { AuthService } from '../../core/services/auth.service';
       flex-shrink: 0;
       z-index: 30;
     }
+    .sidebar-reopen {
+      width: 40px;
+      height: calc(100vh - var(--navbar-height));
+      border: none;
+      border-left: 1px solid var(--border);
+      background: var(--bg-panel);
+      color: var(--cyan);
+      writing-mode: vertical-rl;
+      cursor: pointer;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+    .tab-close { flex: 0 0 auto; min-width: 36px; }
+    .mention-menu {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 6px;
+    }
+    .mention-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-align: left;
+      background: transparent;
+      color: var(--text-primary);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      padding: 4px 6px;
+    }
+    .mention-item.active {
+      background: rgba(0, 210, 255, 0.16);
+      color: var(--cyan);
+    }
     .right-sidebar {
       width: 100%;
       background: var(--bg-panel);
@@ -440,14 +522,6 @@ import { AuthService } from '../../core/services/auth.service';
       white-space: pre-wrap;
       word-break: break-word;
     }
-    .proposal {
-      margin-top: 8px;
-      padding-top: 6px;
-      border-top: 1px solid var(--border);
-    }
-    .proposal-label { font-weight: 600; margin-bottom: 4px; }
-    .proposal-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-    .proposal-state { color: var(--text-secondary); }
     .user-msg {
       align-self: flex-end;
       background: var(--violet);
@@ -500,6 +574,33 @@ import { AuthService } from '../../core/services/auth.service';
       gap: 6px;
       font-size: 11px;
       color: var(--cyan);
+    }
+    .typing-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 2px 2px 4px;
+      font-size: 12px;
+      font-style: italic;
+      color: #94a3b8;
+    }
+    .typing-dots {
+      display: inline-flex;
+      gap: 3px;
+      align-items: center;
+    }
+    .typing-dots span {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: typing-bounce 1.2s infinite ease-in-out;
+    }
+    .typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+    .typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes typing-bounce {
+      0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+      30% { opacity: 1; transform: translateY(-2px); }
     }
     .agent-selector-wrapper {
       position: relative;
@@ -592,11 +693,24 @@ import { AuthService } from '../../core/services/auth.service';
     }
     .chat-input-row {
       display: flex;
+      align-items: flex-end;
       gap: 6px;
       width: 100%;
     }
-    .chat-input-row input {
+    .chat-input-row textarea {
       flex: 1;
+      resize: none;
+      box-sizing: border-box;
+      min-height: 64px;
+      max-height: 160px;
+      line-height: 1.35;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .chat-input-row textarea::placeholder {
+      color: #94a3b8;
+      white-space: pre-line;
     }
     .chat-actions-row {
       display: flex;
@@ -1002,8 +1116,12 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   @Input() projectName = '';
   @Input() hasCollaborators = false;
   @Input() sidebarWidth = 320;
+  @Input() onlineUsers: { id?: number | string; fullName?: string; color?: string }[] = [];
+  @Input() selectedNode: { id: string; name: string } | null = null;
+  @Input() collapsed = false;
   @Output() diagramUpdated = new EventEmitter<void>();
   @Output() sidebarWidthChange = new EventEmitter<number>();
+  @Output() collapsedChange = new EventEmitter<boolean>();
 
   isResizing = false;
   private startX = 0;
@@ -1035,10 +1153,12 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   };
 
   ngOnDestroy(): void {
+    this.stopAIReplyAudio();
     this.stopResizing();
     this.diagramChangeSub?.unsubscribe();
     this.chatSocketSub?.unsubscribe();
     clearTimeout(this.chatNoticeTimer);
+    this.spokenAIMessageIds.clear();
     this.cancelRecording();
   }
 
@@ -1046,6 +1166,12 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   aiMode: 'CHAT' | 'VOICE' | 'PHOTO' = 'CHAT';
 
   chatHistory: AIMessage[] = [];
+  aiVoiceEnabled = true;
+  aiVoiceChoice: 'Puck' | 'Leda' = 'Puck';
+  private spokenAIMessageIds = new Set<string>();
+  private activeAIReplyAudio?: HTMLAudioElement;
+  private activeAIReplyAudioUrl?: string;
+  private voiceRequestVersion = 0;
   isPrivateChat = false;
   privateChatHistory: AIMessage[] = [];
   showNewChatOptions = false;
@@ -1057,8 +1183,23 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   isDeciding = false;
   // Colaboradores cuyo pedido a la IA todavía se está procesando (chat grupal)
   peersWaitingAI: { userId: number; fullName: string }[] = [];
+  typers: { userId: number; fullName: string }[] = [];
+
+  get typingLabel(): string {
+    if (this.isPrivateChat || this.typers.length === 0) return '';
+    const names = this.typers.map(peer => (peer.fullName || 'Alguien').trim().split(/\s+/)[0]);
+    if (names.length === 1) return `${names[0]} está escribiendo…`;
+    if (names.length === 2) return `${names[0]} y ${names[1]} están escribiendo…`;
+    return `${names[0]}, ${names[1]} y ${names.length - 2} más están escribiendo…`;
+  }
+  showMentions = false;
+  mentionQuery = '';
+  mentionIndex = 0;
+  private typingTimer: any;
+  private typerTimers = new Map<number, any>();
   private chatSocketSub?: Subscription;
   @ViewChild('chatScroll') chatScroll?: ElementRef<HTMLDivElement>;
+  @ViewChild('chatPrompt') chatPrompt?: ElementRef<HTMLTextAreaElement>;
 
   isRecording = false;
   isPaused = false;
@@ -1174,6 +1315,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   ngOnInit(): void {
+    this.restoreAIVoicePreference();
     if (this.projectId) {
       this.loadHistory();
     }
@@ -1183,14 +1325,24 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     this.chatSocketSub = this.wsService.aiChatMessage$.subscribe((raw) => {
       if (!raw || raw.projectId !== this.projectId) return;
       const msg = this.aiService.normalizeChatMessage(raw);
-      const idx = msg.id ? this.chatHistory.findIndex(m => m.id === msg.id) : -1;
-      if (idx >= 0) {
-        this.chatHistory[idx] = msg;
+      const provisional = msg.clientMessageId
+        ? this.chatHistory.findIndex(m => m.clientMessageId && m.clientMessageId === msg.clientMessageId)
+        : -1;
+      if (provisional >= 0) {
+        this.chatHistory[provisional] = msg;
         this.scrollChatToBottom();
         return;
       }
-      if (this.isOwnMessage(raw)) return;
+      const idx = msg.id ? this.chatHistory.findIndex(m => m.id === msg.id) : -1;
+      if (idx >= 0) {
+        this.chatHistory[idx] = msg;
+        this.speakAIReplyOnce(msg);
+        this.scrollChatToBottom();
+        return;
+      }
+      if (msg.sender === 'USER' && this.isOwnMessage(raw)) return;
       this.chatHistory.push(msg);
+      this.speakAIReplyOnce(msg);
       this.scrollChatToBottom();
     });
     this.chatSocketSub.add(this.wsService.aiChatThinking$.subscribe((evt) => {
@@ -1200,6 +1352,16 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
       this.scrollChatToBottom();
     }));
     // "Nuevo chat → Para todos" de cualquier miembro borra el chat grupal para todos
+    this.chatSocketSub.add(this.wsService.chatTyping$.subscribe((evt) => {
+      if (!evt || evt.projectId !== this.projectId || this.isOwnMessage({ userId: evt.userId } as AIMessage)) return;
+      this.typers = this.typers.filter(peer => peer.userId !== evt.userId);
+      clearTimeout(this.typerTimers.get(evt.userId));
+      if (!evt.active) return;
+      this.typers = [...this.typers, { userId: evt.userId, fullName: evt.fullName }];
+      this.typerTimers.set(evt.userId, setTimeout(() => {
+        this.typers = this.typers.filter(peer => peer.userId !== evt.userId);
+      }, 3000));
+    }));
     this.chatSocketSub.add(this.wsService.aiChatCleared$.subscribe((evt) => {
       if (!evt || evt.projectId !== this.projectId) return;
       this.chatHistory = [];
@@ -1240,6 +1402,67 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
 
   authorInitial(msg: AIMessage): string {
     return (msg.user?.fullName || '?').trim().charAt(0).toUpperCase();
+  }
+
+  proposalChangeLines(proposal: AIDiagramProposal): string[] {
+    const payload = proposal?.payload || proposal || {};
+    const lines: string[] = [];
+    const className = (item: any) => String(item?.name || item?.className || item || 'clase');
+    const memberDescription = (items: any[]) => items
+      .map((item) => {
+        const name = String(item?.name || item || '').trim();
+        const type = String(item?.type || item?.returnType || '').trim();
+        return name ? `${name}${type ? `: ${type}` : ''}` : '';
+      })
+      .filter(Boolean)
+      .join(', ');
+    const relationNames: Record<string, string> = {
+      Association: 'asociación', AssociationClass: 'clase de asociación',
+      Aggregation: 'agregación', Composition: 'composición',
+      Inheritance: 'herencia', Implementation: 'implementación', Dependency: 'dependencia',
+    };
+
+    if (proposal?.replaceDiagram) lines.push('Reemplazar el diagrama con la propuesta detectada');
+    for (const item of payload.classesGenerated || []) {
+      const fields = memberDescription(item?.attributes || []);
+      const methods = memberDescription(item?.methods || []);
+      const details = [fields, methods ? `métodos: ${methods}` : ''].filter(Boolean).join('; ');
+      lines.push(`Crear clase ${className(item)}${details ? ` (${details})` : ''}`);
+    }
+    for (const item of payload.classesModified || []) {
+      const attributes = memberDescription(item?.attributesToAdd || item?.attributes || []);
+      const methods = memberDescription(item?.methodsToAdd || item?.methods || []);
+      if (attributes) lines.push(`Agregar a ${className(item)}: ${attributes}`);
+      if (methods) lines.push(`Agregar método(s) a ${className(item)}: ${methods}`);
+    }
+    for (const item of payload.classesToDelete || []) lines.push(`Eliminar clase ${className(item)}`);
+    for (const item of payload.classesToRename || []) {
+      lines.push(`Renombrar ${item?.oldName || className(item)} a ${item?.newName || item?.to || 'nuevo nombre'}`);
+    }
+    for (const item of payload.attributesToRemove || []) {
+      lines.push(`Quitar atributo ${item?.attributeName || item?.name || 'seleccionado'} de ${item?.className || 'la clase'}`);
+    }
+    for (const item of payload.methodsToRemove || []) {
+      lines.push(`Quitar método ${item?.methodName || item?.name || 'seleccionado'} de ${item?.className || 'la clase'}`);
+    }
+    for (const item of payload.classesToReposition || []) lines.push(`Mover clase ${item?.className || item?.name || 'seleccionada'}`);
+    for (const item of payload.connectorsGenerated || []) {
+      const type = relationNames[item?.type] || 'relación';
+      lines.push(`Crear ${type} ${item?.sourceClassName || '?'} → ${item?.targetClassName || '?'}${item?.sourceMultiplicity || item?.targetMultiplicity ? ` (${item?.sourceMultiplicity || '—'} a ${item?.targetMultiplicity || '—'})` : ''}`);
+    }
+    for (const item of payload.connectorsToDelete || []) {
+      lines.push(item?.sourceClassName && item?.targetClassName
+        ? `Eliminar relación ${item.sourceClassName} → ${item.targetClassName}`
+        : 'Eliminar la relación seleccionada');
+    }
+    for (const item of payload.connectorsModified || []) {
+      lines.push(`Modificar relación ${item?.sourceClassName || '?'} → ${item?.targetClassName || '?'}`);
+    }
+    return lines.length ? lines : (proposal?.label ? [proposal.label] : []);
+  }
+
+  proposalChangeCount(proposal: AIDiagramProposal): number {
+    return this.proposalChangeLines(proposal).length;
   }
 
   // Color fijo por usuario para distinguir a cada colaborador, como en un chat de grupo
@@ -1285,7 +1508,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
           proposal.status = decision === 'apply' ? 'applied' : 'rejected';
           proposal.decidedBy = this.auth.currentUser?.fullName;
         }
-        if (decision === 'apply') this.applyDiagramResult(res);
+        if (decision === 'apply' && !msg.id) this.applyDiagramResult(res);
       },
       error: () => { this.isDeciding = false; }
     });
@@ -1330,10 +1553,90 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   authorColor(msg: AIMessage): string {
-    const key = String(msg.user?.id ?? msg.userId ?? '');
-    let hash = 0;
-    for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) | 0;
-    return `hsl(${Math.abs(hash) % 360}, 65%, 50%)`;
+    return colorForUser(msg.user?.id ?? msg.userId ?? '');
+  }
+
+  get myName(): string {
+    return this.auth.currentUser?.fullName || 'ti';
+  }
+
+  get diagramClassNames(): string[] {
+    return this.diagramService.currentNodes.map(node => node.name);
+  }
+
+  get mentionOptions(): { token: string; name: string; kind: string; color?: string; initial?: string }[] {
+    const query = this.mentionQuery.toLocaleLowerCase();
+    const options = [
+      { token: '@Agente IA', name: 'Agente IA', kind: 'assistant' },
+      { token: '@all', name: 'Todos', kind: 'all' },
+      ...this.onlineUsers.map(user => ({
+        token: `@${user.fullName || 'Usuario'}`,
+        name: user.fullName || 'Usuario',
+        kind: 'user',
+        color: user.color || colorForUser(user.id),
+        initial: (user.fullName || '?').trim().charAt(0).toUpperCase(),
+      })),
+    ];
+    return options.filter(option => option.name.toLocaleLowerCase().includes(query) || option.token.toLocaleLowerCase().includes(query));
+  }
+
+  onPromptChange(): void {
+    const match = this.textPrompt.match(/(^|\s)@([^\s@]*)$/);
+    this.showMentions = !!match;
+    this.mentionQuery = match ? match[2] : '';
+    this.mentionIndex = 0;
+    if (this.isPrivateChat || !this.projectId) return;
+    if (!this.textPrompt.trim()) {
+      clearTimeout(this.typingTimer);
+      this.wsService.emitChatTyping(this.projectId, false);
+      return;
+    }
+    this.wsService.emitChatTyping(this.projectId, true);
+    clearTimeout(this.typingTimer);
+    this.typingTimer = setTimeout(() => this.wsService.emitChatTyping(this.projectId, false), 3000);
+  }
+
+  resizePrompt(): void {
+    const box = this.chatPrompt?.nativeElement;
+    if (!box) return;
+    box.style.height = 'auto';
+    box.style.height = `${Math.min(Math.max(box.scrollHeight, 64), 160)}px`;
+  }
+
+  onPromptKeydown(event: KeyboardEvent): void {
+    const options = this.mentionOptions;
+    const menuOpen = this.showMentions && options.length > 0;
+    if (!menuOpen) {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        this.sendTextPrompt();
+      }
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      this.mentionIndex = (this.mentionIndex + 1) % options.length;
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      this.mentionIndex = (this.mentionIndex - 1 + options.length) % options.length;
+    } else if (event.key === 'Tab' || event.key === 'Enter') {
+      event.preventDefault();
+      const option = options[Math.min(this.mentionIndex, options.length - 1)];
+      if (option) this.selectMention(option);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      this.showMentions = false;
+    }
+  }
+
+  selectMention(option: { token: string }): void {
+    this.textPrompt = this.textPrompt.replace(/(^|\s)@[^\s@]*$/, `$1${option.token} `);
+    this.showMentions = false;
+    this.mentionIndex = 0;
+    setTimeout(() => {
+      this.chatPrompt?.nativeElement.focus();
+      this.resizePrompt();
+    });
   }
 
   private scrollChatToBottom(): void {
@@ -1343,44 +1646,154 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     });
   }
 
-  speakText(text: string): void {
-    if (!('speechSynthesis' in window)) return;
+  get speechSynthesisSupported(): boolean {
+    return typeof window !== 'undefined' && typeof Audio !== 'undefined';
+  }
+
+  private voicePreferenceKey(): string {
+    return `classforge_ai_voice_${this.auth.currentUser?.id ?? 'default'}`;
+  }
+
+  private voiceChoicePreferenceKey(): string {
+    return `${this.voicePreferenceKey()}_chirp`;
+  }
+
+  private restoreAIVoicePreference(): void {
     try {
-      window.speechSynthesis.cancel();
+      const preference = localStorage.getItem(this.voicePreferenceKey());
+      if (preference !== null) this.aiVoiceEnabled = preference === 'true';
+      const choice = localStorage.getItem(this.voiceChoicePreferenceKey());
+      if (choice === 'Puck' || choice === 'Leda') this.aiVoiceChoice = choice;
+    } catch { }
+  }
+
+  setAIVoiceChoice(choice: string): void {
+    if (choice !== 'Puck' && choice !== 'Leda') return;
+    this.aiVoiceChoice = choice;
+    try { localStorage.setItem(this.voiceChoicePreferenceKey(), choice); } catch { }
+    this.stopAIReplyAudio();
+  }
+
+  toggleAIVoice(): void {
+    if (!this.speechSynthesisSupported) return;
+    this.aiVoiceEnabled = !this.aiVoiceEnabled;
+    try { localStorage.setItem(this.voicePreferenceKey(), String(this.aiVoiceEnabled)); } catch { }
+    if (!this.aiVoiceEnabled) this.stopAIReplyAudio();
+  }
+
+  private speakAIReplyOnce(message: AIMessage): void {
+    if (message.sender !== 'AI') return;
+    const id = String(message.id || message.clientMessageId || '');
+    if (id && this.spokenAIMessageIds.has(id)) return;
+    if (id) {
+      this.spokenAIMessageIds.add(id);
+      if (this.spokenAIMessageIds.size > 250) {
+        const oldest = this.spokenAIMessageIds.values().next().value;
+        if (oldest) this.spokenAIMessageIds.delete(oldest);
+      }
+    }
+    if (!this.aiVoiceEnabled || !message.content?.trim()) return;
+    if (message.id) {
+      const requestVersion = ++this.voiceRequestVersion;
+      this.aiService.getAIMessageSpeech(message.id, this.aiVoiceChoice).subscribe({
+        next: (blob) => {
+          if (!this.aiVoiceEnabled || requestVersion !== this.voiceRequestVersion) return;
+          this.stopAIReplyAudio();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          this.activeAIReplyAudioUrl = url;
+          this.activeAIReplyAudio = audio;
+          audio.onended = () => this.releaseAIReplyAudio(audio, url);
+          audio.onerror = () => {
+            this.releaseAIReplyAudio(audio, url);
+            this.speakText(message.content);
+          };
+          void audio.play().catch(() => {
+            this.releaseAIReplyAudio(audio, url);
+            this.speakText(message.content);
+          });
+        },
+        error: () => {
+          if (this.aiVoiceEnabled && requestVersion === this.voiceRequestVersion) this.speakText(message.content);
+        },
+      });
+      return;
+    }
+    this.speakText(message.content);
+  }
+
+  private stopAIReplyAudio(): void {
+    this.voiceRequestVersion++;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+    if (this.activeAIReplyAudio) {
+      this.activeAIReplyAudio.onended = null;
+      this.activeAIReplyAudio.onerror = null;
+      this.activeAIReplyAudio.pause();
+      this.activeAIReplyAudio.src = '';
+      this.activeAIReplyAudio = undefined;
+    }
+    if (this.activeAIReplyAudioUrl) {
+      URL.revokeObjectURL(this.activeAIReplyAudioUrl);
+      this.activeAIReplyAudioUrl = undefined;
+    }
+  }
+
+  private releaseAIReplyAudio(audio: HTMLAudioElement, url: string): void {
+    if (this.activeAIReplyAudio === audio) this.activeAIReplyAudio = undefined;
+    if (this.activeAIReplyAudioUrl === url) this.activeAIReplyAudioUrl = undefined;
+    URL.revokeObjectURL(url);
+  }
+
+  private speakText(text: string): void {
+    if (!this.aiVoiceEnabled || !this.speechSynthesisSupported || !text?.trim()) return;
+    try {
       const cleanText = text.replace(/[*_#`~]/g, '');
       const utterance = new SpeechSynthesisUtterance(cleanText);
       utterance.lang = 'es-ES';
       utterance.rate = 1.0;
       window.speechSynthesis.speak(utterance);
-    } catch (e) { }
+    } catch { }
   }
 
   sendTextPrompt(): void {
     if (!this.textPrompt.trim()) return;
-    const prompt = this.textPrompt;
+    const prompt = this.textPrompt.trim();
+    const asksAgent = this.isPrivateChat || /@agente\s*ia\b/i.test(prompt);
     // Se fija al enviar, para que una respuesta tardía de la IA quede en el chat donde se preguntó
     const isPrivate = this.isPrivateChat;
     const target = this.activeChatTarget();
-    target.push({ sender: 'USER', mode: 'CHAT', content: prompt, timestamp: new Date() });
+    const clientMessageId = crypto.randomUUID();
+    target.push({ sender: 'USER', mode: 'CHAT', content: prompt, timestamp: new Date(), clientMessageId });
     this.textPrompt = '';
-    this.isProcessing = true;
+    this.showMentions = false;
+    setTimeout(() => this.resizePrompt());
+    if (this.projectId) this.wsService.emitChatTyping(this.projectId, false);
+    this.isProcessing = asksAgent;
 
     if (this.projectId) {
       const history = this.priorHistory(isPrivate, target);
-      this.aiService.sendTextPrompt(this.projectId, prompt, this.selectedAgent.id, undefined, isPrivate, history).subscribe({
+      const selected = this.selectedNode ? { id: this.selectedNode.id, name: this.selectedNode.name } : null;
+      this.aiService.sendTextPrompt(this.projectId, prompt, this.selectedAgent.id, undefined, isPrivate, history, clientMessageId, selected).subscribe({
         next: (res) => {
           this.isProcessing = false;
+          if (!res?.aiMessage && !res?.aiResponse) {
+            this.scrollChatToBottom();
+            return;
+          }
           const reply = this.serverAiMessage(res, 'CHAT');
-          target.push(reply);
-          this.speakText(reply.content);
+          const existing = reply.id ? target.findIndex(item => item.id === reply.id) : -1;
+          if (existing >= 0) target[existing] = reply;
+          else target.push(reply);
+          this.speakAIReplyOnce(reply);
           this.scrollChatToBottom();
         },
         error: () => {
           this.isProcessing = false;
+          if (!asksAgent) return;
           target.push({
             sender: 'AI',
             mode: 'CHAT',
-            content: 'No se pudo conectar con el servicio de IA. El diagrama no cambió.',
+            content: 'No se pudo conectar con el servicio de IA. El diagrama no cambió. Tu mensaje quedó en el chat.',
             timestamp: new Date()
           });
         }
@@ -1608,7 +2021,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
           this.isProcessing = false;
           const reply = this.serverAiMessage(res, 'VOICE');
           target.push(reply);
-          this.speakText(reply.content);
+          this.speakAIReplyOnce(reply);
           this.scrollChatToBottom();
         },
         error: () => {
@@ -1630,7 +2043,6 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
         content: fallbackMsg,
         timestamp: new Date()
       });
-      this.speakText(fallbackMsg);
       this.diagramUpdated.emit();
     }
   }
@@ -1683,7 +2095,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
           this.isProcessing = false;
           const reply = this.serverAiMessage(res, 'PHOTO');
           target.push(reply);
-          this.speakText(reply.content);
+          this.speakAIReplyOnce(reply);
           this.lastUploadedPhotoUrl = this.photoPreview;
           this.photoPreview = null;
           this.selectedFile = null;
@@ -1698,7 +2110,6 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
             content: errorMsg,
             timestamp: new Date()
           });
-          this.speakText(errorMsg);
           this.photoPreview = null;
           this.selectedFile = null;
           this.diagramUpdated.emit();
@@ -1713,7 +2124,6 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
         content: errorMsg,
         timestamp: new Date()
       });
-      this.speakText(errorMsg);
       this.photoPreview = null;
       this.selectedFile = null;
       this.diagramUpdated.emit();

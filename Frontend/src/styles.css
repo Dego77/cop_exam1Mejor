@@ -351,3 +351,104 @@ html, body {
   transition: all 0.3s ease !important;
 }
 
+.voice-preference {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-dark);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.voice-preference > span { flex: 1 1 auto; min-width: 0; }
+.voice-preference-toggle {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.voice-preference-toggle.enabled {
+  border-color: var(--green);
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--green);
+}
+.voice-preference-toggle:not(.enabled) {
+  border-color: var(--red);
+  color: var(--red);
+}
+.voice-preference-toggle:disabled { opacity: 0.55; cursor: not-allowed; }
+.voice-preference-select {
+  flex: 0 0 76px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 4px;
+  color: var(--text-primary);
+  background: var(--bg-card);
+}
+
+/* Tarjetas de propuestas del chat grupal */
+.proposal {
+  margin-top: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-hover);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+.proposal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.proposal-count { color: var(--green); white-space: nowrap; }
+.proposal-label { padding: 8px 10px 0; color: var(--text-secondary); font-size: 11px; }
+.proposal-changes {
+  margin: 0;
+  padding: 7px 10px 9px 28px;
+  color: var(--text-primary);
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.proposal-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+}
+.proposal-apply, .proposal-discard {
+  min-height: 34px;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.proposal-apply {
+  flex: 1;
+  border: 1px solid #f97316;
+  background: #f97316;
+  color: #fff;
+}
+.proposal-apply:hover:not(:disabled) { background: #ea580c; }
+.proposal-discard {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+}
+.proposal-apply:disabled, .proposal-discard:disabled { opacity: 0.6; cursor: wait; }
+.proposal-state { padding: 0 10px 8px; color: var(--text-secondary); font-size: 11px; }
+

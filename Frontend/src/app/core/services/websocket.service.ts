@@ -39,6 +39,7 @@ export class WebSocketService {
   aiChatThinking$ = new Subject<{ projectId: string; userId: number; fullName: string; thinking: boolean }>();
   joinDenied$ = new Subject<{ projectId: string; reason: string }>();
   aiChatCleared$ = new Subject<{ projectId: string; by: { id: number; fullName: string } | null }>();
+  chatTyping$ = new Subject<{ projectId: string; userId: number; fullName: string; active: boolean }>();
 
   private activeProjectRoom: string | null = null;
   private activeUser: any = null;
@@ -91,6 +92,7 @@ export class WebSocketService {
     this.socket.on('ai-chat-message', (data: any) => this.aiChatMessage$.next(data));
     this.socket.on('ai-chat-thinking', (data: any) => this.aiChatThinking$.next(data));
     this.socket.on('ai-chat-cleared', (data: any) => this.aiChatCleared$.next(data));
+    this.socket.on('chat-typing', (data: any) => this.chatTyping$.next(data));
     this.socket.on('join-denied', (data: any) => this.joinDenied$.next(data));
   }
 
@@ -142,6 +144,10 @@ export class WebSocketService {
 
   emitDiagramReloaded(projectId: string, payload?: any): void {
     this.socket?.emit('diagram-reloaded', { projectId, payload });
+  }
+
+  emitChatTyping(projectId: string, active: boolean): void {
+    this.socket?.emit('chat-typing', { projectId, active });
   }
 
   disconnect(): void {

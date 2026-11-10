@@ -8,6 +8,7 @@ import { ProjectService } from '../../core/services/project.service';
 import { DiagramService, UMLNode, UMLConnector, CanvasLabel } from '../../core/services/diagram.service';
 import { WebSocketService, CursorData, CanvasActivity } from '../../core/services/websocket.service';
 import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service';
+import { ChatTextComponent } from '../../components/chat-text/chat-text.component';
 
 // "Modo Ver" (app móvil): muestra el diagrama del proyecto y el chat grupal de la IA en tiempo real,
 // solo lectura. No se edita ni se escribe a la IA. El servidor también ignora cualquier evento de
@@ -15,7 +16,7 @@ import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service'
 @Component({
   selector: 'app-viewer',
   standalone: true,
-  imports: [CommonModule, CanvasComponent],
+  imports: [CommonModule, CanvasComponent, ChatTextComponent],
   template: `
     <div class="viewer-layout">
       <header class="viewer-header">
@@ -28,6 +29,16 @@ import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service'
           <span class="vh-online" *ngIf="onlineUsers.length" [title]="onlineNames">
             <span class="vh-dot"></span>{{ onlineUsers.length }}
           </span>
+          <select class="vh-voice-select" [value]="aiVoiceChoice" aria-label="Elegir voz de Chirp"
+            (change)="setAIVoiceChoice($any($event.target).value)">
+            <option value="Puck">Puck</option>
+            <option value="Leda">Leda</option>
+          </select>
+          <button class="vh-btn" [class.active]="aiVoiceEnabled" [disabled]="!speechSynthesisSupported"
+            [attr.aria-pressed]="aiVoiceEnabled" (click)="toggleAIVoice()"
+            [title]="speechSynthesisSupported ? (aiVoiceEnabled ? 'Deshabilitar voz de respuestas' : 'Habilitar voz de respuestas') : 'La voz no está disponible en este navegador'">
+            {{ speechSynthesisSupported ? (aiVoiceEnabled ? '🔊' : '🔇') : '×' }}
+          </button>
           <button class="vh-btn" (click)="fitToScreen()" title="Ajustar a la pantalla">⤢</button>
           <button class="vh-btn" [class.active]="showChat" (click)="showChat = !showChat" title="Chat IA (solo lectura)">💬</button>
         </div>
@@ -64,9 +75,11 @@ import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service'
               <span *ngIf="msg.sender === 'AI' && msg.user"> · respondiendo a {{ msg.user.fullName }}</span>
               <span class="vc-time" *ngIf="msg.timestamp">{{ msg.timestamp | date:'HH:mm' }}</span>
             </div>
-            <div class="vc-text">{{ msg.content }}</div>
+            <div class="vc-text"><app-chat-text [text]="msg.content" [classNames]="classNames" [emphasizeClasses]="msg.sender === 'AI'"></app-chat-text></div>
             <div class="vc-text" *ngFor="let proposal of msg.proposals">{{ proposal.label }} · {{ proposal.status === 'applied' ? 'aplicado' : (proposal.status === 'rejected' ? 'no permitido' : 'pendiente') }}</div>
           </div>
+          <div class="vc-status" *ngFor="let peer of usersWaitingAI">Agente IA está respondiendo a {{ peer.fullName }}</div>
+          <div class="vc-status" *ngIf="typingLabel">{{ typingLabel }}</div>
         </div>
       </aside>
     </div>
@@ -150,6 +163,15 @@ import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service'
     .vh-btn.active {
       border-color: var(--cyan);
       color: var(--cyan);
+    }
+    .vh-voice-select {
+      max-width: 82px;
+      height: 32px;
+      padding: 0 5px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      color: var(--text-primary);
+      background: var(--bg-card);
     }
     .viewer-canvas {
       flex: 1;
@@ -239,6 +261,10 @@ import { AIAgentService, AIMessage } from '../../core/services/ai-agent.service'
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .vc-status {
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
   `]
 })
 export class ViewerComponent implements OnInit, OnDestroy {
@@ -253,9 +279,25 @@ export class ViewerComponent implements OnInit, OnDestroy {
   onlineUsers: any[] = [];
   showChat = false;
   chatMessages: AIMessage[] = [];
+  aiVoiceEnabled = true;
+  aiVoiceChoice: 'Puck' | 'Leda' = 'Puck';
+  private spokenAIMessageIds = new Set<string>();
+  private activeAIReplyAudio?: HTMLAudioElement;
+  private activeAIReplyAudioUrl?: string;
+  private voiceRequestVersion = 0;
 
   private remoteCursorsMap = new Map<string, CursorData>();
-  private usersWaitingAI: { userId: number; fullName: string }[] = [];
+  usersWaitingAI: { userId: number; fullName: string }[] = [];
+  typers: { userId: number; fullName: string }[] = [];
+
+  get typingLabel(): string {
+    if (this.typers.length === 0) return '';
+    const names = this.typers.map(peer => (peer.fullName || 'Alguien').trim().split(/\s+/)[0]);
+    if (names.length === 1) return `${names[0]} está escribiendo…`;
+    if (names.length === 2) return `${names[0]} y ${names[1]} están escribiendo…`;
+    return `${names[0]}, ${names[1]} y ${names.length - 2} más están escribiendo…`;
+  }
+  private typerTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private activityMessage = '';
   private activityTimer?: ReturnType<typeof setTimeout>;
 
@@ -271,6 +313,10 @@ export class ViewerComponent implements OnInit, OnDestroy {
     private wsService: WebSocketService,
     private aiService: AIAgentService
   ) { }
+
+  get classNames(): string[] {
+    return this.nodes.map(node => node.name);
+  }
 
   get onlineNames(): string {
     return this.onlineUsers.map(u => u.fullName + (u.viewOnly ? ' (viendo)' : '')).join(', ');
@@ -288,7 +334,116 @@ export class ViewerComponent implements OnInit, OnDestroy {
     return this.activityMessage;
   }
 
+  get speechSynthesisSupported(): boolean {
+    return typeof window !== 'undefined' && typeof Audio !== 'undefined';
+  }
+
+  private voicePreferenceKey(): string {
+    return `classforge_ai_voice_${this.auth.currentUser?.id ?? 'default'}`;
+  }
+
+  private voiceChoicePreferenceKey(): string {
+    return `${this.voicePreferenceKey()}_chirp`;
+  }
+
+  private restoreAIVoicePreference(): void {
+    try {
+      const preference = localStorage.getItem(this.voicePreferenceKey());
+      if (preference !== null) this.aiVoiceEnabled = preference === 'true';
+      const choice = localStorage.getItem(this.voiceChoicePreferenceKey());
+      if (choice === 'Puck' || choice === 'Leda') this.aiVoiceChoice = choice;
+    } catch { }
+  }
+
+  setAIVoiceChoice(choice: string): void {
+    if (choice !== 'Puck' && choice !== 'Leda') return;
+    this.aiVoiceChoice = choice;
+    try { localStorage.setItem(this.voiceChoicePreferenceKey(), choice); } catch { }
+    this.stopAIReplyAudio();
+  }
+
+  toggleAIVoice(): void {
+    if (!this.speechSynthesisSupported) return;
+    this.aiVoiceEnabled = !this.aiVoiceEnabled;
+    try { localStorage.setItem(this.voicePreferenceKey(), String(this.aiVoiceEnabled)); } catch { }
+    if (!this.aiVoiceEnabled) this.stopAIReplyAudio();
+  }
+
+  private speakAIReplyOnce(message: AIMessage): void {
+    if (message.sender !== 'AI') return;
+    const id = String(message.id || message.clientMessageId || '');
+    if (id && this.spokenAIMessageIds.has(id)) return;
+    if (id) {
+      this.spokenAIMessageIds.add(id);
+      if (this.spokenAIMessageIds.size > 250) {
+        const oldest = this.spokenAIMessageIds.values().next().value;
+        if (oldest) this.spokenAIMessageIds.delete(oldest);
+      }
+    }
+    if (!this.aiVoiceEnabled || !message.content?.trim()) return;
+    if (message.id) {
+      const requestVersion = ++this.voiceRequestVersion;
+      this.aiService.getAIMessageSpeech(message.id, this.aiVoiceChoice).subscribe({
+        next: (blob) => {
+          if (!this.aiVoiceEnabled || requestVersion !== this.voiceRequestVersion) return;
+          this.stopAIReplyAudio();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          this.activeAIReplyAudioUrl = url;
+          this.activeAIReplyAudio = audio;
+          audio.onended = () => this.releaseAIReplyAudio(audio, url);
+          audio.onerror = () => {
+            this.releaseAIReplyAudio(audio, url);
+            this.speakAIText(message.content);
+          };
+          void audio.play().catch(() => {
+            this.releaseAIReplyAudio(audio, url);
+            this.speakAIText(message.content);
+          });
+        },
+        error: () => {
+          if (this.aiVoiceEnabled && requestVersion === this.voiceRequestVersion) this.speakAIText(message.content);
+        },
+      });
+      return;
+    }
+    this.speakAIText(message.content);
+  }
+
+  private speakAIText(text: string): void {
+    if (!this.aiVoiceEnabled || !('speechSynthesis' in window) || !text?.trim()) return;
+    try {
+      const utterance = new SpeechSynthesisUtterance(text.replace(/[*_#`~]/g, ''));
+      utterance.lang = 'es-ES';
+      utterance.rate = 1;
+      window.speechSynthesis.speak(utterance);
+    } catch { }
+  }
+
+  private stopAIReplyAudio(): void {
+    this.voiceRequestVersion++;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+    if (this.activeAIReplyAudio) {
+      this.activeAIReplyAudio.onended = null;
+      this.activeAIReplyAudio.onerror = null;
+      this.activeAIReplyAudio.pause();
+      this.activeAIReplyAudio.src = '';
+      this.activeAIReplyAudio = undefined;
+    }
+    if (this.activeAIReplyAudioUrl) {
+      URL.revokeObjectURL(this.activeAIReplyAudioUrl);
+      this.activeAIReplyAudioUrl = undefined;
+    }
+  }
+
+  private releaseAIReplyAudio(audio: HTMLAudioElement, url: string): void {
+    if (this.activeAIReplyAudio === audio) this.activeAIReplyAudio = undefined;
+    if (this.activeAIReplyAudioUrl === url) this.activeAIReplyAudioUrl = undefined;
+    URL.revokeObjectURL(url);
+  }
+
   ngOnInit(): void {
+    this.restoreAIVoicePreference();
     this.projectId = this.route.snapshot.paramMap.get('projectId') || '';
     if (!this.auth.isLoggedIn) {
       this.router.navigate(['/login'], { queryParams: { returnUrl: `/view/${this.projectId}` } });
@@ -312,7 +467,9 @@ export class ViewerComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.stopAIReplyAudio();
     clearTimeout(this.activityTimer);
+    this.spokenAIMessageIds.clear();
     this.subs.unsubscribe();
     this.wsService.disconnect();
     this.diagramService.clearCanvas();
@@ -430,6 +587,16 @@ export class ViewerComponent implements OnInit, OnDestroy {
     }));
     this.subs.add(this.wsService.cursorMoved$.subscribe(data => this.remoteCursorsMap.set(data.socketId, data)));
     this.subs.add(this.wsService.activity$.subscribe(activity => this.describeActivity(activity)));
+    this.subs.add(this.wsService.chatTyping$.subscribe(evt => {
+      if (!evt || evt.projectId !== this.projectId || String(evt.userId) === String(this.auth.currentUser?.id)) return;
+      this.typers = this.typers.filter(peer => peer.userId !== evt.userId);
+      clearTimeout(this.typerTimers.get(evt.userId));
+      if (!evt.active) return;
+      this.typers = [...this.typers, { userId: evt.userId, fullName: evt.fullName }];
+      this.typerTimers.set(evt.userId, setTimeout(() => {
+        this.typers = this.typers.filter(peer => peer.userId !== evt.userId);
+      }, 3000));
+    }));
     this.subs.add(this.wsService.aiChatThinking$.subscribe(evt => {
       if (!evt || evt.projectId !== this.projectId) return;
       this.usersWaitingAI = this.usersWaitingAI.filter(u => u.userId !== evt.userId);
@@ -474,9 +641,11 @@ export class ViewerComponent implements OnInit, OnDestroy {
         const applied = msg.proposals?.find((p, i) => p.status === 'applied' && previous.proposals?.[i]?.status !== 'applied');
         if (applied) this.showActivity(`🤖 ${applied.decidedBy || 'Un usuario'} aplicó un cambio de la IA`);
         this.chatMessages = this.chatMessages.map(m => m.id === msg.id ? msg : m);
+        this.speakAIReplyOnce(msg);
         return;
       }
       this.chatMessages = [...this.chatMessages, msg];
+      this.speakAIReplyOnce(msg);
     }));
     this.subs.add(this.wsService.aiChatCleared$.subscribe(evt => {
       if (evt?.projectId === this.projectId) this.chatMessages = [];

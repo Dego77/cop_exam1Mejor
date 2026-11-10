@@ -13,6 +13,7 @@ import { EaImporterService } from '../../core/services/ea-importer.service';
 import { WebSocketService, CursorData } from '../../core/services/websocket.service';
 import { AuthService } from '../../core/services/auth.service';
 import { SupportAgentService } from '../../core/services/support-agent.service';
+import { colorForUser } from '../../core/utils/avatar-color';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -30,6 +31,7 @@ import { Subscription } from 'rxjs';
     <div class="editor-layout">
       <!-- Barra superior -->
       <app-navbar
+        #navbar
         [currentProject]="currentProject"
         [projects]="projects"
         [onlineUsers]="onlineUsers"
@@ -80,12 +82,16 @@ import { Subscription } from 'rxjs';
 
         <!-- Barra derecha: IA multimodal y código/sincronización -->
         <app-right-sidebar
-          [style.width.px]="rightSidebarWidth"
+          [style.width.px]="chatCollapsed ? 40 : rightSidebarWidth"
           [sidebarWidth]="rightSidebarWidth"
           (sidebarWidthChange)="rightSidebarWidth = $event"
           [projectId]="currentProject?.id || ''"
           [projectName]="currentProject?.name || ''"
           [hasCollaborators]="(currentProject?.collaborators?.length || 0) > 0"
+          [onlineUsers]="onlineUsers"
+          [selectedNode]="selectedNode"
+          [collapsed]="chatCollapsed"
+          (collapsedChange)="chatCollapsed = $event"
           (diagramUpdated)="onAIDiagramUpdated()"
         ></app-right-sidebar>
       </div>
@@ -114,6 +120,7 @@ import { Subscription } from 'rxjs';
 })
 export class EditorComponent implements OnInit, OnDestroy {
   @ViewChild(CanvasComponent) canvas?: CanvasComponent;
+  @ViewChild('navbar') navbar?: NavbarComponent;
 
   projects: Project[] = [];
   currentProject: Project | null = null;
@@ -125,6 +132,7 @@ export class EditorComponent implements OnInit, OnDestroy {
   activeConnectorType: string | null = null;
   leftSidebarWidth = 200;
   rightSidebarWidth = 320;
+  chatCollapsed = false;
 
   onlineUsers: any[] = [];
   activeRoomUsers: any[] = [];
@@ -132,7 +140,6 @@ export class EditorComponent implements OnInit, OnDestroy {
   private lastDragEmit = 0;
   localSessionStartTime = new Date().toISOString();
 
-  private userAvatarColors = ['#00d4ff', '#a855f7', '#ec4899', '#22c55e', '#f59e0b', '#3b82f6', '#10b981'];
 
   private subs = new Subscription();
 
@@ -484,13 +491,7 @@ export class EditorComponent implements OnInit, OnDestroy {
   }
 
   private getColorForUser(idOrEmail: any): string {
-    const str = String(idOrEmail || '');
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      hash = str.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    const index = Math.abs(hash) % this.userAvatarColors.length;
-    return this.userAvatarColors[index];
+    return colorForUser(idOrEmail);
   }
 
   updateOnlineCollaboratorsList(): void {
@@ -891,17 +892,26 @@ export class EditorComponent implements OnInit, OnDestroy {
 
   onExportSQL(): void {
     if (!this.currentProject) return;
+    const projectName = this.currentProject.name || 'schema';
     this.projectService.generateSQL(this.currentProject.id).subscribe({
       next: (res) => {
+        if (!res.sql) {
+          alert('No se pudo armar el script SQL de este diagrama.');
+          return;
+        }
         const blob = new Blob([res.sql], { type: 'text/sql' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
+        const safeName = projectName.replace(/[^\w\-]+/g, '_');
         a.href = url;
-        a.download = `${this.currentProject?.name || 'schema'}.sql`;
+        a.download = `${safeName}.sql`;
+        document.body.appendChild(a);
         a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
       },
       error: () => {
-        alert('Script SQL DDL PostgreSQL generado con éxito.');
+        alert('No se pudo generar el script SQL. Inténtalo de nuevo.');
       }
     });
   }
@@ -930,6 +940,7 @@ export class EditorComponent implements OnInit, OnDestroy {
   onExportBackend(): void {
     const projectId = this.currentProject?.id || '';
     const projectName = this.currentProject?.name || 'ExamenBackend';
+    this.navbar?.setGeneratingBackend(true);
 
     this.projectService.downloadSpringBootZip(projectId, this.nodes, this.connectors, projectName).subscribe({
       next: (blob: Blob) => {
@@ -937,11 +948,15 @@ export class EditorComponent implements OnInit, OnDestroy {
         const a = document.createElement('a');
         a.href = url;
         a.download = `${projectName.toLowerCase()}_springboot.zip`;
+        document.body.appendChild(a);
         a.click();
+        a.remove();
         window.URL.revokeObjectURL(url);
+        this.navbar?.setGeneratingBackend(false);
       },
       error: (err) => {
         console.error('Error generando Backend Spring Boot:', err);
+        this.navbar?.setGeneratingBackend(false);
         alert('Error al empaquetar el proyecto Spring Boot en ZIP.');
       }
     });
@@ -1020,6 +1035,14 @@ export class EditorComponent implements OnInit, OnDestroy {
 
   private processOpenedFile(fileName: string, xmlContent: string): void {
     const imported = this.eaImporterService.parseXMI(fileName, xmlContent);
+    if (imported.error) {
+      alert(imported.error);
+      return;
+    }
+    if ((imported.nodes || []).length === 0) {
+      alert('El archivo se abrió, pero no tiene clases para mostrar.');
+      return;
+    }
     const projName = imported.projectName || fileName.replace(/\.(eap|xmi|xml|eapx)$/i, '');
 
     // Quitar duplicados de la lista de proyectos del menú
@@ -1052,6 +1075,7 @@ export class EditorComponent implements OnInit, OnDestroy {
         (this.diagramService as any).nodesSubject.next(nodesToImport);
         (this.diagramService as any).connectorsSubject.next(connectorsToImport);
         this.diagramService.saveDiagramLocalSnapshot(proj.id, nodesToImport, connectorsToImport);
+        setTimeout(() => this.canvas?.fitToNodes(nodesToImport));
 
         // Guardar en PostgreSQL los nodos y conectores importados, mapeando los UUID
         this.diagramService.saveCurrentDiagram().subscribe({
@@ -1089,6 +1113,7 @@ export class EditorComponent implements OnInit, OnDestroy {
           (this.diagramService as any).nodesSubject.next(imported.nodes || []);
           (this.diagramService as any).connectorsSubject.next(imported.connectors || []);
           this.diagramService.saveDiagramLocalSnapshot(fallbackProj.id, imported.nodes || [], imported.connectors || []);
+          setTimeout(() => this.canvas?.fitToNodes(imported.nodes || []));
         }
       });
     }

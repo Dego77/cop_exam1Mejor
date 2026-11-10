@@ -264,19 +264,27 @@ export class SpringBootGeneratorService {
             const targetPk = this.getNodePrimaryKey(targetNode);
             const sourceEntityClass = this.sanitizeJavaName(sourceNode.name);
             const targetEntityClass = this.sanitizeJavaName(targetNode.name);
+            const usedKeyNames = new Set<string>();
+            const keyName = (entityClass: string, pkName: string) => {
+              let name = pkName === 'id' ? `id${entityClass}` : pkName;
+              if (usedKeyNames.has(name)) name = `id${entityClass}`;
+              usedKeyNames.add(name);
+              return name;
+            };
+            const sourceKey = keyName(sourceEntityClass, sourcePk.name);
+            const targetKey = keyName(targetEntityClass, targetPk.name);
 
-            // Agregar la PK del origen como PK y FK
+            // Cada lado aporta su clave, con un nombre distinto aunque las dos se llamen "id".
             attributes.push({
-              name: sourcePk.name,
+              name: sourceKey,
               type: sourcePk.type,
               isPrimaryKey: true,
               isForeignKey: true,
               foreignKeyEntity: sourceEntityClass,
             });
 
-            // Agregar la PK del destino como PK y FK
             attributes.push({
-              name: targetPk.name,
+              name: targetKey,
               type: targetPk.type,
               isPrimaryKey: true,
               isForeignKey: true,
@@ -291,16 +299,16 @@ export class SpringBootGeneratorService {
               mapsId: true,
               targetEntity: sourceEntityClass,
               fieldName: this.sanitizeFieldName(sourceEntityClass),
-              idField: sourcePk.name,
-              joinColumn: sourcePk.name,
+              idField: sourceKey,
+              joinColumn: sourceKey,
             });
             assocRelationships.push({
               type: 'MANY_TO_ONE',
               mapsId: true,
               targetEntity: targetEntityClass,
               fieldName: this.sanitizeFieldName(targetEntityClass),
-              idField: targetPk.name,
-              joinColumn: targetPk.name,
+              idField: targetKey,
+              joinColumn: targetKey,
             });
           }
         }
@@ -308,6 +316,7 @@ export class SpringBootGeneratorService {
         // Agregar los atributos propios definidos por el usuario en la Clase de Asociación
         (node.attributes || []).forEach((attr) => {
           const sanitizedAttr = this.sanitizeFieldName(attr.name);
+          if (sanitizedAttr === 'id') return;
           if (!attributes.some((a) => a.name === sanitizedAttr)) {
             attributes.push({
               name: sanitizedAttr,
@@ -502,6 +511,33 @@ export class SpringBootGeneratorService {
     };
   }
 
+  /** SQL del backend, el mismo que se guarda en schema.sql del proyecto generado. */
+  public static renderSchemaSql(nodes: UMLNode[], connectors: UMLConnector[], projectName = 'Prueba'): string {
+    const canonical = this.generateCanonicalJson(nodes, connectors, projectName) as { entities: any[] };
+    return this.generateSchemaSql(canonical.entities);
+  }
+
+  /** Fuentes Java del backend, sin el zip ni la app Flutter. Sirve para revisar imports y claves. */
+  public static renderJavaSources(
+    nodes: UMLNode[],
+    connectors: UMLConnector[],
+    projectName = 'Prueba'
+  ): Record<string, string> {
+    const canonical = this.generateCanonicalJson(nodes, connectors, projectName) as { entities: any[] };
+    const files: Record<string, string> = {};
+    canonical.entities.forEach((ent) => {
+      files[`model/${ent.className}.java`] = this.generateEntityJava(ent);
+      if (ent.isAssociationClass) {
+        files[`model/${ent.idClassName}.java`] = this.generateAssocClassIdJava(ent);
+      }
+      if (ent.isInterfaceStereotype) return;
+      files[`repository/${ent.className}Repository.java`] = this.generateRepositoryJava(ent);
+      files[`service/${ent.className}Service.java`] = this.generateServiceJava(ent);
+      files[`controller/${ent.className}Controller.java`] = this.generateControllerJava(ent);
+    });
+    return files;
+  }
+
   /**
    * Genera un buffer de archivo ZIP con todo el proyecto Spring Boot compilable y listo.
    */
@@ -687,7 +723,8 @@ server.port=8080
           const targetTable = this.toTableName(rel.targetEntity);
           const fkType = this.javaTypeToPg(pkTypeByClassName.get(rel.targetEntity) || 'Long');
           const uniqueSql = rel.type === 'ONE_TO_ONE' ? ' UNIQUE' : '';
-          cols.push(`  ${rel.joinColumn} ${fkType}${uniqueSql}`);
+          const requiredSql = rel.nullable === false ? ' NOT NULL' : '';
+          cols.push(`  ${rel.joinColumn} ${fkType}${uniqueSql}${requiredSql}`);
           fkConstraints.push(`  FOREIGN KEY (${rel.joinColumn}) REFERENCES ${targetTable}`);
         } else if (rel.type === 'MANY_TO_MANY' && rel.owning) {
           const targetTable = this.toTableName(rel.targetEntity);
@@ -862,9 +899,11 @@ public class ${className}${extendsClause}${implementsClause} {
 
     let code = `package com.examen.backend.model;
 
+import jakarta.persistence.Embeddable;
 import java.io.Serializable;
 import lombok.*;
 
+@Embeddable
 @Getter
 @Setter
 @NoArgsConstructor
@@ -880,14 +919,22 @@ public class ${ent.idClassName} implements Serializable {
     return code;
   }
 
+  /** Long, String y el resto de java.lang no necesitan import. Una clave compuesta sí. */
+  private static extraModelImport(typeName: string, alreadyImported: string): string {
+    if (!typeName || typeName === alreadyImported || typeName.includes('.')) return '';
+    if (/^(Long|Integer|String|Double|Boolean|Float|Short|Byte)$/.test(typeName)) return '';
+    return `import com.examen.backend.model.${typeName};\n`;
+  }
+
   private static generateRepositoryJava(ent: any): string {
     const className = ent.className;
     const pkType = ent.effectivePk ? ent.effectivePk.type : 'Long';
+    const pkImport = this.extraModelImport(pkType, className);
 
     return `package com.examen.backend.repository;
 
 import com.examen.backend.model.${className};
-import org.springframework.data.jpa.repository.JpaRepository;
+${pkImport}import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -901,11 +948,28 @@ public interface ${className}Repository extends JpaRepository<${className}, ${pk
     const varName = this.sanitizeFieldName(className);
     const repoVar = `${varName}Repository`;
     const pkType = ent.effectivePk ? ent.effectivePk.type : 'Long';
+    const pkImport = this.extraModelImport(pkType, className);
+    const links = (ent.relationships || []).filter((rel: any) => rel.type === 'MANY_TO_ONE');
+    const repos = new Map<string, string>();
+    for (const rel of links) {
+      repos.set(rel.targetEntity, `${this.sanitizeFieldName(rel.targetEntity)}Repository`);
+    }
+    const linkImports = [...repos.keys()]
+      .map((target) => `import com.examen.backend.repository.${target}Repository;\n`)
+      .join('');
+    const linkFields = [...repos.entries()]
+      .map(([target, repo]) => `    @Autowired\n    private ${target}Repository ${repo};\n\n`)
+      .join('');
+    const reattach = links.map((rel: any) => {
+      const pascal = rel.fieldName.charAt(0).toUpperCase() + rel.fieldName.slice(1);
+      const repo = repos.get(rel.targetEntity);
+      return `        if (entity.get${pascal}() != null && entity.get${pascal}().getId() != null) {\n            entity.set${pascal}(${repo}.getReferenceById(entity.get${pascal}().getId()));\n        }\n`;
+    }).join('');
 
     return `package com.examen.backend.service;
 
 import com.examen.backend.model.${className};
-import com.examen.backend.repository.${className}Repository;
+${pkImport}${linkImports}import com.examen.backend.repository.${className}Repository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.util.List;
@@ -917,7 +981,7 @@ public class ${className}Service {
     @Autowired
     private ${className}Repository ${repoVar};
 
-    public List<${className}> findAll() {
+${linkFields}    public List<${className}> findAll() {
         return ${repoVar}.findAll();
     }
 
@@ -926,7 +990,7 @@ public class ${className}Service {
     }
 
     public ${className} save(${className} entity) {
-        return ${repoVar}.save(entity);
+${reattach}        return ${repoVar}.save(entity);
     }
 
     public void deleteById(${pkType} id) {

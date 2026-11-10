@@ -3,6 +3,25 @@ import { prisma } from '../config/prisma';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { AIAgentService, AIConversationTurn, AIServiceResponse, addressMessage } from '../services/ai.service';
 import { SupportAIAgentService } from '../services/support-ai.service';
+import {
+  buildGroupChatPrompt,
+  canDecideProposal,
+  clarifyPendingApply,
+  asksForAdvice,
+  asksToUndoLast,
+  collectAppliedChanges,
+  inverseChange,
+  summarizePayload,
+  mentionsAgent,
+  personalizeAiReply,
+  describeDirectApply,
+  RECENT_LIMIT,
+  selectChatContext,
+  stripAgentMention,
+  SUMMARY_TRIGGER,
+} from '../services/chat-prompt';
+import { validateMutationPayload, reviewDiagramChange } from '../services/diagram-commands';
+import { ChirpVoice, synthesizeAIMessage } from '../services/text-to-speech.service';
 
 const CHAT_AUTHOR_SELECT = { id: true, fullName: true, avatarUrl: true };
 
@@ -14,11 +33,22 @@ type ChatMessageData = {
   content: string;
   mediaUrl?: string;
   proposals?: any;
+  clientMessageId?: string;
 };
 
 // Guarda un mensaje del chat de IA y lo envía, con su autor, a todos los que están en el proyecto,
 // para que vean en el momento quién preguntó y qué respondió la IA.
 async function saveAndBroadcastChat(req: AuthRequest, data: ChatMessageData) {
+  if (data.clientMessageId) {
+    const existing = await prisma.aIChatHistory.findFirst({
+      where: { projectId: data.projectId, clientMessageId: data.clientMessageId },
+      include: { user: { select: CHAT_AUTHOR_SELECT } },
+    });
+    if (existing) {
+      req.app.get('io')?.to(data.projectId).emit('ai-chat-message', existing);
+      return existing;
+    }
+  }
   const message = await prisma.aIChatHistory.create({
     data,
     include: { user: { select: CHAT_AUTHOR_SELECT } },
@@ -66,6 +96,14 @@ function payloadFrom(source: any): any {
 
 function payloadHasWork(payload: any): boolean {
   return MUTATION_KEYS.some((key) => Array.isArray(payload?.[key]) && payload[key].length > 0);
+}
+
+function mergePayload(base: any, extra: any): any {
+  const next = { ...(base || {}) };
+  for (const key of MUTATION_KEYS) {
+    if (Array.isArray(extra?.[key]) && extra[key].length) next[key] = [...(next[key] || []), ...extra[key]];
+  }
+  return next;
 }
 
 function clientHistory(req: AuthRequest): AIConversationTurn[] {
@@ -159,19 +197,27 @@ const RELATION_NAMES: Record<string, string> = {
   Dependency: 'dependencia',
 };
 
+function withIdentifierFirst(attrs: any[]): any[] {
+  const list = Array.isArray(attrs) ? attrs : [];
+  const keys = list.filter((item) => String(item?.name || '').toLocaleLowerCase() === 'id');
+  const rest = list.filter((item) => String(item?.name || '').toLocaleLowerCase() !== 'id');
+  return [...keys, ...rest];
+}
+
 function joinList(items: string[]): string {
   if (items.length < 2) return items[0] || '';
   return `${items.slice(0, -1).join(', ')} y ${items[items.length - 1]}`;
 }
 
-// Pregunta antes de borrar una clase. La escribe el servidor con las relaciones reales del diagrama
-// porque Gemini a veces responde que ya la eliminó, aunque nada cambia hasta pulsar Permitir.
+// Explica las consecuencias de borrar una clase usando las relaciones reales del diagrama.
 function buildDeletionConfirmation(diagram: any, proposals: any[], askerName: string, message: string): string {
   const deleting = proposals.filter((item) => item.payload?.classesToDelete?.length);
   const nodes: any[] = diagram?.nodes || [];
   const connectors: any[] = diagram?.connectors || [];
-  const names = deleting.flatMap((item) => item.payload.classesToDelete as string[]);
-  const targets = nodes.filter((n) => names.some((name) => name?.toLowerCase() === n.name.toLowerCase()));
+  const entries = deleting.flatMap((item) => item.payload.classesToDelete as any[]);
+  const ids = entries.map((entry) => (entry && typeof entry === 'object' ? entry.nodeId : null)).filter(Boolean);
+  const names = entries.map((entry) => (typeof entry === 'string' ? entry : entry?.name)).filter(Boolean);
+  const targets = nodes.filter((n) => ids.includes(n.id) || names.some((name: string) => name?.toLowerCase() === n.name.toLowerCase()));
   if (!targets.length) return message;
 
   const nodesById = new Map<string, any>(nodes.map((n) => [n.id, n]));
@@ -208,7 +254,7 @@ function buildDeletionConfirmation(diagram: any, proposals: any[], askerName: st
     ...details,
     hasRelations ? `Si ${targets.length > 1 ? 'las' : 'la'} eliminas, las relaciones de ${targets.length > 1 ? 'esas clases' : 'esa clase'} también se borrarán.` : '',
     hasOtherChanges ? 'Si permites, también se aplicarán los demás cambios pedidos.' : '',
-    'Usa Permitir o No permitir para decidir.',
+    'La propuesta de abajo muestra el cambio para que puedas revisarlo.',
   ];
   return addressMessage(parts.filter(Boolean).join(' '), askerName);
 }
@@ -244,8 +290,24 @@ function emitAIThinking(req: AuthRequest, projectId: string, user: { id: number;
 // y no puede usar connectorsToDelete ni connectorsModified: solo podría crear líneas nuevas.
 // Se arma desde la base en cada llamada, no desde lo último que mandó el frontend, para que
 // coincida con el diagrama en ese momento.
+function diagramSnapshot(diagram: any) {
+  const context = buildDiagramContext(diagram);
+  return {
+    nodes: context.nodes.map((node: any) => ({ id: node.nodeId, name: node.name })),
+    connectors: context.connectors.map((item: any) => ({
+      id: item.connectorId,
+      sourceNodeId: item.sourceNodeId,
+      targetNodeId: item.targetNodeId,
+      type: item.type,
+      sourceClassName: item.sourceClassName,
+      targetClassName: item.targetClassName,
+    })),
+  };
+}
+
 function buildDiagramContext(diagram: any): { nodes: any[]; connectors: any[] } {
   const nodes = (diagram?.nodes || []).map((n: any) => ({
+    nodeId: n.id,
     name: n.name,
     stereotype: n.stereotype || 'Entity',
     attributes: n.attributes || [],
@@ -256,11 +318,15 @@ function buildDiagramContext(diagram: any): { nodes: any[]; connectors: any[] } 
   const nodesById = new Map<string, any>((diagram?.nodes || []).map((n: any) => [n.id, n]));
   const connectors = (diagram?.connectors || [])
     .map((c: any) => ({
+      connectorId: c.id,
+      sourceNodeId: c.sourceNodeId,
+      targetNodeId: c.targetNodeId,
       sourceClassName: nodesById.get(c.sourceNodeId)?.name,
       targetClassName: nodesById.get(c.targetNodeId)?.name,
       type: c.type,
       sourceMultiplicity: c.sourceMultiplicity,
       targetMultiplicity: c.targetMultiplicity,
+      associationClassName: c.associationClassNodeId ? (nodesById.get(c.associationClassNodeId)?.name || null) : null,
     }))
     .filter((c: any) => c.sourceClassName && c.targetClassName);
   return { nodes, connectors };
@@ -406,6 +472,16 @@ async function applyConnectorDeletionsAndEdits(
 
   if (aiResponse.connectorsToDelete && aiResponse.connectorsToDelete.length > 0) {
     for (const item of aiResponse.connectorsToDelete) {
+      if (item?.connectorId) {
+        const byId = existingConnectors.find(c => c.id === item.connectorId);
+        if (byId) {
+          await prisma.connector.delete({ where: { id: byId.id } }).catch(() => {});
+          deletedConnectorIds.push(byId.id);
+          const idIndex = existingConnectors.findIndex(c => c.id === byId.id);
+          if (idIndex !== -1) existingConnectors.splice(idIndex, 1);
+        }
+        continue;
+      }
       const srcName = resolveName(item, 'sourceClassName', 'sourceNodeName', 'source');
       const tgtName = resolveName(item, 'targetClassName', 'targetNodeName', 'target');
       const match = findConnectorByNames(existingConnectors, nodesById, srcName, tgtName, item.type);
@@ -458,8 +534,12 @@ async function applyClassMutations(
 
   // classesToDelete: borrar clases enteras
   if (aiResponse.classesToDelete && aiResponse.classesToDelete.length > 0) {
-    for (const clsName of aiResponse.classesToDelete) {
-      const matchNode = existingNodes.find(n => n.name.toLowerCase() === clsName?.toLowerCase());
+    for (const entry of aiResponse.classesToDelete) {
+      const nodeId = entry && typeof entry === 'object' ? entry.nodeId : undefined;
+      const clsName = typeof entry === 'string' ? entry : entry?.name;
+      const matchNode = nodeId
+        ? existingNodes.find(n => n.id === nodeId)
+        : existingNodes.find(n => n.name.toLowerCase() === clsName?.toLowerCase());
       if (matchNode) {
         await prisma.node.delete({ where: { id: matchNode.id } });
         deletedNodeIds.push(matchNode.id);
@@ -474,10 +554,12 @@ async function applyClassMutations(
     for (const item of aiResponse.attributesToRemove) {
       const clsName = resolveName(item, 'className', 'class', 'name', 'entityName');
       const attrName = resolveName(item, 'attributeName', 'attribute', 'name', 'fieldName');
-      const matchNode = existingNodes.find(n => n.name.toLowerCase() === clsName?.toLowerCase());
+      const matchNode = item?.nodeId
+        ? existingNodes.find(n => n.id === item.nodeId)
+        : existingNodes.find(n => n.name.toLowerCase() === clsName?.toLowerCase());
       if (matchNode) {
         const currentAttrs = (matchNode.attributes as any[]) || [];
-        const updatedAttrs = currentAttrs.filter(a => a.name?.toLowerCase() !== attrName?.toLowerCase());
+        const updatedAttrs = withIdentifierFirst(currentAttrs.filter(a => a.name?.toLowerCase() !== attrName?.toLowerCase()));
         const updated = await prisma.node.update({
           where: { id: matchNode.id },
           data: { attributes: updatedAttrs },
@@ -493,7 +575,9 @@ async function applyClassMutations(
     for (const item of aiResponse.methodsToRemove) {
       const clsName = resolveName(item, 'className', 'class', 'name', 'entityName');
       const methName = resolveName(item, 'methodName', 'method', 'name', 'functionName');
-      const matchNode = existingNodes.find(n => n.name.toLowerCase() === clsName?.toLowerCase());
+      const matchNode = item?.nodeId
+        ? existingNodes.find(n => n.id === item.nodeId)
+        : existingNodes.find(n => n.name.toLowerCase() === clsName?.toLowerCase());
       if (matchNode) {
         const currentMeths = (matchNode.methods as any[]) || [];
         const updatedMeths = currentMeths.filter(m => m.name?.toLowerCase() !== methName?.toLowerCase());
@@ -517,7 +601,7 @@ async function applyClassMutations(
         const newAttrs = mod.attributesToAdd || mod.attributes || [];
         const newMeths = mod.methodsToAdd || mod.methods || [];
 
-        const updatedAttrs = [...currentAttrs];
+        const updatedAttrs = withIdentifierFirst([...currentAttrs]);
         for (const a of newAttrs) {
           if (!updatedAttrs.some(x => x.name?.toLowerCase() === a.name?.toLowerCase())) {
             updatedAttrs.push(a);
@@ -530,12 +614,13 @@ async function applyClassMutations(
             updatedMeths.push(m);
           }
         }
+        const orderedAttrs = withIdentifierFirst(updatedAttrs);
 
         const updated = await prisma.node.update({
           where: { id: matchNode.id },
-          data: { attributes: updatedAttrs, methods: updatedMeths },
+          data: { attributes: orderedAttrs, methods: updatedMeths },
         });
-        matchNode.attributes = updatedAttrs;
+        matchNode.attributes = orderedAttrs;
         matchNode.methods = updatedMeths;
         updatedNodes.push(updated);
       }
@@ -555,12 +640,13 @@ async function applyClassMutations(
         const newAttrs = cls.attributes || [];
         const newMeths = cls.methods || [];
 
-        const updatedAttrs = [...currentAttrs];
+        const updatedAttrs = withIdentifierFirst([...currentAttrs]);
         for (const a of newAttrs) {
           if (!updatedAttrs.some(x => x.name?.toLowerCase() === a.name?.toLowerCase())) {
             updatedAttrs.push(a);
           }
         }
+        const orderedAttrs = withIdentifierFirst(updatedAttrs);
 
         const updatedMeths = [...currentMeths];
         for (const m of newMeths) {
@@ -571,9 +657,9 @@ async function applyClassMutations(
 
         const updated = await prisma.node.update({
           where: { id: matchNode.id },
-          data: { attributes: updatedAttrs, methods: updatedMeths },
+          data: { attributes: orderedAttrs, methods: updatedMeths },
         });
-        matchNode.attributes = updatedAttrs;
+        matchNode.attributes = orderedAttrs;
         matchNode.methods = updatedMeths;
         updatedNodes.push(updated);
       } else {
@@ -582,7 +668,7 @@ async function applyClassMutations(
             diagramId,
             name: cls.name,
             stereotype: cls.stereotype || 'Entity',
-            attributes: cls.attributes || [],
+            attributes: withIdentifierFirst(cls.attributes || []),
             methods: cls.methods || [],
             positionX: currentX,
             positionY: currentY,
@@ -602,7 +688,9 @@ async function applyClassMutations(
     for (const item of aiResponse.classesToRename) {
       const oldName = resolveName(item, 'oldName', 'currentName', 'from', 'className');
       const newName = resolveName(item, 'newName', 'to');
-      const matchNode = existingNodes.find(n => n.name.toLowerCase() === oldName?.toLowerCase());
+      const matchNode = item?.nodeId
+        ? existingNodes.find(n => n.id === item.nodeId)
+        : existingNodes.find(n => n.name.toLowerCase() === oldName?.toLowerCase());
       if (matchNode && newName) {
         const updated = await prisma.node.update({
           where: { id: matchNode.id },
@@ -640,7 +728,7 @@ async function applyClassMutations(
 
 export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { projectId, prompt, model } = req.body;
+    const { projectId, prompt, model, clientMessageId, selectedNode } = req.body;
     const userId = req.user!.id;
 
     if (!projectId || !prompt) {
@@ -662,42 +750,235 @@ export const handleTextPrompt = async (req: AuthRequest, res: Response): Promise
     }
 
     const isPrivate = isPrivateRequest(req);
+    const askAgent = isPrivate || mentionsAgent(prompt);
+    const clientId = typeof clientMessageId === 'string' ? clientMessageId.trim().slice(0, 80) : undefined;
 
-    // Se guarda y se envía el mensaje primero, para que los demás lo vean de inmediato
     let userMessage: ChatMessageRecord | null = null;
     if (!isPrivate) {
-      userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'CHAT', content: prompt });
-      emitAIThinking(req, projectId, userMessage.user, true);
+      userMessage = await saveAndBroadcastChat(req, {
+        projectId, userId, sender: 'USER', mode: 'CHAT', content: prompt, clientMessageId: clientId,
+      });
     }
 
-    const { askerName, history } = await promptContext(req, projectId, userId, isPrivate, userMessage?.id);
-    const contextToUse = buildDiagramContext(diagram);
+    if (!askAgent) {
+      res.json({ userMessage, aiResponse: null, proposals: [], aiMessage: null });
+      return;
+    }
+
+    if (userMessage) emitAIThinking(req, projectId, userMessage.user, true);
+
+    const asker = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } });
+    const askerName = asker?.fullName?.trim() || 'Usuario';
     let aiResponse: AIServiceResponse;
+    let firstReply = false;
     try {
-      aiResponse = await AIAgentService.processTextPrompt(prompt, contextToUse, model, { askerName, history });
+      if (isPrivate) {
+        const history = clientHistory(req);
+        aiResponse = await AIAgentService.processTextPrompt(prompt, buildDiagramContext(diagram), model, { askerName, history });
+        aiResponse.message = addressMessage(aiResponse.message, askerName);
+      } else {
+        const group = await answerGroupChat(projectId, userId, askerName, prompt, diagram, model, selectedNode, userMessage?.id);
+        aiResponse = group.aiResponse;
+        firstReply = group.firstReply;
+      }
     } finally {
       if (userMessage) emitAIThinking(req, projectId, userMessage.user, false);
     }
 
-    aiResponse.message = addressMessage(aiResponse.message, askerName);
     const proposals = aiResponse.error ? [] : buildStoredProposals(aiResponse, askerName);
-    aiResponse.message = buildDeletionConfirmation(diagram, proposals, askerName, aiResponse.message);
+    let appliedDirectly = false;
+    if (!aiResponse.error && !isPrivate) {
+      const snapshot = diagramSnapshot(diagram);
+      const nodesById = new Map((diagram.nodes || []).map((node: any) => [node.id, node]));
+      const reviewDiagram = {
+        nodes: (diagram.nodes || []).map((node: any) => ({
+          id: node.id,
+          name: node.name,
+          attributes: node.attributes || [],
+          methods: node.methods || [],
+        })),
+        connectors: (diagram.connectors || []).map((item: any) => ({
+          type: item.type,
+          sourceClassName: nodesById.get(item.sourceNodeId)?.name,
+          targetClassName: nodesById.get(item.targetNodeId)?.name,
+        })),
+      };
+      const advice = asksForAdvice(stripAgentMention(prompt));
+      let appliedPayload: any = null;
+      for (const item of proposals) {
+        const checked = validateMutationPayload(item.payload, snapshot);
+        item.payload = checked.payload;
+        for (const note of checked.notes) {
+          if (!aiResponse.message.includes(note)) aiResponse.message = `${aiResponse.message} ${note}`.trim();
+        }
+        const review = reviewDiagramChange(item.payload, reviewDiagram);
+        for (const note of review.notes) {
+          if (!aiResponse.message.includes(note)) aiResponse.message = `${aiResponse.message} ${note}`.trim();
+        }
+        const suggestion = advice || String(item.askedBy || '').trim().toLocaleLowerCase() === 'ia';
+        if (!suggestion && payloadHasWork(review.safe)) {
+          await applyMutationPayload(diagram.id, review.safe);
+          appliedDirectly = true;
+          appliedPayload = mergePayload(appliedPayload, review.safe);
+          item.payload = review.critical;
+        } else if (suggestion) {
+          item.payload = { ...review.critical, ...review.safe };
+        } else {
+          item.payload = review.critical;
+        }
+      }
+      for (let index = proposals.length - 1; index >= 0; index -= 1) {
+        if (!payloadHasWork(proposals[index].payload)) proposals.splice(index, 1);
+      }
+      if (payloadHasWork(appliedPayload)) {
+        proposals.push({
+          id: 'aplicado',
+          label: summarizePayload(appliedPayload).slice(0, 180),
+          askedBy: askerName,
+          decidedBy: askerName,
+          status: 'applied',
+          replaceDiagram: false,
+          payload: appliedPayload,
+        });
+      }
+    }
+    if (!aiResponse.error && proposals.some((item) => item.id !== 'aplicado' && item.id !== 'deshacer' && item.status !== 'applied')) {
+      aiResponse.message = buildDeletionConfirmation(diagram, proposals, askerName, aiResponse.message);
+    }
+    if (!isPrivate) aiResponse.message = personalizeAiReply(aiResponse.message, askerName, firstReply);
+    const pendingProposal = proposals.some((item) => !item.status || item.status === 'pending');
+    if (!aiResponse.error && pendingProposal) aiResponse.message = clarifyPendingApply(aiResponse.message, true);
+    if (!aiResponse.error && !isPrivate) aiResponse.message = describeDirectApply(aiResponse.message, appliedDirectly, pendingProposal);
+    if (appliedDirectly) req.app.get('io')?.to(projectId).emit('diagram-reloaded', { projectId });
 
     let aiMessage: ChatMessageRecord | null = null;
     if (!isPrivate) {
-      aiMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'AI', mode: 'CHAT', content: aiResponse.message, proposals });
+      aiMessage = await saveAndBroadcastChat(req, {
+        projectId, userId, sender: 'AI', mode: 'CHAT', content: aiResponse.message, proposals,
+      });
+      void refreshChatSummary(projectId);
     }
 
-    res.json({
-      aiResponse,
-      proposals,
-      userMessage,
-      aiMessage,
-    });
+    res.json({ aiResponse, proposals, userMessage, aiMessage });
   } catch (error: any) {
     res.status(500).json({ error: 'Error al procesar prompt de IA: ' + error.message });
   }
 };
+
+async function answerGroupChat(
+  projectId: string,
+  userId: number,
+  askerName: string,
+  prompt: string,
+  diagram: any,
+  model: string | undefined,
+  selectedNode: any,
+  excludeMessageId?: string
+): Promise<{ aiResponse: AIServiceResponse; firstReply: boolean }> {
+  const question = stripAgentMention(prompt);
+  const prior = await prisma.aIChatHistory.findFirst({
+    where: { projectId, userId, sender: 'AI' },
+    select: { id: true },
+  });
+  const rows = await prisma.aIChatHistory.findMany({
+    where: { projectId },
+    include: { user: { select: { fullName: true } } },
+    orderBy: { createdAt: 'asc' },
+  });
+  const turns = rows
+    .filter((row) => row.id !== excludeMessageId)
+    .map((row) => ({
+      author: row.sender === 'AI' ? 'Agente IA' : (row.user?.fullName || 'Usuario'),
+      type: row.sender === 'AI' ? 'AI' as const : 'USER' as const,
+      text: row.content,
+      createdAt: row.createdAt,
+    }));
+  const stored = await prisma.aIChatContext.findUnique({ where: { projectId } });
+  const appliedChanges = collectAppliedChanges(rows);
+  if (asksToUndoLast(question)) {
+    const last = appliedChanges[appliedChanges.length - 1];
+    const inverse = last ? inverseChange(last.payload) : {};
+    const message = !last
+      ? 'No hay un cambio aplicado reciente para deshacer.'
+      : payloadHasWork(inverse)
+        ? `El último cambio fue «${last.label}»: ${last.summary}. Te propongo esta reversa para que la revises.`
+        : `El último cambio fue «${last.label}»: ${last.summary}. No guardé datos suficientes para revertirlo.`;
+    return {
+      aiResponse: {
+        message,
+        action: 'MODIFY_CLASSES',
+        proposals: payloadHasWork(inverse) ? [{
+          id: 'deshacer',
+          label: `Deshacer: ${last.label}`.slice(0, 180),
+          askedBy: askerName,
+          ...inverse,
+        }] : [],
+      },
+      firstReply: !prior,
+    };
+  }
+  const selected = selectChatContext(turns, question, stored?.summary || '');
+  const diagramContext = buildDiagramContext(diagram);
+  const selectedElement = selectedNode?.id
+    ? { nodeId: String(selectedNode.id), name: String(selectedNode.name || '') }
+    : null;
+  const fullPrompt = buildGroupChatPrompt({
+    author: askerName,
+    firstReply: !prior,
+    question,
+    summary: selected.summary,
+    recent: selected.recent,
+    relevant: selected.relevant,
+    diagram: diagramContext,
+    selected: selectedElement,
+    appliedChanges,
+  });
+  const aiResponse = await AIAgentService.processGroupChatPrompt(fullPrompt, model);
+  if (!aiResponse.error) {
+    const snapshot = {
+      nodes: diagramContext.nodes.map((node: any) => ({ id: node.nodeId, name: node.name })),
+      connectors: diagramContext.connectors.map((item: any) => ({
+        id: item.connectorId,
+        sourceNodeId: item.sourceNodeId,
+        targetNodeId: item.targetNodeId,
+        type: item.type,
+        sourceClassName: item.sourceClassName,
+        targetClassName: item.targetClassName,
+      })),
+    };
+    const checked = validateMutationPayload(aiResponse, snapshot);
+    Object.assign(aiResponse, checked.payload);
+    if (checked.notes.length) aiResponse.message = `${aiResponse.message} ${checked.notes.join(' ')}`.trim();
+  }
+  return { aiResponse, firstReply: !prior };
+}
+
+async function refreshChatSummary(projectId: string): Promise<void> {
+  try {
+    const state = await prisma.aIChatContext.findUnique({ where: { projectId } });
+    const rows = await prisma.aIChatHistory.findMany({
+      where: { projectId },
+      include: { user: { select: { fullName: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+    const older = rows.slice(0, Math.max(0, rows.length - RECENT_LIMIT));
+    const pending = state?.summarizedThrough
+      ? older.filter((row) => row.createdAt > state.summarizedThrough!)
+      : older;
+    if (pending.length < SUMMARY_TRIGGER) return;
+    const chunk = pending.slice(0, 40);
+    const lines = chunk.map((row) => `${row.sender === 'AI' ? 'Agente IA' : (row.user?.fullName || 'Usuario')}: ${row.content}`).join('\n');
+    const summary = await AIAgentService.summarizeTeamChat(state?.summary || '', lines);
+    if (!summary) return;
+    await prisma.aIChatContext.upsert({
+      where: { projectId },
+      create: { projectId, summary, summarizedThrough: chunk[chunk.length - 1].createdAt },
+      update: { summary, summarizedThrough: chunk[chunk.length - 1].createdAt },
+    });
+  } catch (err) {
+    console.warn('No se pudo actualizar el resumen del chat:', err);
+  }
+}
 
 export const handlePhotoPrompt = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -741,6 +1022,7 @@ export const handlePhotoPrompt = async (req: AuthRequest, res: Response): Promis
 
     aiResponse.message = addressMessage(aiResponse.message, askerName);
     const proposals = aiResponse.error ? [] : buildStoredProposals(aiResponse, askerName, true);
+    if (!aiResponse.error && proposals.length) aiResponse.message = clarifyPendingApply(aiResponse.message, true);
 
     let aiMessage: ChatMessageRecord | null = null;
     if (!isPrivate) {
@@ -808,6 +1090,7 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
     aiResponse.message = addressMessage(aiResponse.message, asker.askerName);
     const proposals = aiResponse.error ? [] : buildStoredProposals(aiResponse, asker.askerName);
     aiResponse.message = buildDeletionConfirmation(diagram, proposals, asker.askerName, aiResponse.message);
+    if (!aiResponse.error && proposals.length) aiResponse.message = clarifyPendingApply(aiResponse.message, true);
 
     let aiMessage: ChatMessageRecord | null = null;
     if (userId && !isPrivate) {
@@ -850,6 +1133,41 @@ export const getAIChatHistory = async (req: AuthRequest, res: Response): Promise
     res.json(history);
   } catch (error: any) {
     res.status(500).json({ error: 'Error al obtener historial IA: ' + error.message });
+  }
+};
+
+export const getAIMessageSpeech = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const messageId = req.params.messageId as string;
+    const requestedVoice = req.query.voice;
+    const voice: ChirpVoice = requestedVoice === 'Leda' ? 'Leda' : 'Puck';
+    if (requestedVoice !== undefined && requestedVoice !== 'Puck' && requestedVoice !== 'Leda') {
+      res.status(400).json({ error: 'La voz debe ser Puck o Leda.' });
+      return;
+    }
+    const message = await prisma.aIChatHistory.findFirst({
+      where: { id: messageId, sender: 'AI' },
+      select: { id: true, projectId: true, content: true },
+    });
+    if (!message) {
+      res.status(404).json({ error: 'No se encontró el mensaje de IA.' });
+      return;
+    }
+    if (!(await userCanAccessProject(message.projectId, req.user!.id))) {
+      res.status(403).json({ error: 'No tienes acceso a este mensaje.' });
+      return;
+    }
+
+    const audio = await synthesizeAIMessage(message.id, message.content, voice);
+    res.set({ 'Content-Type': 'audio/mpeg', 'Cache-Control': 'private, max-age=3600' });
+    res.send(audio);
+  } catch (error: any) {
+    if (error?.message?.includes('límite de síntesis')) {
+      res.status(413).json({ error: error.message });
+      return;
+    }
+    console.error('No se pudo sintetizar la respuesta con Cloud Text-to-Speech.');
+    res.status(503).json({ error: 'No se pudo generar el audio de la respuesta.' });
   }
 };
 
@@ -999,6 +1317,24 @@ async function applyPhotoDiagram(diagramId: string, payload: any) {
   return { createdNodes, createdConnectors, updatedNodes: [], deletedNodeIds: [], deletedConnectorIds: [], updatedConnectors: [], replaced: true };
 }
 
+async function claimPendingProposal(messageId: string, projectId: string, proposalId: string) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "AIChatHistory" WHERE id = ${messageId} FOR UPDATE`;
+    const message = await tx.aIChatHistory.findFirst({
+      where: { id: messageId, projectId, sender: 'AI' },
+      include: { user: { select: CHAT_AUTHOR_SELECT } },
+    });
+    if (!message) return { missing: true as const };
+    const list = Array.isArray(message.proposals) ? (message.proposals as any[]).map((item) => ({ ...item })) : [];
+    const proposal = list.find((item) => item.id === proposalId);
+    if (!proposal) return { notFound: true as const, message };
+    if (proposal.status && proposal.status !== 'pending') return { already: true as const, message };
+    proposal.status = 'applying';
+    await tx.aIChatHistory.update({ where: { id: message.id }, data: { proposals: list } });
+    return { proposal, list, message };
+  });
+}
+
 export const decideAIProposal = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { projectId, messageId, proposalId, decision } = req.body;
@@ -1026,28 +1362,39 @@ export const decideAIProposal = async (req: AuthRequest, res: Response): Promise
         res.status(404).json({ error: 'No se encontró la respuesta de la IA.' });
         return;
       }
-      if (message.userId !== userId) {
+      if (!canDecideProposal(message.userId, userId)) {
         res.status(403).json({ error: 'Solo quien hizo el pedido a la IA puede decidirlo.' });
         return;
       }
-      const list = Array.isArray(message.proposals) ? message.proposals.map((item: any) => ({ ...item })) : [];
-      proposal = list.find((item: any) => item.id === proposalId);
-      if (!proposal) {
+      const claimed = await claimPendingProposal(messageId, projectId, proposalId);
+      if (claimed.missing) {
+        res.status(404).json({ error: 'No se encontró la respuesta de la IA.' });
+        return;
+      }
+      if (claimed.notFound) {
         res.status(404).json({ error: 'No se encontró esa opción.' });
         return;
       }
-      if (proposal.status && proposal.status !== 'pending') {
-        res.json({ aiMessage: message, alreadyDecided: true });
+      if (claimed.already) {
+        res.json({ aiMessage: claimed.message, alreadyDecided: true });
         return;
       }
+      proposal = claimed.proposal;
+      const list = claimed.list;
 
       let applied: any = {};
-      if (decision === 'apply') {
-        let diagram = await prisma.diagram.findFirst({ where: { projectId }, orderBy: { updatedAt: 'desc' } });
-        if (!diagram) diagram = await prisma.diagram.create({ data: { projectId, name: 'Main Diagram' } });
-        applied = proposal.replaceDiagram
-          ? await applyPhotoDiagram(diagram.id, proposal.payload)
-          : await applyMutationPayload(diagram.id, proposal.payload);
+      try {
+        if (decision === 'apply') {
+          let diagram = await prisma.diagram.findFirst({ where: { projectId }, orderBy: { updatedAt: 'desc' } });
+          if (!diagram) diagram = await prisma.diagram.create({ data: { projectId, name: 'Main Diagram' } });
+          applied = proposal.replaceDiagram
+            ? await applyPhotoDiagram(diagram.id, proposal.payload)
+            : await applyMutationPayload(diagram.id, proposal.payload);
+        }
+      } catch (applyError) {
+        proposal.status = 'pending';
+        await prisma.aIChatHistory.update({ where: { id: message.id }, data: { proposals: list } });
+        throw applyError;
       }
 
       proposal.status = decision === 'apply' ? 'applied' : 'rejected';
@@ -1058,6 +1405,7 @@ export const decideAIProposal = async (req: AuthRequest, res: Response): Promise
         include: { user: { select: CHAT_AUTHOR_SELECT } },
       });
       req.app.get('io')?.to(projectId).emit('ai-chat-message', message);
+      if (decision === 'apply') req.app.get('io')?.to(projectId).emit('diagram-reloaded', { projectId });
       res.json({ aiMessage: message, ...applied, replaced: !!proposal.replaceDiagram && decision === 'apply' });
       return;
     }

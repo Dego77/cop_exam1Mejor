@@ -7,6 +7,7 @@ dist/
 
 # Variables privadas
 .env
+/Backend/secrets/
 
 # Editor
 .vscode/

@@ -34,6 +34,7 @@ model Project {
   diagrams       Diagram[]
   aiChats        AIChatHistory[]
   aiChatClears   AIChatClear[]
+  aiChatContext  AIChatContext?
   architectSyncs ArchitectSync[]
   workSessions   WorkSession[]
 }
@@ -106,11 +107,24 @@ model AIChatHistory {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   sender    String
   mode      String
-  content   String
-  mediaUrl  String?
+  content         String
+  mediaUrl        String?
+  // Id creado en el navegador para reemplazar el mensaje provisional sin duplicarlo.
+  clientMessageId String?
   // Opciones del diagrama pendientes, aplicadas o rechazadas de esta respuesta de la IA. Nulo en mensajes de usuario.
-  proposals Json?
-  createdAt DateTime @default(now())
+  proposals       Json?
+  createdAt       DateTime @default(now())
+
+  @@index([projectId, clientMessageId])
+}
+
+// Resumen del chat de un proyecto. Solo se rellena cuando el hilo ya no cabe en los mensajes recientes.
+model AIChatContext {
+  projectId          String    @id
+  project            Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  summary            String    @default("") @db.Text
+  summarizedThrough  DateTime?
+  updatedAt          DateTime  @updatedAt
 }
 
 // "Nuevo chat → Para mí": el usuario solo ve mensajes del chat de IA creados después de clearedAt
