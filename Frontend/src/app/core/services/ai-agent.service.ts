@@ -95,6 +95,13 @@ export class AIAgentService {
     );
   }
 
+  getAIMessageSpeech(messageId: string, voice: 'Puck' | 'Leda'): Observable<Blob> {
+    return this.http.get(`${this.apiUrl}/speech/${encodeURIComponent(messageId)}?voice=${voice}`, {
+      headers: this.headers,
+      responseType: 'blob',
+    });
+  }
+
   // Nuevo chat: 'me' reinicia solo la vista de este usuario, 'all' borra el chat del proyecto para todos
   clearChatHistory(projectId: string, scope: 'me' | 'all'): Observable<any> {
     return this.http.delete(`${this.apiUrl}/history/${projectId}?scope=${scope}`, { headers: this.headers });

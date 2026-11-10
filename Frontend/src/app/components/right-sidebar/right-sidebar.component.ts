@@ -75,14 +75,19 @@ import { colorForUser } from '../../core/utils/avatar-color';
         </div>
 
         <div class="voice-preference" *ngIf="!isPrivateChat">
-          <span>Voz de respuestas de la IA</span>
+          <span>Voz IA</span>
+          <select class="voice-preference-select" [value]="aiVoiceChoice"
+            aria-label="Elegir voz de Chirp" (change)="setAIVoiceChoice($any($event.target).value)">
+            <option value="Puck">Puck</option>
+            <option value="Leda">Leda</option>
+          </select>
           <button type="button" class="voice-preference-toggle"
             [class.enabled]="aiVoiceEnabled"
             [attr.aria-pressed]="aiVoiceEnabled"
             [disabled]="!speechSynthesisSupported"
             [title]="speechSynthesisSupported ? (aiVoiceEnabled ? 'Deshabilitar voz para este usuario' : 'Habilitar voz para este usuario') : 'La voz no está disponible en este navegador'"
             (click)="toggleAIVoice()">
-            {{ speechSynthesisSupported ? (aiVoiceEnabled ? '🔊 Activada' : '🔇 Desactivada') : 'No disponible' }}
+            {{ speechSynthesisSupported ? (aiVoiceEnabled ? 'ON' : 'OFF') : 'No disponible' }}
           </button>
         </div>
 
@@ -1148,6 +1153,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   };
 
   ngOnDestroy(): void {
+    this.stopAIReplyAudio();
     this.stopResizing();
     this.diagramChangeSub?.unsubscribe();
     this.chatSocketSub?.unsubscribe();
@@ -1161,7 +1167,11 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
 
   chatHistory: AIMessage[] = [];
   aiVoiceEnabled = true;
+  aiVoiceChoice: 'Puck' | 'Leda' = 'Puck';
   private spokenAIMessageIds = new Set<string>();
+  private activeAIReplyAudio?: HTMLAudioElement;
+  private activeAIReplyAudioUrl?: string;
+  private voiceRequestVersion = 0;
   isPrivateChat = false;
   privateChatHistory: AIMessage[] = [];
   showNewChatOptions = false;
@@ -1637,27 +1647,38 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   get speechSynthesisSupported(): boolean {
-    return typeof window !== 'undefined'
-      && 'speechSynthesis' in window
-      && typeof SpeechSynthesisUtterance !== 'undefined';
+    return typeof window !== 'undefined' && typeof Audio !== 'undefined';
   }
 
   private voicePreferenceKey(): string {
     return `classforge_ai_voice_${this.auth.currentUser?.id ?? 'default'}`;
   }
 
+  private voiceChoicePreferenceKey(): string {
+    return `${this.voicePreferenceKey()}_chirp`;
+  }
+
   private restoreAIVoicePreference(): void {
     try {
       const preference = localStorage.getItem(this.voicePreferenceKey());
       if (preference !== null) this.aiVoiceEnabled = preference === 'true';
+      const choice = localStorage.getItem(this.voiceChoicePreferenceKey());
+      if (choice === 'Puck' || choice === 'Leda') this.aiVoiceChoice = choice;
     } catch { }
+  }
+
+  setAIVoiceChoice(choice: string): void {
+    if (choice !== 'Puck' && choice !== 'Leda') return;
+    this.aiVoiceChoice = choice;
+    try { localStorage.setItem(this.voiceChoicePreferenceKey(), choice); } catch { }
+    this.stopAIReplyAudio();
   }
 
   toggleAIVoice(): void {
     if (!this.speechSynthesisSupported) return;
     this.aiVoiceEnabled = !this.aiVoiceEnabled;
     try { localStorage.setItem(this.voicePreferenceKey(), String(this.aiVoiceEnabled)); } catch { }
-    if (!this.aiVoiceEnabled) window.speechSynthesis.cancel();
+    if (!this.aiVoiceEnabled) this.stopAIReplyAudio();
   }
 
   private speakAIReplyOnce(message: AIMessage): void {
@@ -1671,7 +1692,56 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
         if (oldest) this.spokenAIMessageIds.delete(oldest);
       }
     }
+    if (!this.aiVoiceEnabled || !message.content?.trim()) return;
+    if (message.id) {
+      const requestVersion = ++this.voiceRequestVersion;
+      this.aiService.getAIMessageSpeech(message.id, this.aiVoiceChoice).subscribe({
+        next: (blob) => {
+          if (!this.aiVoiceEnabled || requestVersion !== this.voiceRequestVersion) return;
+          this.stopAIReplyAudio();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          this.activeAIReplyAudioUrl = url;
+          this.activeAIReplyAudio = audio;
+          audio.onended = () => this.releaseAIReplyAudio(audio, url);
+          audio.onerror = () => {
+            this.releaseAIReplyAudio(audio, url);
+            this.speakText(message.content);
+          };
+          void audio.play().catch(() => {
+            this.releaseAIReplyAudio(audio, url);
+            this.speakText(message.content);
+          });
+        },
+        error: () => {
+          if (this.aiVoiceEnabled && requestVersion === this.voiceRequestVersion) this.speakText(message.content);
+        },
+      });
+      return;
+    }
     this.speakText(message.content);
+  }
+
+  private stopAIReplyAudio(): void {
+    this.voiceRequestVersion++;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+    if (this.activeAIReplyAudio) {
+      this.activeAIReplyAudio.onended = null;
+      this.activeAIReplyAudio.onerror = null;
+      this.activeAIReplyAudio.pause();
+      this.activeAIReplyAudio.src = '';
+      this.activeAIReplyAudio = undefined;
+    }
+    if (this.activeAIReplyAudioUrl) {
+      URL.revokeObjectURL(this.activeAIReplyAudioUrl);
+      this.activeAIReplyAudioUrl = undefined;
+    }
+  }
+
+  private releaseAIReplyAudio(audio: HTMLAudioElement, url: string): void {
+    if (this.activeAIReplyAudio === audio) this.activeAIReplyAudio = undefined;
+    if (this.activeAIReplyAudioUrl === url) this.activeAIReplyAudioUrl = undefined;
+    URL.revokeObjectURL(url);
   }
 
   private speakText(text: string): void {

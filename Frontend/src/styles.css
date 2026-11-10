@@ -355,7 +355,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 7px;
   padding: 7px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -363,6 +363,7 @@ html, body {
   color: var(--text-secondary);
   font-size: 11px;
 }
+.voice-preference > span { flex: 1 1 auto; min-width: 0; }
 .voice-preference-toggle {
   flex: 0 0 auto;
   border: 1px solid var(--border);
@@ -379,7 +380,20 @@ html, body {
   background: rgba(16, 185, 129, 0.12);
   color: var(--green);
 }
+.voice-preference-toggle:not(.enabled) {
+  border-color: var(--red);
+  color: var(--red);
+}
 .voice-preference-toggle:disabled { opacity: 0.55; cursor: not-allowed; }
+.voice-preference-select {
+  flex: 0 0 76px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 4px;
+  color: var(--text-primary);
+  background: var(--bg-card);
+}
 
 /* Tarjetas de propuestas del chat grupal */
 .proposal {

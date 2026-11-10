@@ -29,6 +29,11 @@ import { ChatTextComponent } from '../../components/chat-text/chat-text.componen
           <span class="vh-online" *ngIf="onlineUsers.length" [title]="onlineNames">
             <span class="vh-dot"></span>{{ onlineUsers.length }}
           </span>
+          <select class="vh-voice-select" [value]="aiVoiceChoice" aria-label="Elegir voz de Chirp"
+            (change)="setAIVoiceChoice($any($event.target).value)">
+            <option value="Puck">Puck</option>
+            <option value="Leda">Leda</option>
+          </select>
           <button class="vh-btn" [class.active]="aiVoiceEnabled" [disabled]="!speechSynthesisSupported"
             [attr.aria-pressed]="aiVoiceEnabled" (click)="toggleAIVoice()"
             [title]="speechSynthesisSupported ? (aiVoiceEnabled ? 'Deshabilitar voz de respuestas' : 'Habilitar voz de respuestas') : 'La voz no está disponible en este navegador'">
@@ -159,6 +164,15 @@ import { ChatTextComponent } from '../../components/chat-text/chat-text.componen
       border-color: var(--cyan);
       color: var(--cyan);
     }
+    .vh-voice-select {
+      max-width: 82px;
+      height: 32px;
+      padding: 0 5px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      color: var(--text-primary);
+      background: var(--bg-card);
+    }
     .viewer-canvas {
       flex: 1;
       display: flex;
@@ -266,7 +280,11 @@ export class ViewerComponent implements OnInit, OnDestroy {
   showChat = false;
   chatMessages: AIMessage[] = [];
   aiVoiceEnabled = true;
+  aiVoiceChoice: 'Puck' | 'Leda' = 'Puck';
   private spokenAIMessageIds = new Set<string>();
+  private activeAIReplyAudio?: HTMLAudioElement;
+  private activeAIReplyAudioUrl?: string;
+  private voiceRequestVersion = 0;
 
   private remoteCursorsMap = new Map<string, CursorData>();
   usersWaitingAI: { userId: number; fullName: string }[] = [];
@@ -317,27 +335,38 @@ export class ViewerComponent implements OnInit, OnDestroy {
   }
 
   get speechSynthesisSupported(): boolean {
-    return typeof window !== 'undefined'
-      && 'speechSynthesis' in window
-      && typeof SpeechSynthesisUtterance !== 'undefined';
+    return typeof window !== 'undefined' && typeof Audio !== 'undefined';
   }
 
   private voicePreferenceKey(): string {
     return `classforge_ai_voice_${this.auth.currentUser?.id ?? 'default'}`;
   }
 
+  private voiceChoicePreferenceKey(): string {
+    return `${this.voicePreferenceKey()}_chirp`;
+  }
+
   private restoreAIVoicePreference(): void {
     try {
       const preference = localStorage.getItem(this.voicePreferenceKey());
       if (preference !== null) this.aiVoiceEnabled = preference === 'true';
+      const choice = localStorage.getItem(this.voiceChoicePreferenceKey());
+      if (choice === 'Puck' || choice === 'Leda') this.aiVoiceChoice = choice;
     } catch { }
+  }
+
+  setAIVoiceChoice(choice: string): void {
+    if (choice !== 'Puck' && choice !== 'Leda') return;
+    this.aiVoiceChoice = choice;
+    try { localStorage.setItem(this.voiceChoicePreferenceKey(), choice); } catch { }
+    this.stopAIReplyAudio();
   }
 
   toggleAIVoice(): void {
     if (!this.speechSynthesisSupported) return;
     this.aiVoiceEnabled = !this.aiVoiceEnabled;
     try { localStorage.setItem(this.voicePreferenceKey(), String(this.aiVoiceEnabled)); } catch { }
-    if (!this.aiVoiceEnabled) window.speechSynthesis.cancel();
+    if (!this.aiVoiceEnabled) this.stopAIReplyAudio();
   }
 
   private speakAIReplyOnce(message: AIMessage): void {
@@ -351,13 +380,66 @@ export class ViewerComponent implements OnInit, OnDestroy {
         if (oldest) this.spokenAIMessageIds.delete(oldest);
       }
     }
-    if (!this.aiVoiceEnabled || !this.speechSynthesisSupported || !message.content?.trim()) return;
+    if (!this.aiVoiceEnabled || !message.content?.trim()) return;
+    if (message.id) {
+      const requestVersion = ++this.voiceRequestVersion;
+      this.aiService.getAIMessageSpeech(message.id, this.aiVoiceChoice).subscribe({
+        next: (blob) => {
+          if (!this.aiVoiceEnabled || requestVersion !== this.voiceRequestVersion) return;
+          this.stopAIReplyAudio();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          this.activeAIReplyAudioUrl = url;
+          this.activeAIReplyAudio = audio;
+          audio.onended = () => this.releaseAIReplyAudio(audio, url);
+          audio.onerror = () => {
+            this.releaseAIReplyAudio(audio, url);
+            this.speakAIText(message.content);
+          };
+          void audio.play().catch(() => {
+            this.releaseAIReplyAudio(audio, url);
+            this.speakAIText(message.content);
+          });
+        },
+        error: () => {
+          if (this.aiVoiceEnabled && requestVersion === this.voiceRequestVersion) this.speakAIText(message.content);
+        },
+      });
+      return;
+    }
+    this.speakAIText(message.content);
+  }
+
+  private speakAIText(text: string): void {
+    if (!this.aiVoiceEnabled || !('speechSynthesis' in window) || !text?.trim()) return;
     try {
-      const utterance = new SpeechSynthesisUtterance(message.content.replace(/[*_#`~]/g, ''));
+      const utterance = new SpeechSynthesisUtterance(text.replace(/[*_#`~]/g, ''));
       utterance.lang = 'es-ES';
       utterance.rate = 1;
       window.speechSynthesis.speak(utterance);
     } catch { }
+  }
+
+  private stopAIReplyAudio(): void {
+    this.voiceRequestVersion++;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+    if (this.activeAIReplyAudio) {
+      this.activeAIReplyAudio.onended = null;
+      this.activeAIReplyAudio.onerror = null;
+      this.activeAIReplyAudio.pause();
+      this.activeAIReplyAudio.src = '';
+      this.activeAIReplyAudio = undefined;
+    }
+    if (this.activeAIReplyAudioUrl) {
+      URL.revokeObjectURL(this.activeAIReplyAudioUrl);
+      this.activeAIReplyAudioUrl = undefined;
+    }
+  }
+
+  private releaseAIReplyAudio(audio: HTMLAudioElement, url: string): void {
+    if (this.activeAIReplyAudio === audio) this.activeAIReplyAudio = undefined;
+    if (this.activeAIReplyAudioUrl === url) this.activeAIReplyAudioUrl = undefined;
+    URL.revokeObjectURL(url);
   }
 
   ngOnInit(): void {
@@ -385,6 +467,7 @@ export class ViewerComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.stopAIReplyAudio();
     clearTimeout(this.activityTimer);
     this.spokenAIMessageIds.clear();
     this.subs.unsubscribe();

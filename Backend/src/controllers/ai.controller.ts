@@ -21,6 +21,7 @@ import {
   SUMMARY_TRIGGER,
 } from '../services/chat-prompt';
 import { validateMutationPayload, reviewDiagramChange } from '../services/diagram-commands';
+import { ChirpVoice, synthesizeAIMessage } from '../services/text-to-speech.service';
 
 const CHAT_AUTHOR_SELECT = { id: true, fullName: true, avatarUrl: true };
 
@@ -1132,6 +1133,41 @@ export const getAIChatHistory = async (req: AuthRequest, res: Response): Promise
     res.json(history);
   } catch (error: any) {
     res.status(500).json({ error: 'Error al obtener historial IA: ' + error.message });
+  }
+};
+
+export const getAIMessageSpeech = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const messageId = req.params.messageId as string;
+    const requestedVoice = req.query.voice;
+    const voice: ChirpVoice = requestedVoice === 'Leda' ? 'Leda' : 'Puck';
+    if (requestedVoice !== undefined && requestedVoice !== 'Puck' && requestedVoice !== 'Leda') {
+      res.status(400).json({ error: 'La voz debe ser Puck o Leda.' });
+      return;
+    }
+    const message = await prisma.aIChatHistory.findFirst({
+      where: { id: messageId, sender: 'AI' },
+      select: { id: true, projectId: true, content: true },
+    });
+    if (!message) {
+      res.status(404).json({ error: 'No se encontró el mensaje de IA.' });
+      return;
+    }
+    if (!(await userCanAccessProject(message.projectId, req.user!.id))) {
+      res.status(403).json({ error: 'No tienes acceso a este mensaje.' });
+      return;
+    }
+
+    const audio = await synthesizeAIMessage(message.id, message.content, voice);
+    res.set({ 'Content-Type': 'audio/mpeg', 'Cache-Control': 'private, max-age=3600' });
+    res.send(audio);
+  } catch (error: any) {
+    if (error?.message?.includes('límite de síntesis')) {
+      res.status(413).json({ error: error.message });
+      return;
+    }
+    console.error('No se pudo sintetizar la respuesta con Cloud Text-to-Speech.');
+    res.status(503).json({ error: 'No se pudo generar el audio de la respuesta.' });
   }
 };
 
