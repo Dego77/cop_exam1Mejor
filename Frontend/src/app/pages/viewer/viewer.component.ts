@@ -76,12 +76,24 @@ import { ChatTextComponent } from '../../components/chat-text/chat-text.componen
               <span class="vc-time" *ngIf="msg.timestamp">{{ msg.timestamp | date:'HH:mm' }}</span>
             </div>
             <div class="vc-text"><app-chat-text [text]="msg.content" [classNames]="classNames" [emphasizeClasses]="msg.sender === 'AI'"></app-chat-text></div>
+            <img
+              *ngIf="msg.mode === 'PHOTO' && msg.mediaUrl"
+              [src]="msg.mediaUrl"
+              class="vc-img"
+              alt="Imagen enviada a la IA"
+              (click)="expandedImageUrl = msg.mediaUrl"
+            />
             <div class="vc-text" *ngFor="let proposal of msg.proposals">{{ proposal.label }} · {{ proposal.status === 'applied' ? 'aplicado' : (proposal.status === 'rejected' ? 'no permitido' : 'pendiente') }}</div>
           </div>
           <div class="vc-status" *ngFor="let peer of usersWaitingAI">Agente IA está respondiendo a {{ peer.fullName }}</div>
           <div class="vc-status" *ngIf="typingLabel">{{ typingLabel }}</div>
         </div>
       </aside>
+
+      <!-- Imagen del chat en grande; se cierra tocando en cualquier parte -->
+      <div class="vc-img-overlay" *ngIf="expandedImageUrl" (click)="expandedImageUrl = null">
+        <img [src]="expandedImageUrl" alt="Imagen enviada a la IA" />
+      </div>
     </div>
   `,
   styles: [`
@@ -261,6 +273,32 @@ import { ChatTextComponent } from '../../components/chat-text/chat-text.componen
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .vc-img {
+      display: block;
+      width: 100%;
+      max-width: 220px;
+      max-height: 180px;
+      object-fit: cover;
+      margin-top: 6px;
+      border-radius: 6px;
+      cursor: zoom-in;
+    }
+    .vc-img-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(0, 0, 0, 0.85);
+    }
+    .vc-img-overlay img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      border-radius: 6px;
+    }
     .vc-status {
       font-size: 11px;
       color: var(--text-secondary);
@@ -278,6 +316,7 @@ export class ViewerComponent implements OnInit, OnDestroy {
   labels: CanvasLabel[] = [];
   onlineUsers: any[] = [];
   showChat = false;
+  expandedImageUrl: string | null = null;
   chatMessages: AIMessage[] = [];
   aiVoiceEnabled = true;
   aiVoiceChoice: 'Puck' | 'Leda' = 'Puck';

@@ -122,6 +122,14 @@ import { colorForUser } from '../../core/utils/avatar-color';
                 <span class="msg-time" *ngIf="msg.timestamp">{{ msg.timestamp | date:'HH:mm' }}</span>
               </div>
               <div class="msg-text"><app-chat-text [text]="msg.content" [classNames]="diagramClassNames" [emphasizeClasses]="msg.sender === 'AI'"></app-chat-text></div>
+              <img
+                *ngIf="msg.mode === 'PHOTO' && msg.mediaUrl"
+                [src]="msg.mediaUrl"
+                class="msg-img"
+                alt="Imagen enviada a la IA"
+                title="Haz clic para ampliar"
+                (click)="openFullImage(msg.mediaUrl)"
+              />
               <div class="proposal" *ngFor="let proposal of msg.proposals">
                 <div class="proposal-header">
                   <strong>Propuesta para el diagrama</strong>
@@ -310,7 +318,7 @@ import { colorForUser } from '../../core/utils/avatar-color';
               <span class="status-badge-green">🟢 Activo en Lienzo</span>
             </div>
 
-            <div class="scanned-img-box" (click)="showFullImageModal = true">
+            <div class="scanned-img-box" (click)="fullImageUrl = null; showFullImageModal = true">
               <img [src]="lastUploadedPhotoUrl" class="scanned-img" title="Haz clic para ampliar" />
               <div class="img-hover-overlay">
                 <span>🔍 Ampliar Imagen</span>
@@ -318,7 +326,7 @@ import { colorForUser } from '../../core/utils/avatar-color';
             </div>
 
             <div class="scanned-footer">
-              <button class="btn btn-ghost btn-xs" (click)="showFullImageModal = true">
+              <button class="btn btn-ghost btn-xs" (click)="fullImageUrl = null; showFullImageModal = true">
                 <span>🔍 Ver en Grande</span>
               </button>
               <button class="btn btn-ghost btn-xs text-danger" (click)="lastUploadedPhotoUrl = null">
@@ -376,7 +384,7 @@ import { colorForUser } from '../../core/utils/avatar-color';
             <button class="icon-btn text-muted" (click)="showFullImageModal = false" style="border:none;background:none;cursor:pointer;font-size:16px;">✕</button>
           </div>
           <div class="full-img-body">
-            <img [src]="lastUploadedPhotoUrl" class="full-size-img" />
+            <img [src]="fullImageUrl || lastUploadedPhotoUrl" class="full-size-img" />
           </div>
           <div class="ea-modal-footer">
             <button class="btn btn-ghost" (click)="showFullImageModal = false">Cerrar</button>
@@ -521,6 +529,16 @@ import { colorForUser } from '../../core/utils/avatar-color';
     .msg-text {
       white-space: pre-wrap;
       word-break: break-word;
+    }
+    .msg-img {
+      display: block;
+      width: 100%;
+      max-width: 220px;
+      max-height: 180px;
+      object-fit: cover;
+      margin-top: 6px;
+      border-radius: var(--radius-sm);
+      cursor: zoom-in;
     }
     .user-msg {
       align-self: flex-end;
@@ -1240,6 +1258,8 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   photoPreview: string | null = null;
   lastUploadedPhotoUrl: string | null = null;
   showFullImageModal = false;
+  // Imagen de una burbuja del chat abierta en grande; sin ella, el modal muestra el último pizarrón
+  fullImageUrl: string | null = null;
   isDraggingPhoto = false;
 
 
@@ -1413,6 +1433,8 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
       next: (history) => {
         if (projectId !== this.projectId) return;
         this.chatHistory = history || [];
+        const lastPhoto = [...this.chatHistory].reverse().find(m => m.mode === 'PHOTO' && m.mediaUrl);
+        this.lastUploadedPhotoUrl = lastPhoto?.mediaUrl || null;
         this.scrollChatToBottom();
       },
       error: () => { }
@@ -2108,6 +2130,11 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     }
   }
 
+  openFullImage(url: string): void {
+    this.fullImageUrl = url;
+    this.showFullImageModal = true;
+  }
+
   uploadPhoto(): void {
     if (!this.selectedFile) return;
     this.isProcessing = true;
@@ -2119,10 +2146,15 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
       this.aiService.sendPhoto(this.projectId, this.selectedFile, this.selectedAgent.id, isPrivate, history).subscribe({
         next: (res) => {
           this.isProcessing = false;
+          // El socket no repinta los mensajes propios: la foto se agrega aquí (en el chat privado, con la vista previa local)
+          const photoMsg: AIMessage = res?.userMessage
+            ? this.aiService.normalizeChatMessage(res.userMessage)
+            : { sender: 'USER', mode: 'PHOTO', content: 'Imagen de boceto subida', mediaUrl: this.photoPreview || undefined, timestamp: new Date() };
+          if (!photoMsg.id || !target.some(m => m.id === photoMsg.id)) target.push(photoMsg);
           const reply = this.serverAiMessage(res, 'PHOTO');
           target.push(reply);
           this.speakAIReplyOnce(reply);
-          this.lastUploadedPhotoUrl = this.photoPreview;
+          this.lastUploadedPhotoUrl = photoMsg.mediaUrl || this.photoPreview;
           this.photoPreview = null;
           this.selectedFile = null;
           this.scrollChatToBottom();

@@ -109,7 +109,19 @@ export class AIAgentService {
 
   // Las filas del backend traen `createdAt`; el chat pinta `timestamp`
   normalizeChatMessage(msg: AIMessage): AIMessage {
-    return { ...msg, timestamp: msg.timestamp || (msg.createdAt ? new Date(msg.createdAt) : undefined) };
+    return {
+      ...msg,
+      mediaUrl: msg.mediaUrl ? this.mediaSrc(msg.mediaUrl) : undefined,
+      timestamp: msg.timestamp || (msg.createdAt ? new Date(msg.createdAt) : undefined),
+    };
+  }
+
+  // Archivo subido (foto o nota de voz) servido por el backend en /uploads.
+  // Los mensajes antiguos guardaban la ruta del disco del servidor: se toma solo el nombre del archivo.
+  mediaSrc(url: string): string {
+    if (/^(https?:|data:|blob:)/.test(url)) return url;
+    const fileName = url.split(/[\\/]/).pop() || '';
+    return `${API_BASE}/uploads/${encodeURIComponent(fileName)}`;
   }
 
   /**

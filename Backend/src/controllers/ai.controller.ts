@@ -1008,7 +1008,7 @@ export const handlePhotoPrompt = async (req: AuthRequest, res: Response): Promis
 
     let userMessage: ChatMessageRecord | null = null;
     if (!isPrivate) {
-      userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'PHOTO', content: 'Imagen de boceto subida', mediaUrl: file.path });
+      userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'PHOTO', content: 'Imagen de boceto subida', mediaUrl: `/uploads/${file.filename}` });
       emitAIThinking(req, projectId, userMessage.user, true);
     }
 
@@ -1072,7 +1072,7 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
       // El texto lo reconoce el navegador; sin él (por ejemplo en Firefox) queda el mensaje genérico
       const transcript = String(req.body?.transcript || '').trim().slice(0, 5000);
       const content = transcript ? `🎙️ "${transcript}"` : 'Nota de voz enviada';
-      userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'VOICE', content, mediaUrl: file.path });
+      userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'VOICE', content, mediaUrl: `/uploads/${file.filename}` });
       emitAIThinking(req, projectId, userMessage.user, true);
     }
 
