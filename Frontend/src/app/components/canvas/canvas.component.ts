@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, HostListener } from '@angular/core';
+import { Component, Input, Output, EventEmitter, HostListener, AfterViewInit, OnDestroy, ViewChildren, QueryList, ElementRef, NgZone } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { UMLNode, UMLConnector, CanvasLabel, DiagramService } from '../../core/services/diagram.service';
@@ -351,6 +351,8 @@ import { MinimapComponent } from '../minimap/minimap.component';
       <div class="nodes-layer">
         <div 
           *ngFor="let node of nodes" 
+          #nodeCard
+          [attr.data-node-id]="node.id"
           class="uml-card glass-panel"
           [class.selected]="selectedNode?.id === node.id"
           [class.connecting-source]="connectingSourceId === node.id"
@@ -362,11 +364,12 @@ import { MinimapComponent } from '../minimap/minimap.component';
         >
           <!-- Estereotipo y encabezado de la clase -->
           <div class="card-header">
-            <span class="stereotype">«{{ node.stereotype || 'Entity' }}»</span>
+            <span class="stereotype" *ngIf="stereotypeLabel(node) as label">{{ label }}</span>
             <div class="header-name-row">
               <span 
                 *ngIf="editingNodeId !== node.id" 
-                class="class-name editable-title" 
+                class="class-name editable-title"
+                [class.abstract-name]="(node.stereotype || '').toLowerCase() === 'abstract'"
                 (click)="editNodeName($event, node)"
                 title="Haz clic para cambiar nombre de la clase"
               >
@@ -798,6 +801,9 @@ import { MinimapComponent } from '../minimap/minimap.component';
       background: rgba(0, 0, 0, 0.2);
       border-bottom: 1px solid var(--border);
       text-align: center;
+    }
+    .abstract-name {
+      font-style: italic;
     }
     .stereotype {
       font-size: 10px;
@@ -1280,7 +1286,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
     }
   `]
 })
-export class CanvasComponent {
+export class CanvasComponent implements AfterViewInit, OnDestroy {
   @Input() nodes: UMLNode[] = [];
   @Input() connectors: UMLConnector[] = [];
   @Input() labels: CanvasLabel[] = [];
@@ -1328,6 +1334,26 @@ export class CanvasComponent {
   modalPosX = 200;
   modalPosY = 150;
 
+  // Texto sobre el nombre de la clase según UML 2.5. El dato no cambia ('Entity' lo usan la IA, la BD y los generadores):
+  // una clase normal no lleva estereotipo y la abstracta se indica con el nombre en cursiva.
+  stereotypeLabel(node: UMLNode): string | null {
+    const stereotype = (node.stereotype || '').trim();
+    switch (stereotype.toLowerCase()) {
+      case '':
+      case 'entity':
+      case 'class':
+      case 'associationclass':
+      case 'abstract':
+        return null;
+      case 'interface':
+        return '«interface»';
+      case 'enum':
+        return '«enumeration»';
+      default:
+        return `«${stereotype}»`;
+    }
+  }
+
   multOptions = ['+1', '+*', '+0..1', '+1..*', '1', '0..1', '1..*', '0..*', '*', '1..1'];
   dataTypeOptions = ['Int', 'String', 'Double', 'Bool', 'Date', 'Char', 'Long', 'Arrays'];
 
@@ -1350,7 +1376,57 @@ export class CanvasComponent {
   multInitialOffsetX = 0;
   multInitialOffsetY = 0;
 
-  constructor(public diagramService: DiagramService) {}
+  // Tamaño real de cada tarjeta en el DOM: los conectores salen y llegan a su borde exacto.
+  // offsetWidth/Height no cambian con el zoom, igual que positionX/Y.
+  @ViewChildren('nodeCard') nodeCards!: QueryList<ElementRef<HTMLElement>>;
+  private nodeSizes = new Map<string, { w: number; h: number }>();
+  private observedCards = new Set<HTMLElement>();
+  private resizeObserver?: ResizeObserver;
+
+  constructor(public diagramService: DiagramService, private ngZone: NgZone) {}
+
+  ngAfterViewInit(): void {
+    if (typeof ResizeObserver === 'undefined') return;
+    this.resizeObserver = new ResizeObserver(entries => {
+      let changed = false;
+      for (const entry of entries) {
+        const el = entry.target as HTMLElement;
+        const id = el.dataset['nodeId'];
+        if (!id) continue;
+        const size = { w: el.offsetWidth, h: el.offsetHeight };
+        const prev = this.nodeSizes.get(id);
+        if (size.w && size.h && (prev?.w !== size.w || prev?.h !== size.h)) {
+          this.nodeSizes.set(id, size);
+          changed = true;
+        }
+      }
+      // El callback corre fuera de Angular: solo se redibuja si alguna medida cambió de verdad
+      if (changed) this.ngZone.run(() => {});
+    });
+    this.syncObservedCards();
+    this.nodeCards.changes.subscribe(() => this.syncObservedCards());
+  }
+
+  ngOnDestroy(): void {
+    this.resizeObserver?.disconnect();
+  }
+
+  private syncObservedCards(): void {
+    if (!this.resizeObserver) return;
+    const current = new Set(this.nodeCards.map(ref => ref.nativeElement));
+    for (const el of this.observedCards) {
+      if (current.has(el)) continue;
+      this.resizeObserver.unobserve(el);
+      this.observedCards.delete(el);
+      const id = el.dataset['nodeId'];
+      if (id && !this.nodes?.some(n => n.id === id)) this.nodeSizes.delete(id);
+    }
+    for (const el of current) {
+      if (this.observedCards.has(el)) continue;
+      this.resizeObserver.observe(el);
+      this.observedCards.add(el);
+    }
+  }
 
   onCanvasDblClick(event: MouseEvent): void {
     if (this.readOnly) return;
@@ -1942,6 +2018,9 @@ export class CanvasComponent {
 
   getNodeHeight(node: UMLNode | undefined): number {
     if (!node) return 160;
+    const measured = this.nodeSizes.get(node.id)?.h;
+    if (measured) return measured;
+    // Respaldo antes de que la tarjeta se mida por primera vez
     const attrsCount = Math.max(1, node.attributes?.length || 0);
     const methodsCount = Math.max(1, node.methods?.length || 0);
     const calculatedH = 52 + 30 + (attrsCount * 26) + 30 + (methodsCount * 26) + 12;
@@ -1949,7 +2028,7 @@ export class CanvasComponent {
   }
 
   getNodeWidth(node: UMLNode | undefined): number {
-    return 232;
+    return (node && this.nodeSizes.get(node.id)?.w) || 230;
   }
 
   getConnectionFace(conn: UMLConnector, isTarget: boolean): 'top' | 'bottom' | 'left' | 'right' {
