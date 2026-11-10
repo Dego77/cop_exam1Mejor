@@ -29,6 +29,11 @@ import { ChatTextComponent } from '../../components/chat-text/chat-text.componen
           <span class="vh-online" *ngIf="onlineUsers.length" [title]="onlineNames">
             <span class="vh-dot"></span>{{ onlineUsers.length }}
           </span>
+          <button class="vh-btn" [class.active]="aiVoiceEnabled" [disabled]="!speechSynthesisSupported"
+            [attr.aria-pressed]="aiVoiceEnabled" (click)="toggleAIVoice()"
+            [title]="speechSynthesisSupported ? (aiVoiceEnabled ? 'Deshabilitar voz de respuestas' : 'Habilitar voz de respuestas') : 'La voz no está disponible en este navegador'">
+            {{ speechSynthesisSupported ? (aiVoiceEnabled ? '🔊' : '🔇') : '×' }}
+          </button>
           <button class="vh-btn" (click)="fitToScreen()" title="Ajustar a la pantalla">⤢</button>
           <button class="vh-btn" [class.active]="showChat" (click)="showChat = !showChat" title="Chat IA (solo lectura)">💬</button>
         </div>
@@ -260,6 +265,8 @@ export class ViewerComponent implements OnInit, OnDestroy {
   onlineUsers: any[] = [];
   showChat = false;
   chatMessages: AIMessage[] = [];
+  aiVoiceEnabled = true;
+  private spokenAIMessageIds = new Set<string>();
 
   private remoteCursorsMap = new Map<string, CursorData>();
   usersWaitingAI: { userId: number; fullName: string }[] = [];
@@ -309,7 +316,52 @@ export class ViewerComponent implements OnInit, OnDestroy {
     return this.activityMessage;
   }
 
+  get speechSynthesisSupported(): boolean {
+    return typeof window !== 'undefined'
+      && 'speechSynthesis' in window
+      && typeof SpeechSynthesisUtterance !== 'undefined';
+  }
+
+  private voicePreferenceKey(): string {
+    return `classforge_ai_voice_${this.auth.currentUser?.id ?? 'default'}`;
+  }
+
+  private restoreAIVoicePreference(): void {
+    try {
+      const preference = localStorage.getItem(this.voicePreferenceKey());
+      if (preference !== null) this.aiVoiceEnabled = preference === 'true';
+    } catch { }
+  }
+
+  toggleAIVoice(): void {
+    if (!this.speechSynthesisSupported) return;
+    this.aiVoiceEnabled = !this.aiVoiceEnabled;
+    try { localStorage.setItem(this.voicePreferenceKey(), String(this.aiVoiceEnabled)); } catch { }
+    if (!this.aiVoiceEnabled) window.speechSynthesis.cancel();
+  }
+
+  private speakAIReplyOnce(message: AIMessage): void {
+    if (message.sender !== 'AI') return;
+    const id = String(message.id || message.clientMessageId || '');
+    if (id && this.spokenAIMessageIds.has(id)) return;
+    if (id) {
+      this.spokenAIMessageIds.add(id);
+      if (this.spokenAIMessageIds.size > 250) {
+        const oldest = this.spokenAIMessageIds.values().next().value;
+        if (oldest) this.spokenAIMessageIds.delete(oldest);
+      }
+    }
+    if (!this.aiVoiceEnabled || !this.speechSynthesisSupported || !message.content?.trim()) return;
+    try {
+      const utterance = new SpeechSynthesisUtterance(message.content.replace(/[*_#`~]/g, ''));
+      utterance.lang = 'es-ES';
+      utterance.rate = 1;
+      window.speechSynthesis.speak(utterance);
+    } catch { }
+  }
+
   ngOnInit(): void {
+    this.restoreAIVoicePreference();
     this.projectId = this.route.snapshot.paramMap.get('projectId') || '';
     if (!this.auth.isLoggedIn) {
       this.router.navigate(['/login'], { queryParams: { returnUrl: `/view/${this.projectId}` } });
@@ -334,6 +386,7 @@ export class ViewerComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     clearTimeout(this.activityTimer);
+    this.spokenAIMessageIds.clear();
     this.subs.unsubscribe();
     this.wsService.disconnect();
     this.diagramService.clearCanvas();
@@ -505,9 +558,11 @@ export class ViewerComponent implements OnInit, OnDestroy {
         const applied = msg.proposals?.find((p, i) => p.status === 'applied' && previous.proposals?.[i]?.status !== 'applied');
         if (applied) this.showActivity(`🤖 ${applied.decidedBy || 'Un usuario'} aplicó un cambio de la IA`);
         this.chatMessages = this.chatMessages.map(m => m.id === msg.id ? msg : m);
+        this.speakAIReplyOnce(msg);
         return;
       }
       this.chatMessages = [...this.chatMessages, msg];
+      this.speakAIReplyOnce(msg);
     }));
     this.subs.add(this.wsService.aiChatCleared$.subscribe(evt => {
       if (evt?.projectId === this.projectId) this.chatMessages = [];

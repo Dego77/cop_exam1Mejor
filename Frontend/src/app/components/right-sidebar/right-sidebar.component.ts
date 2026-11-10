@@ -74,6 +74,18 @@ import { colorForUser } from '../../core/utils/avatar-color';
           </button>
         </div>
 
+        <div class="voice-preference" *ngIf="!isPrivateChat">
+          <span>Voz de respuestas de la IA</span>
+          <button type="button" class="voice-preference-toggle"
+            [class.enabled]="aiVoiceEnabled"
+            [attr.aria-pressed]="aiVoiceEnabled"
+            [disabled]="!speechSynthesisSupported"
+            [title]="speechSynthesisSupported ? (aiVoiceEnabled ? 'Deshabilitar voz para este usuario' : 'Habilitar voz para este usuario') : 'La voz no está disponible en este navegador'"
+            (click)="toggleAIVoice()">
+            {{ speechSynthesisSupported ? (aiVoiceEnabled ? '🔊 Activada' : '🔇 Desactivada') : 'No disponible' }}
+          </button>
+        </div>
+
         <!-- SUBMODO CHAT -->
         <div class="chat-container" *ngIf="aiMode === 'CHAT'">
           <div class="chat-messages" #chatScroll>
@@ -1140,6 +1152,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     this.diagramChangeSub?.unsubscribe();
     this.chatSocketSub?.unsubscribe();
     clearTimeout(this.chatNoticeTimer);
+    this.spokenAIMessageIds.clear();
     this.cancelRecording();
   }
 
@@ -1147,6 +1160,8 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   aiMode: 'CHAT' | 'VOICE' | 'PHOTO' = 'CHAT';
 
   chatHistory: AIMessage[] = [];
+  aiVoiceEnabled = true;
+  private spokenAIMessageIds = new Set<string>();
   isPrivateChat = false;
   privateChatHistory: AIMessage[] = [];
   showNewChatOptions = false;
@@ -1290,6 +1305,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   ngOnInit(): void {
+    this.restoreAIVoicePreference();
     if (this.projectId) {
       this.loadHistory();
     }
@@ -1310,11 +1326,13 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
       const idx = msg.id ? this.chatHistory.findIndex(m => m.id === msg.id) : -1;
       if (idx >= 0) {
         this.chatHistory[idx] = msg;
+        this.speakAIReplyOnce(msg);
         this.scrollChatToBottom();
         return;
       }
       if (msg.sender === 'USER' && this.isOwnMessage(raw)) return;
       this.chatHistory.push(msg);
+      this.speakAIReplyOnce(msg);
       this.scrollChatToBottom();
     });
     this.chatSocketSub.add(this.wsService.aiChatThinking$.subscribe((evt) => {
@@ -1618,16 +1636,53 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
     });
   }
 
-  speakText(text: string): void {
-    if (!('speechSynthesis' in window)) return;
+  get speechSynthesisSupported(): boolean {
+    return typeof window !== 'undefined'
+      && 'speechSynthesis' in window
+      && typeof SpeechSynthesisUtterance !== 'undefined';
+  }
+
+  private voicePreferenceKey(): string {
+    return `classforge_ai_voice_${this.auth.currentUser?.id ?? 'default'}`;
+  }
+
+  private restoreAIVoicePreference(): void {
     try {
-      window.speechSynthesis.cancel();
+      const preference = localStorage.getItem(this.voicePreferenceKey());
+      if (preference !== null) this.aiVoiceEnabled = preference === 'true';
+    } catch { }
+  }
+
+  toggleAIVoice(): void {
+    if (!this.speechSynthesisSupported) return;
+    this.aiVoiceEnabled = !this.aiVoiceEnabled;
+    try { localStorage.setItem(this.voicePreferenceKey(), String(this.aiVoiceEnabled)); } catch { }
+    if (!this.aiVoiceEnabled) window.speechSynthesis.cancel();
+  }
+
+  private speakAIReplyOnce(message: AIMessage): void {
+    if (message.sender !== 'AI') return;
+    const id = String(message.id || message.clientMessageId || '');
+    if (id && this.spokenAIMessageIds.has(id)) return;
+    if (id) {
+      this.spokenAIMessageIds.add(id);
+      if (this.spokenAIMessageIds.size > 250) {
+        const oldest = this.spokenAIMessageIds.values().next().value;
+        if (oldest) this.spokenAIMessageIds.delete(oldest);
+      }
+    }
+    this.speakText(message.content);
+  }
+
+  private speakText(text: string): void {
+    if (!this.aiVoiceEnabled || !this.speechSynthesisSupported || !text?.trim()) return;
+    try {
       const cleanText = text.replace(/[*_#`~]/g, '');
       const utterance = new SpeechSynthesisUtterance(cleanText);
       utterance.lang = 'es-ES';
       utterance.rate = 1.0;
       window.speechSynthesis.speak(utterance);
-    } catch (e) { }
+    } catch { }
   }
 
   sendTextPrompt(): void {
@@ -1659,7 +1714,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
           const existing = reply.id ? target.findIndex(item => item.id === reply.id) : -1;
           if (existing >= 0) target[existing] = reply;
           else target.push(reply);
-          this.speakText(reply.content);
+          this.speakAIReplyOnce(reply);
           this.scrollChatToBottom();
         },
         error: () => {
@@ -1896,7 +1951,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
           this.isProcessing = false;
           const reply = this.serverAiMessage(res, 'VOICE');
           target.push(reply);
-          this.speakText(reply.content);
+          this.speakAIReplyOnce(reply);
           this.scrollChatToBottom();
         },
         error: () => {
@@ -1918,7 +1973,6 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
         content: fallbackMsg,
         timestamp: new Date()
       });
-      this.speakText(fallbackMsg);
       this.diagramUpdated.emit();
     }
   }
@@ -1971,7 +2025,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
           this.isProcessing = false;
           const reply = this.serverAiMessage(res, 'PHOTO');
           target.push(reply);
-          this.speakText(reply.content);
+          this.speakAIReplyOnce(reply);
           this.lastUploadedPhotoUrl = this.photoPreview;
           this.photoPreview = null;
           this.selectedFile = null;
@@ -1986,7 +2040,6 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
             content: errorMsg,
             timestamp: new Date()
           });
-          this.speakText(errorMsg);
           this.photoPreview = null;
           this.selectedFile = null;
           this.diagramUpdated.emit();
@@ -2001,7 +2054,6 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
         content: errorMsg,
         timestamp: new Date()
       });
-      this.speakText(errorMsg);
       this.photoPreview = null;
       this.selectedFile = null;
       this.diagramUpdated.emit();

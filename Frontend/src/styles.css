@@ -351,6 +351,36 @@ html, body {
   transition: all 0.3s ease !important;
 }
 
+.voice-preference {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-dark);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.voice-preference-toggle {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.voice-preference-toggle.enabled {
+  border-color: var(--green);
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--green);
+}
+.voice-preference-toggle:disabled { opacity: 0.55; cursor: not-allowed; }
+
 /* Tarjetas de propuestas del chat grupal */
 .proposal {
   margin-top: 10px;
