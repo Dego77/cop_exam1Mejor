@@ -106,13 +106,21 @@ import { colorForUser } from '../../core/utils/avatar-color';
               </div>
               <div class="msg-text"><app-chat-text [text]="msg.content" [classNames]="diagramClassNames" [emphasizeClasses]="msg.sender === 'AI'"></app-chat-text></div>
               <div class="proposal" *ngFor="let proposal of msg.proposals">
+                <div class="proposal-header">
+                  <strong>Propuesta para el diagrama</strong>
+                  <span class="proposal-count">{{ proposalChangeCount(proposal) }} {{ proposalChangeCount(proposal) === 1 ? 'cambio' : 'cambios' }}</span>
+                </div>
                 <div class="proposal-label">{{ proposal.label }}</div>
+                <ul class="proposal-changes" *ngIf="proposalChangeLines(proposal).length">
+                  <li *ngFor="let change of proposalChangeLines(proposal)">{{ change }}</li>
+                </ul>
                 <div class="proposal-actions" *ngIf="(!proposal.status || proposal.status === 'pending') && isOwnMessage(msg)">
-                  <button class="btn btn-primary btn-sm" (click)="decideProposal(msg, proposal, 'apply')" [disabled]="isDeciding">Permitir</button>
-                  <button class="btn btn-ghost btn-sm" (click)="decideProposal(msg, proposal, 'reject')" [disabled]="isDeciding">No permitir</button>
+                  <button class="proposal-apply" (click)="decideProposal(msg, proposal, 'apply')" [disabled]="isDeciding">✓ Aplicar al diagrama</button>
+                  <button class="proposal-discard" (click)="decideProposal(msg, proposal, 'reject')" [disabled]="isDeciding">Descartar</button>
                 </div>
                 <div class="proposal-state" *ngIf="proposal.status === 'applied'">Aplicado por {{ proposal.decidedBy }}</div>
-                <div class="proposal-state" *ngIf="proposal.status === 'rejected'">No permitido por {{ proposal.decidedBy }}</div>
+                <div class="proposal-state" *ngIf="proposal.status === 'rejected'">Descartado por {{ proposal.decidedBy }}</div>
+                <div class="proposal-state" *ngIf="(!proposal.status || proposal.status === 'pending') && !isOwnMessage(msg)">Pendiente de decisión de {{ msg.user?.fullName || 'la persona que hizo la consulta' }}</div>
               </div>
             </div>
 
@@ -405,7 +413,6 @@ import { colorForUser } from '../../core/utils/avatar-color';
       background: rgba(0, 210, 255, 0.16);
       color: var(--cyan);
     }
-    .proposal-state { color: var(--text-secondary); font-size: 11px; }
     .right-sidebar {
       width: 100%;
       background: var(--bg-panel);
@@ -498,14 +505,6 @@ import { colorForUser } from '../../core/utils/avatar-color';
       white-space: pre-wrap;
       word-break: break-word;
     }
-    .proposal {
-      margin-top: 8px;
-      padding-top: 6px;
-      border-top: 1px solid var(--border);
-    }
-    .proposal-label { font-weight: 600; margin-bottom: 4px; }
-    .proposal-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-    .proposal-state { color: var(--text-secondary); }
     .user-msg {
       align-self: flex-end;
       background: var(--violet);
@@ -1375,6 +1374,67 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
 
   authorInitial(msg: AIMessage): string {
     return (msg.user?.fullName || '?').trim().charAt(0).toUpperCase();
+  }
+
+  proposalChangeLines(proposal: AIDiagramProposal): string[] {
+    const payload = proposal?.payload || proposal || {};
+    const lines: string[] = [];
+    const className = (item: any) => String(item?.name || item?.className || item || 'clase');
+    const memberDescription = (items: any[]) => items
+      .map((item) => {
+        const name = String(item?.name || item || '').trim();
+        const type = String(item?.type || item?.returnType || '').trim();
+        return name ? `${name}${type ? `: ${type}` : ''}` : '';
+      })
+      .filter(Boolean)
+      .join(', ');
+    const relationNames: Record<string, string> = {
+      Association: 'asociación', AssociationClass: 'clase de asociación',
+      Aggregation: 'agregación', Composition: 'composición',
+      Inheritance: 'herencia', Implementation: 'implementación', Dependency: 'dependencia',
+    };
+
+    if (proposal?.replaceDiagram) lines.push('Reemplazar el diagrama con la propuesta detectada');
+    for (const item of payload.classesGenerated || []) {
+      const fields = memberDescription(item?.attributes || []);
+      const methods = memberDescription(item?.methods || []);
+      const details = [fields, methods ? `métodos: ${methods}` : ''].filter(Boolean).join('; ');
+      lines.push(`Crear clase ${className(item)}${details ? ` (${details})` : ''}`);
+    }
+    for (const item of payload.classesModified || []) {
+      const attributes = memberDescription(item?.attributesToAdd || item?.attributes || []);
+      const methods = memberDescription(item?.methodsToAdd || item?.methods || []);
+      if (attributes) lines.push(`Agregar a ${className(item)}: ${attributes}`);
+      if (methods) lines.push(`Agregar método(s) a ${className(item)}: ${methods}`);
+    }
+    for (const item of payload.classesToDelete || []) lines.push(`Eliminar clase ${className(item)}`);
+    for (const item of payload.classesToRename || []) {
+      lines.push(`Renombrar ${item?.oldName || className(item)} a ${item?.newName || item?.to || 'nuevo nombre'}`);
+    }
+    for (const item of payload.attributesToRemove || []) {
+      lines.push(`Quitar atributo ${item?.attributeName || item?.name || 'seleccionado'} de ${item?.className || 'la clase'}`);
+    }
+    for (const item of payload.methodsToRemove || []) {
+      lines.push(`Quitar método ${item?.methodName || item?.name || 'seleccionado'} de ${item?.className || 'la clase'}`);
+    }
+    for (const item of payload.classesToReposition || []) lines.push(`Mover clase ${item?.className || item?.name || 'seleccionada'}`);
+    for (const item of payload.connectorsGenerated || []) {
+      const type = relationNames[item?.type] || 'relación';
+      lines.push(`Crear ${type} ${item?.sourceClassName || '?'} → ${item?.targetClassName || '?'}${item?.sourceMultiplicity || item?.targetMultiplicity ? ` (${item?.sourceMultiplicity || '—'} a ${item?.targetMultiplicity || '—'})` : ''}`);
+    }
+    for (const item of payload.connectorsToDelete || []) {
+      lines.push(item?.sourceClassName && item?.targetClassName
+        ? `Eliminar relación ${item.sourceClassName} → ${item.targetClassName}`
+        : 'Eliminar la relación seleccionada');
+    }
+    for (const item of payload.connectorsModified || []) {
+      lines.push(`Modificar relación ${item?.sourceClassName || '?'} → ${item?.targetClassName || '?'}`);
+    }
+    return lines.length ? lines : (proposal?.label ? [proposal.label] : []);
+  }
+
+  proposalChangeCount(proposal: AIDiagramProposal): number {
+    return this.proposalChangeLines(proposal).length;
   }
 
   // Color fijo por usuario para distinguir a cada colaborador, como en un chat de grupo

@@ -137,18 +137,18 @@ ACCIONES:
 - Si hay una sola opción, pon los arreglos en el nivel superior. Si hay más de una, cada una va en proposals con solo sus arreglos. Una sugerencia tuya que agregue algo no pedido va en otra proposal con askedBy "IA".
 
 REGLAS:
-1. Responde en español. message empieza con el nombre de usuario_actual. Saluda con Hola solo si primera_respuesta_a_usuario es true. En las respuestas posteriores no repitas saludos: el nombre y la respuesta, sin Hola.
+1. Responde en español natural, cálido y directo, como colega del equipo. message empieza con el nombre de usuario_actual. Saluda con Hola solo si primera_respuesta_a_usuario es true. En las respuestas posteriores no repitas saludos: el nombre y la respuesta, sin Hola.
 2. Usa el historial y diagrama_actual como contexto. El diagrama actual prevalece ante datos antiguos.
 3. Actúa como senior y mediador. No aceptes automáticamente toda solicitud de borrado o modificación. Evalúa el motivo, la responsabilidad de la clase y sus dependencias con el historial y diagrama_actual. Si hay dos ideas distintas en el historial, repite cada una con el nombre de quien la dijo y da tu criterio aparte. No elijas un ganador ni fusiones los diseños en un solo cambio.
-4. Si piden eliminar una clase o una relación, explica qué relaciones se perderían y deja el comando para que pulsen Permitir. No lo apliques directo. Para eliminar una clase usa su nodeId. Para eliminar una relación copia su connectorId. Si hay más de una entre las mismas clases, no borres ninguna y pide cuál.
+4. Si piden eliminar una clase o una relación, explica qué relaciones se perderían y deja el comando en una propuesta para que la persona decida. No lo apliques directo. Para eliminar una clase usa su nodeId. Para eliminar una relación copia su connectorId. Si hay más de una entre las mismas clases, no borres ninguna y pide cuál.
 5. Si piden recomendación, criterio, un concepto o qué agregar, explica con las clases del diagrama y nombra atributo y tipo. Esa sugerencia va en proposals con askedBy "IA". No se aplica sola. Prohibido quedarte en "atributos esenciales", "información mínima" o "buenas prácticas" sin decir cuáles campos son. Si el atributo ya existe, no lo repitas. Si no puedes nombrar el atributo, no armes propuesta.
 6. Para eliminar una clase usa su nodeId exacto de diagrama_actual. Al aplicarse se quitan también sus relaciones directas: explícalo en message.
 7. Para editar un atributo o un método, copia el miembro actual desde diagrama_actual: el viejo va en attributesToRemove o methodsToRemove con nodeId, y el nuevo en classesModified. Renombrar una clase usa classesToRename con nodeId, oldName y newName. No la borres para volver a crearla.
-8. No inventes clases ni miembros cuando el pedido es crear o dibujar solo lo que nombraron. Si piden recomendación, sí propones los atributos concretos que falten. Conserva ñ, á, é, í, ó, ú y ü.
+8. Si piden crear o dibujar únicamente elementos concretos, no inventes clases ni miembros. Si describen el propósito de una clase pero dejan abiertos sus atributos, relación o nombre, propón un diseño mínimo y concreto adecuado al caso; explica la propuesta en message, elige un nombre provisional que encaje mejor, deja una sola propuesta con ese nombre y pregunta si prefieren la alternativa. No llames "esenciales" a campos sin enumerarlos. Conserva ñ, á, é, í, ó, ú y ü.
    Identificadores: en una clase entidad el atributo id va primero. Si ya existe, di en qué posición está y no lo dupliques. Si no es el primero, prepara dejarlo primero. Si no existe y preguntaron por la llave, o pidieron recomendación para persistir esa entidad, propon "id: Long" al inicio.
    Clase de asociación: si un conector trae associationClassName, el tipo es AssociationClass o las dos multiplicidades son de muchos, esa clase se identifica por las entidades que une. No le des un id propio. Sus atributos son datos de la relación, no una copia de las llaves de los padres. Si ya tiene id, explica por qué sobra y prepara quitarlo.
-9. Si el pedido ordena agregar una clase, un atributo, un método o una relación que todavía no existe, dilo como algo que ya queda en el diagrama. No pidas Permitir. Una pregunta de recomendación o de concepto no es un pedido de dibujar: explícala y deja la sugerencia en Permitir. Si la clase ya existe, no la pongas en classesGenerated y dilo. Si el atributo, el método o la relación del mismo tipo ya existen, no los repitas y dilo. Pide Permitir también para borrar, quitar, editar, renombrar o cambiar una relación existente.
-10. cambios_aplicados son los cambios que sí quedaron en el diagrama, del más antiguo al más nuevo. El que tiene ultimo_cambio true es el último. No digas que no hubo cambios si esa lista tiene elementos. message tiene como máximo 6 frases cortas. Devuelve solo el JSON pedido, sin markdown.
+9. Si el pedido ordena agregar elementos concretos que no existen, dilo como algo que ya queda en el diagrama. Una pregunta de recomendación o de concepto no es una orden de dibujar: explícala y deja la sugerencia en proposals con askedBy "IA". Si el nombre o el diseño está abierto a elección, prepara la propuesta pendiente y pregunta qué opción prefiere la persona. Si la clase ya existe, no la pongas en classesGenerated y dilo. Si el atributo, el método o la relación del mismo tipo ya existen, no los repitas y dilo. Deja también pendientes los borrados, las ediciones, los renombres y los cambios de relaciones.
+10. cambios_aplicados son los cambios que sí quedaron en el diagrama, del más antiguo al más nuevo. El que tiene ultimo_cambio true es el último. No digas que no hubo cambios si esa lista tiene elementos. message tiene como máximo 4 frases breves. Cuando incluyas una propuesta, resume con naturalidad los cambios concretos y pregunta algo útil si falta una decisión. La tarjeta de propuesta muestra las acciones disponibles; no digas "adjunto", "dejo la propuesta preparada" ni repitas el texto de sus botones. Devuelve solo el JSON pedido, sin markdown.
 `.trim();
 
   const consulta = {
@@ -179,9 +179,11 @@ const PRIOR_DELETE_WARNING = /confirm|seguro|se perder|consecuen|recomend|todav[
 const ADVICE = /recomiend|recomend|sugier|qu[eé]\s+es\b|qu[eé]\s+significa|expl[ií]c(?:ame|a\b)|qu[eé]\s+opinas|criterio|opini[oó]n|consejo|conviene|deber[ií]a|d[oó]nde\s+est[aá]|normaliz|qu[eé]\s+falta|cu[aá]l(?:es)?\s+agreg|qu[eé]\s+agreg|c[oó]mo\s+(?:puedo|se)\b|crees\s+que|est[aá]\s+bien/i;
 const ORDER = /(?:^|[\s,.;:!?¿¡])(a[nñ]ade|agrega|crea|elimina|borra|quita|renombra|mueve|cambia|pon(?:le)?|coloca|aplica|relaciona|saca|actualiza|corrige)(?:$|[\s,.;:!?])/i;
 
+const CLASS_NAME_CHOICE = /\b(?:clase|entidad)\s+[\p{L}\p{N}_-]+\s+(?:o|\/)\s+[\p{L}\p{N}_-]+/iu;
+
 export function asksForAdvice(question: string): boolean {
   const text = String(question || '');
-  return ADVICE.test(text) && !ORDER.test(text);
+  return (ADVICE.test(text) && !ORDER.test(text)) || CLASS_NAME_CHOICE.test(text);
 }
 
 export interface AppliedChange {
@@ -289,8 +291,8 @@ export function describeDirectApply(message: string, applied: boolean, pending: 
   let text = String(message || '').trim();
   if (!pending) {
     text = text
-      .replace(/\s*Dejo preparad[oa][^.?!]*Permitir[^.?!]*[.?!]?/gi, '')
-      .replace(/\s*Todavía no está en el diagrama\.[^.?!]*Permitir[^.?!]*[.?!]?/gi, '')
+      .replace(/\s*Dejo preparad[oa][^.?!]*(?:Permitir|Aplicar al diagrama)[^.?!]*[.?!]?/gi, '')
+      .replace(/\s*Todavía no está en el diagrama\.[^.?!]*(?:Permitir|Aplicar al diagrama)[^.?!]*[.?!]?/gi, '')
       .trim();
   }
   if (applied && !/ya qued[oó] en el diagrama/i.test(text)) {
@@ -302,9 +304,8 @@ export function describeDirectApply(message: string, applied: boolean, pending: 
 
 export function clarifyPendingApply(message: string, hasProposal: boolean): string {
   const text = String(message || '').trim();
-  if (!hasProposal || /permitir|todav[ií]a no est[aá]/i.test(text)) return text;
-  const notice = 'Todavía no está en el diagrama. Queda pendiente hasta que pulses Permitir.';
-  return text ? `${text} ${notice}` : notice;
+  if (!hasProposal || text) return text;
+  return 'Te dejé una propuesta concreta para revisar.';
 }
 
 export function holdUnconfirmedDeletes(target: any, confirmed: boolean): boolean {

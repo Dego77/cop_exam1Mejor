@@ -84,7 +84,7 @@ describe('chat grupal', () => {
     assert.match(prompt, /c-91/);
     assert.match(prompt, /connectorId/);
     assert.match(prompt, /No aceptes automáticamente toda solicitud de borrado/);
-    assert.match(prompt, /pulsen Permitir/);
+    assert.match(prompt, /deja el comando en una propuesta/);
     assert.match(prompt, /attributesToAdd/);
     assert.match(prompt, /connectorsGenerated/);
     assert.match(prompt, /Editar un atributo/);
@@ -106,15 +106,14 @@ describe('chat grupal', () => {
     assert.equal(again.classesToDelete.length, 1);
   });
 
-  it('avisa que el cambio sigue pendiente de Permitir', () => {
-    const said = clarifyPendingApply('Isaac, ha añadido la relación entre Factura y Consulta al diagrama.', true);
-    assert.match(said, /Todavía no está en el diagrama/);
-    assert.match(said, /Permitir/);
-    assert.equal(clarifyPendingApply('Isaac, dejo la relación lista. Usa Permitir.', true), 'Isaac, dejo la relación lista. Usa Permitir.');
+  it('mantiene natural el texto cuando hay una tarjeta con la propuesta', () => {
+    const said = clarifyPendingApply('Isaac, te propongo agregar la relación entre Factura y Consulta.', true);
+    assert.equal(said, 'Isaac, te propongo agregar la relación entre Factura y Consulta.');
+    assert.equal(clarifyPendingApply('', true), 'Te dejé una propuesta concreta para revisar.');
     assert.equal(clarifyPendingApply('Isaac, no hay cambios.', false), 'Isaac, no hay cambios.');
   });
 
-  it('un agregado directo no pide Permitir', () => {
+  it('un agregado directo no muestra instrucciones de aprobación', () => {
     const said = describeDirectApply('Isaac, dejo preparada la modificación para que pulses Permitir.', true, false);
     assert.match(said, /ya quedó en el diagrama/);
     assert.doesNotMatch(said, /Permitir/);
@@ -125,6 +124,7 @@ describe('chat grupal', () => {
     assert.equal(asksForAdvice('qué es una llave primaria'), true);
     assert.equal(asksForAdvice('añade atributos a la clase Producto, como ser nombre, descripcion'), false);
     assert.equal(asksForAdvice('crea la clase Cliente'), false);
+    assert.equal(asksForAdvice('agrega la clase Dueño o Cliente para una veterinaria'), true);
     assert.equal(asksToUndoLast('deshaz el ultimo cambio'), true);
     assert.equal(asksToUndoLast('deshaz la clase DetalleVenta'), false);
   });

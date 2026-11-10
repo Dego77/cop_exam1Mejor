@@ -208,8 +208,7 @@ function joinList(items: string[]): string {
   return `${items.slice(0, -1).join(', ')} y ${items[items.length - 1]}`;
 }
 
-// Pregunta antes de borrar una clase. La escribe el servidor con las relaciones reales del diagrama
-// porque Gemini a veces responde que ya la eliminó, aunque nada cambia hasta pulsar Permitir.
+// Explica las consecuencias de borrar una clase usando las relaciones reales del diagrama.
 function buildDeletionConfirmation(diagram: any, proposals: any[], askerName: string, message: string): string {
   const deleting = proposals.filter((item) => item.payload?.classesToDelete?.length);
   const nodes: any[] = diagram?.nodes || [];
@@ -254,7 +253,7 @@ function buildDeletionConfirmation(diagram: any, proposals: any[], askerName: st
     ...details,
     hasRelations ? `Si ${targets.length > 1 ? 'las' : 'la'} eliminas, las relaciones de ${targets.length > 1 ? 'esas clases' : 'esa clase'} también se borrarán.` : '',
     hasOtherChanges ? 'Si permites, también se aplicarán los demás cambios pedidos.' : '',
-    'Usa Permitir o No permitir para decidir.',
+    'La propuesta de abajo muestra el cambio para que puedas revisarlo.',
   ];
   return addressMessage(parts.filter(Boolean).join(' '), askerName);
 }
@@ -901,7 +900,7 @@ async function answerGroupChat(
     const message = !last
       ? 'No hay un cambio aplicado reciente para deshacer.'
       : payloadHasWork(inverse)
-        ? `El último cambio fue «${last.label}»: ${last.summary}. Dejo preparada la reversa para que pulses Permitir.`
+        ? `El último cambio fue «${last.label}»: ${last.summary}. Te propongo esta reversa para que la revises.`
         : `El último cambio fue «${last.label}»: ${last.summary}. No guardé datos suficientes para revertirlo.`;
     return {
       aiResponse: {
