@@ -164,6 +164,35 @@ import { CursorData } from '../../core/services/websocket.service';
       filter: drop-shadow(0 0 6px rgba(0, 212, 255, 0.8));
       cursor: grab;
     }
+
+    /* Tema claro */
+    :host-context([data-theme="light"]) .minimap-wrapper {
+      background: rgba(255, 255, 255, 0.95);
+      border-color: rgba(8, 145, 178, 0.3);
+      box-shadow: var(--shadow-lg);
+    }
+    :host-context([data-theme="light"]) .minimap-header {
+      background: var(--bg-dark);
+      border-bottom-color: var(--border);
+    }
+    :host-context([data-theme="light"]) .minimap-header:hover {
+      background: var(--cyan-glow);
+    }
+    :host-context([data-theme="light"]) .title-text {
+      color: var(--cyan);
+    }
+    :host-context([data-theme="light"]) .toggle-btn {
+      color: var(--text-secondary);
+    }
+    :host-context([data-theme="light"]) .minimap-body {
+      background: radial-gradient(circle, #f8fafc 0%, #e8edf4 100%);
+    }
+    :host-context([data-theme="light"]) [stroke="#00d4ff"] {
+      stroke: var(--cyan);
+    }
+    :host-context([data-theme="light"]) .viewport-box {
+      filter: none;
+    }
   `]
 })
 export class MinimapComponent {

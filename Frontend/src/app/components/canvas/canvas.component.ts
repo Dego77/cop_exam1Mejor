@@ -1208,6 +1208,55 @@ import { MinimapComponent } from '../minimap/minimap.component';
     .label-del-btn:hover {
       opacity: 1;
     }
+
+    /* Tema claro: cian más oscuro y sin brillo neón sobre fondo claro */
+    :host-context([data-theme="light"]) .canvas-container.grid-active {
+      background-image: radial-gradient(circle, rgba(15, 23, 42, 0.14) 1px, transparent 1px);
+    }
+    :host-context([data-theme="light"]) [stroke="#00d4ff"] {
+      stroke: var(--cyan);
+    }
+    :host-context([data-theme="light"]) [fill="#00d4ff"] {
+      fill: var(--cyan);
+    }
+    :host-context([data-theme="light"]) [style*="drop-shadow"] {
+      filter: none !important;
+    }
+    :host-context([data-theme="light"]) .connector-mult-text {
+      filter: none;
+    }
+    :host-context([data-theme="light"]) .connector-mult-text:hover,
+    :host-context([data-theme="light"]) .connector-mult-text.selected-mult {
+      fill: var(--text-bright);
+      filter: none;
+    }
+    :host-context([data-theme="light"]) .card-header {
+      background: rgba(15, 23, 42, 0.03);
+    }
+    :host-context([data-theme="light"]) .input-name {
+      color: var(--text-bright);
+    }
+    :host-context([data-theme="light"]) .input-type {
+      color: var(--cyan-dark);
+    }
+    :host-context([data-theme="light"]) .canvas-label-card {
+      background: rgba(255, 255, 255, 0.95);
+      border-color: rgba(8, 145, 178, 0.35);
+      box-shadow: var(--shadow-md);
+    }
+    :host-context([data-theme="light"]) .canvas-label-card:hover,
+    :host-context([data-theme="light"]) .canvas-label-card.editing {
+      border-color: var(--cyan);
+      box-shadow: 0 4px 16px rgba(8, 145, 178, 0.2);
+    }
+    :host-context([data-theme="light"]) .label-text {
+      color: var(--text-primary);
+    }
+    :host-context([data-theme="light"]) .label-input {
+      background: var(--bg-card);
+      border-color: var(--cyan);
+      color: var(--cyan-dark);
+    }
     .zoom-controls {
       display: flex;
       align-items: center;

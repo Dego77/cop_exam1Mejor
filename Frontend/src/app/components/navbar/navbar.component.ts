@@ -4,11 +4,12 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService, User } from '../../core/services/auth.service';
 import { ProjectService, Project } from '../../core/services/project.service';
+import { ThemeToggleComponent } from '../theme-toggle/theme-toggle.component';
 
 @Component({
   selector: 'app-navbar',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, ThemeToggleComponent],
   template: `
     <header class="navbar">
       <div class="navbar-left">
@@ -237,10 +238,11 @@ import { ProjectService, Project } from '../../core/services/project.service';
                     <td>{{ s.startTime | date:'HH:mm:ss' }}</td>
                     <td>
                       <span *ngIf="s.endTime">{{ s.endTime | date:'HH:mm:ss' }}</span>
-                      <span *ngIf="!s.endTime" class="badge-online">🟢 En curso</span>
+                      <span *ngIf="!s.endTime && !s.orphan" class="badge-online">🟢 En curso</span>
+                      <span *ngIf="!s.endTime && s.orphan" class="badge-orphan" title="Sesión anterior que no registró su hora de salida">Sin cierre</span>
                     </td>
                     <td>
-                      <span class="duration-pill">{{ formatSessionDuration(s) }}</span>
+                      <span class="duration-pill" [class.duration-unknown]="s.orphan">{{ formatSessionDuration(s) }}</span>
                     </td>
                   </tr>
                 </tbody>
@@ -260,6 +262,8 @@ import { ProjectService, Project } from '../../core/services/project.service';
       </div>
 
       <div class="navbar-right">
+        <app-theme-toggle></app-theme-toggle>
+
         <button id="btn-export-xmi" class="btn btn-ghost" (click)="exportXMI.emit()" title="Exportar archivo Enterprise Architect XMI">
           <span>📦 Export XMI</span>
         </button>
@@ -478,6 +482,30 @@ import { ProjectService, Project } from '../../core/services/project.service';
       background: rgba(255, 255, 255, 0.08);
       margin: 0 3px;
     }
+
+    :host-context([data-theme="light"]) .action-pill-bar {
+      background: rgba(255, 255, 255, 0.9);
+      border-color: rgba(15, 23, 42, 0.1);
+      box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    }
+    :host-context([data-theme="light"]) .pill-btn {
+      color: #475569;
+    }
+    :host-context([data-theme="light"]) .pill-btn:hover {
+      background: rgba(15, 23, 42, 0.06);
+      color: #0f172a;
+    }
+    :host-context([data-theme="light"]) .pill-btn:hover .pill-svg {
+      stroke: #0f172a;
+    }
+    :host-context([data-theme="light"]) .pill-btn.active-cyan,
+    :host-context([data-theme="light"]) .pill-btn.active-cyan:hover {
+      box-shadow: 0 2px 8px rgba(8, 145, 178, 0.3) !important;
+    }
+    :host-context([data-theme="light"]) .pill-divider {
+      background: rgba(15, 23, 42, 0.12);
+    }
+
 
     .project-title {
       font-weight: 600;
@@ -910,6 +938,10 @@ import { ProjectService, Project } from '../../core/services/project.service';
       font-family: 'JetBrains Mono', monospace;
       color: var(--cyan);
     }
+    .badge-orphan,
+    .duration-pill.duration-unknown {
+      color: var(--text-muted);
+    }
     .empty-history {
       padding: 20px;
       text-align: center;
@@ -1128,6 +1160,7 @@ export class NavbarComponent implements OnInit, OnDestroy {
 
   formatSessionDuration(s: any): string {
     if (s.duration != null) return this.formatSeconds(s.duration);
+    if (s.orphan) return '—';
     if (!s.endTime && s.startTime) {
       const diff = Math.floor((Date.now() - new Date(s.startTime).getTime()) / 1000);
       return this.formatSeconds(Math.max(0, diff));

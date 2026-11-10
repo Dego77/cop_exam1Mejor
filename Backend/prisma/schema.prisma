@@ -158,6 +158,7 @@ model WorkSession {
   startTime DateTime  @default(now())
   endTime   DateTime?
   duration  Int?      // Duration in seconds
+  lastSeen  DateTime? // Último latido mientras estaba conectado
   socketId  String?
   createdAt DateTime  @default(now())
 }

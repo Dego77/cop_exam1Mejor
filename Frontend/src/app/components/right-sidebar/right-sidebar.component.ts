@@ -1109,6 +1109,32 @@ import { colorForUser } from '../../core/utils/avatar-color';
       object-fit: contain;
     }
 
+    /* Tema claro */
+    :host-context([data-theme="light"]) .agent-selector-btn {
+      background: var(--bg-surface);
+    }
+    :host-context([data-theme="light"]) .typing-line,
+    :host-context([data-theme="light"]) .chat-input-row textarea::placeholder {
+      color: var(--text-muted);
+    }
+    :host-context([data-theme="light"]) .chat-actions-row .btn.active {
+      background: var(--cyan);
+      box-shadow: 0 2px 10px rgba(8, 145, 178, 0.35);
+      outline-color: rgba(255, 255, 255, 0.8);
+    }
+    :host-context([data-theme="light"]) .photo-dropzone {
+      background: var(--bg-dark);
+    }
+    :host-context([data-theme="light"]) .photo-dropzone:hover,
+    :host-context([data-theme="light"]) .photo-dropzone.is-dragging {
+      background: var(--cyan-glow);
+      box-shadow: none;
+    }
+    :host-context([data-theme="light"]) .sidebar-resizer:hover,
+    :host-context([data-theme="light"]) .sidebar-resizer.active {
+      box-shadow: none;
+    }
+
   `]
 })
 export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {

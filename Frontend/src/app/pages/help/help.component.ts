@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { SupportAgentService, SupportChatMessage } from '../../core/services/support-agent.service';
+import { ThemeToggleComponent } from '../../components/theme-toggle/theme-toggle.component';
 
 interface VideoTutorial {
   id: string;
@@ -20,7 +21,7 @@ interface VideoTutorial {
 @Component({
   selector: 'app-help',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, ThemeToggleComponent],
   template: `
     <div class="help-container">
       <!-- ENCABEZADO -->
@@ -32,6 +33,7 @@ interface VideoTutorial {
           <span class="help-title">❓ Sección de Ayuda & Tutoría ClassForge</span>
         </div>
         <div class="header-right">
+          <app-theme-toggle></app-theme-toggle>
           <div class="status-pill">
             <span class="status-dot"></span>
             <span>Agente de Soporte Disponible</span>
@@ -753,6 +755,162 @@ interface VideoTutorial {
     .send-btn:disabled {
       opacity: 0.4;
       cursor: not-allowed;
+    }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    /* Tema claro (toggle Sol) */
+    :host-context([data-theme="light"]) .help-container {
+      background-color: var(--bg-darkest);
+      color: var(--text-primary);
+    }
+    :host-context([data-theme="light"]) .help-header,
+    :host-context([data-theme="light"]) .chat-header,
+    :host-context([data-theme="light"]) .chat-footer {
+      background: var(--bg-panel);
+      border-color: var(--border);
+    }
+    :host-context([data-theme="light"]) .back-btn {
+      background: var(--cyan-glow);
+      border-color: rgba(8, 145, 178, 0.35);
+      color: var(--cyan);
+    }
+    :host-context([data-theme="light"]) .back-btn:hover {
+      background: rgba(8, 145, 178, 0.18);
+      border-color: var(--cyan);
+      box-shadow: none;
+    }
+    :host-context([data-theme="light"]) .help-title,
+    :host-context([data-theme="light"]) .section-title-wrap h2,
+    :host-context([data-theme="light"]) .card-title,
+    :host-context([data-theme="light"]) .agent-name {
+      color: var(--text-bright);
+    }
+    :host-context([data-theme="light"]) .section-subtitle,
+    :host-context([data-theme="light"]) .card-desc,
+    :host-context([data-theme="light"]) .agent-subtitle {
+      color: var(--text-secondary);
+    }
+    :host-context([data-theme="light"]) .toggle-label,
+    :host-context([data-theme="light"]) .quick-title {
+      color: var(--text-muted);
+    }
+    :host-context([data-theme="light"]) .toggle-label.active-label,
+    :host-context([data-theme="light"]) .card-tag {
+      color: var(--cyan);
+    }
+    :host-context([data-theme="light"]) .status-dot {
+      box-shadow: none;
+    }
+
+    :host-context([data-theme="light"]) .left-section,
+    :host-context([data-theme="light"]) .chat-card {
+      background: var(--bg-card);
+      border-color: var(--border);
+      box-shadow: var(--shadow-sm);
+    }
+    :host-context([data-theme="light"]) .chip-btn,
+    :host-context([data-theme="light"]) .quick-chip-btn {
+      background: var(--bg-surface);
+      border-color: var(--border);
+      color: var(--text-secondary);
+    }
+    :host-context([data-theme="light"]) .chip-btn:hover,
+    :host-context([data-theme="light"]) .chip-btn.active {
+      background: var(--cyan);
+      border-color: var(--cyan);
+      color: #ffffff;
+    }
+    :host-context([data-theme="light"]) .quick-chip-btn:hover {
+      background: var(--cyan-glow);
+      border-color: var(--cyan);
+      color: var(--cyan);
+    }
+
+    :host-context([data-theme="light"]) .tutorial-card {
+      background: var(--bg-card);
+      border-color: var(--border);
+    }
+    :host-context([data-theme="light"]) .tutorial-card:hover {
+      border-color: rgba(8, 145, 178, 0.4);
+      box-shadow: var(--shadow-md);
+    }
+    :host-context([data-theme="light"]) .thumbnail-placeholder {
+      background: linear-gradient(135deg, #e8edf4 0%, #dfe5ee 100%);
+    }
+    :host-context([data-theme="light"]) .play-icon {
+      background: rgba(8, 145, 178, 0.12);
+      border-color: var(--cyan);
+      color: var(--cyan);
+    }
+    :host-context([data-theme="light"]) .coming-soon-badge {
+      color: var(--yellow-accent);
+    }
+
+    :host-context([data-theme="light"]) .agent-avatar {
+      box-shadow: none;
+    }
+    :host-context([data-theme="light"]) .slider {
+      background-color: #cbd5e1;
+    }
+    :host-context([data-theme="light"]) input:checked + .slider {
+      background-color: var(--cyan);
+    }
+    :host-context([data-theme="light"]) .chat-messages::-webkit-scrollbar-thumb {
+      background: rgba(8, 145, 178, 0.5);
+    }
+    :host-context([data-theme="light"]) .message-avatar,
+    :host-context([data-theme="light"]) .step-guide {
+      background: var(--bg-surface);
+    }
+    :host-context([data-theme="light"]) .agent-wrapper .message-bubble {
+      background: var(--bg-surface);
+      border-color: var(--border);
+      color: var(--text-primary);
+    }
+    :host-context([data-theme="light"]) .user-wrapper .message-bubble {
+      background: var(--cyan);
+      color: #ffffff;
+    }
+    :host-context([data-theme="light"]) .step-item {
+      color: var(--cyan-dark);
+    }
+    :host-context([data-theme="light"]) .highlight-action-btn {
+      background: var(--cyan-glow);
+      border-color: var(--cyan);
+      color: var(--cyan);
+    }
+    :host-context([data-theme="light"]) .highlight-action-btn:hover {
+      background: var(--cyan);
+      color: #ffffff;
+    }
+    :host-context([data-theme="light"]) .typing-dot {
+      background: var(--cyan);
+    }
+
+    :host-context([data-theme="light"]) .quick-chips {
+      background: var(--bg-dark);
+      border-top-color: var(--border);
+    }
+    :host-context([data-theme="light"]) .chat-input {
+      background: var(--bg-card);
+      border-color: var(--border);
+      color: var(--text-primary);
+    }
+    :host-context([data-theme="light"]) .chat-input:focus {
+      border-color: var(--cyan);
+      box-shadow: 0 0 0 3px var(--cyan-glow);
+    }
+    :host-context([data-theme="light"]) .send-btn {
+      background: var(--cyan);
+      color: #ffffff;
+    }
+    :host-context([data-theme="light"]) .send-btn:hover:not(:disabled) {
+      background: var(--cyan-dark);
+      box-shadow: none;
     }
   `]
 })

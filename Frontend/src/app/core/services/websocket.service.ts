@@ -103,7 +103,10 @@ export class WebSocketService {
     this.activeUser = user;
     this.activeMode = mode;
     this.activeToken = token;
-    this.socket?.emit('join-project', { projectId, user, mode, token });
+    // Si aún no conectó, el handler 'connect' hace el join; emitir aquí también lo duplicaría
+    if (this.socket?.connected) {
+      this.socket.emit('join-project', { projectId, user, mode, token });
+    }
   }
 
   emitCursorMove(projectId: string, cursor: { x: number; y: number }, user: any): void {

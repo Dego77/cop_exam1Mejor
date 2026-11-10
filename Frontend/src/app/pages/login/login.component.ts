@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, ActivatedRoute } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
+import { GoogleAccountService } from '../../core/services/google-account.service';
 
 interface UmlNode {
   x: number;
@@ -68,8 +69,9 @@ interface UmlNode {
               type="text" 
               class="input-field" 
               [(ngModel)]="fullName" 
-              name="fullName" 
-              placeholder="Ej. Alex Rivera" 
+              name="fullName"
+              autocomplete="name"
+              placeholder="Ej. Alex Rivera"
               required 
             />
           </div>
@@ -80,8 +82,9 @@ interface UmlNode {
               type="email" 
               class="input-field" 
               [(ngModel)]="email" 
-              name="email" 
-              placeholder="usuario@ejemplo.com" 
+              name="email"
+              autocomplete="email"
+              placeholder="usuario@ejemplo.com"
               required 
             />
           </div>
@@ -92,10 +95,16 @@ interface UmlNode {
               type="password" 
               class="input-field" 
               [(ngModel)]="password" 
-              name="password" 
-              placeholder="••••••••" 
+              name="password"
+              #passwordInput
+              [attr.autocomplete]="isLogin ? 'current-password' : 'new-password'"
+              placeholder="••••••••"
               required 
             />
+          </div>
+
+          <div class="google-notice" *ngIf="googleNotice && !errorMessage">
+            {{ googleNotice }}
           </div>
 
           <div class="error-alert" *ngIf="errorMessage">
@@ -107,6 +116,14 @@ interface UmlNode {
             <span *ngIf="loading" class="animate-pulse">Cargando...</span>
           </button>
         </form>
+
+        <!-- Acceso con proveedores externos (acción pendiente de definir) -->
+        <div class="social-row">
+          <button type="button" class="social-btn" (click)="onGoogleClick()" [disabled]="googleLoading">
+            {{ googleLoading ? 'Conectando…' : 'Google' }}
+          </button>
+          <button type="button" class="social-btn">GitHub</button>
+        </div>
       </div>
     </div>
   `,
@@ -306,10 +323,50 @@ interface UmlNode {
       padding: 10px;
       margin-top: 6px;
     }
+
+    .social-row {
+      display: flex;
+      gap: 10px;
+      margin-top: -6px;
+    }
+
+    .social-btn {
+      flex: 1;
+      padding: 9px 10px;
+      background: #0f1729;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      border-radius: var(--radius-md);
+      color: var(--text-bright);
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .social-btn:hover:not(:disabled) {
+      background: #16213a;
+      border-color: var(--border-hover);
+    }
+
+    .social-btn:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .google-notice {
+      background: rgba(0, 212, 255, 0.1);
+      border: 1px solid rgba(0, 212, 255, 0.3);
+      color: var(--cyan);
+      font-size: 11px;
+      padding: 6px 10px;
+      border-radius: var(--radius-sm);
+    }
   `]
 })
 export class LoginComponent implements AfterViewInit, OnDestroy {
   @ViewChild('netCanvas') netCanvas!: ElementRef<HTMLCanvasElement>;
+  @ViewChild('passwordInput') passwordInput?: ElementRef<HTMLInputElement>;
 
   isLogin = true;
   email = '';
@@ -317,12 +374,43 @@ export class LoginComponent implements AfterViewInit, OnDestroy {
   fullName = '';
   loading = false;
   errorMessage = '';
+  googleLoading = false;
+  googleNotice = '';
 
   private animFrameId: number | null = null;
   private resizeHandler: (() => void) | null = null;
   private nodes: UmlNode[] = [];
 
-  constructor(private auth: AuthService, private router: Router, private route: ActivatedRoute) {}
+  constructor(
+    private auth: AuthService,
+    private router: Router,
+    private route: ActivatedRoute,
+    private googleAccount: GoogleAccountService
+  ) {}
+
+  // Solo rellena el correo (y el nombre al registrarse): para entrar sigue haciendo falta la contraseña de ClassForge
+  async onGoogleClick(): Promise<void> {
+    this.errorMessage = '';
+    this.googleNotice = '';
+    this.googleLoading = true;
+    try {
+      const account = await this.googleAccount.pickAccount();
+      this.email = account.email;
+      this.password = '';
+      if (!this.isLogin && !this.fullName.trim()) {
+        this.fullName = account.name;
+      }
+      this.googleNotice = this.isLogin
+        ? 'Correo de Google cargado. Escribe tu contraseña de ClassForge para continuar.'
+        : 'Datos de Google cargados. Elige una contraseña para tu cuenta de ClassForge.';
+      setTimeout(() => this.passwordInput?.nativeElement.focus());
+    } catch (err: any) {
+      // Mensaje vacío = la persona cerró la ventana de Google; no es un error
+      if (err?.message) this.errorMessage = err.message;
+    } finally {
+      this.googleLoading = false;
+    }
+  }
 
   // Después de entrar, volver a donde venía el usuario (por ejemplo el "Modo Ver" móvil en /view)
   private navigateAfterAuth(): void {

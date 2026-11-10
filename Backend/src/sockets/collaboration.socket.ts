@@ -5,6 +5,91 @@ import { prisma } from '../config/prisma';
 // Mapa de projectId -> mapa de socketId a usuario
 const roomUsers = new Map<string, Map<string, any>>();
 
+// Latido de sesiones de trabajo: cada minuto se marca lastSeen de las sesiones conectadas.
+// Si el servidor se cae o reinicia, la sesión se cierra en su último latido y no queda "En curso" para siempre.
+const HEARTBEAT_MS = 60_000;
+const STALE_MS = 3 * 60_000;
+
+function activeSessionIds(): string[] {
+  const ids: string[] = [];
+  for (const projectMap of roomUsers.values()) {
+    for (const u of projectMap.values()) {
+      if (u.sessionId) ids.push(u.sessionId);
+    }
+  }
+  return ids;
+}
+
+export function isSessionActive(sessionId: string): boolean {
+  return activeSessionIds().includes(sessionId);
+}
+
+async function closeWorkSession(sessionId: string, startTime: Date, endTime: Date): Promise<void> {
+  const duration = Math.max(0, Math.floor((endTime.getTime() - startTime.getTime()) / 1000));
+  try {
+    await (prisma as any).workSession.update({
+      where: { id: sessionId },
+      data: { endTime, duration, lastSeen: endTime }
+    });
+  } catch (err) {
+    console.error('[Socket] Error al cerrar WorkSession en DB:', err);
+  }
+}
+
+async function heartbeatSessions(): Promise<void> {
+  const ids = activeSessionIds();
+  if (ids.length === 0) return;
+  try {
+    await (prisma as any).workSession.updateMany({
+      where: { id: { in: ids }, endTime: null },
+      data: { lastSeen: new Date() }
+    });
+  } catch (err) {
+    console.error('[Socket] Error en el latido de WorkSession:', err);
+  }
+}
+
+// Cierra las sesiones que dejaron de latir. Las filas sin lastSeen (anteriores al latido) no se tocan.
+async function sweepOrphanSessions(): Promise<void> {
+  try {
+    const orphans = await (prisma as any).workSession.findMany({
+      where: {
+        endTime: null,
+        lastSeen: { not: null, lt: new Date(Date.now() - STALE_MS) },
+        id: { notIn: activeSessionIds() }
+      },
+      select: { id: true, startTime: true, lastSeen: true }
+    });
+    for (const s of orphans) {
+      await closeWorkSession(s.id, new Date(s.startTime), new Date(s.lastSeen));
+    }
+    if (orphans.length > 0) {
+      console.log(`[Socket] ${orphans.length} sesión(es) de trabajo huérfana(s) cerrada(s) en su último latido`);
+    }
+  } catch (err) {
+    console.error('[Socket] Error al cerrar sesiones huérfanas:', err);
+  }
+}
+
+// Saca al socket de la sala de un proyecto: cierra su sesión de trabajo y avisa al resto
+async function leaveProjectRoom(io: Server, socket: Socket, room: string): Promise<void> {
+  const projectMap = roomUsers.get(room);
+  if (projectMap) {
+    const userObj = projectMap.get(socket.id);
+    if (userObj && userObj.sessionId) {
+      const startTime = userObj.joinedAt ? new Date(userObj.joinedAt) : new Date();
+      await closeWorkSession(userObj.sessionId, startTime, new Date());
+    }
+    projectMap.delete(socket.id);
+    if (projectMap.size === 0) {
+      roomUsers.delete(room);
+    } else {
+      io.to(room).emit('room-users', Array.from(projectMap.values()));
+    }
+  }
+  socket.to(room).emit('user-left', { socketId: socket.id });
+}
+
 // Nombre de quien hizo un cambio, para que la app móvil pueda mostrarlo
 function actorName(socket: Socket, projectId: string): string | undefined {
   return roomUsers.get(projectId)?.get(socket.id)?.fullName;
@@ -39,6 +124,13 @@ async function resolveViewer(projectId: string, token: string | undefined) {
 }
 
 export const setupCollaborationSockets = (io: Server) => {
+  // Al arrancar se cierran las sesiones que quedaron abiertas por un reinicio o caída
+  sweepOrphanSessions();
+  setInterval(async () => {
+    await heartbeatSessions();
+    await sweepOrphanSessions();
+  }, HEARTBEAT_MS);
+
   io.on('connection', (socket: Socket) => {
     console.log(`[Socket] Cliente conectado: ${socket.id}`);
 
@@ -69,6 +161,14 @@ export const setupCollaborationSockets = (io: Server) => {
         return;
       }
 
+      // Un join repetido del mismo socket al mismo proyecto no crea otra sesión de trabajo
+      if (socket.data.editProject === projectId) {
+        const currentMap = roomUsers.get(projectId);
+        if (currentMap) socket.emit('room-users', Array.from(currentMap.values()));
+        return;
+      }
+      socket.data.editProject = projectId;
+
       // Validar que el usuario puede entrar al proyecto, si existe en la base
       try {
         const project = await prisma.project.findUnique({
@@ -81,10 +181,19 @@ export const setupCollaborationSockets = (io: Server) => {
           const isCollab = project.collaborators?.some((c: any) => c.userId === uId);
           if (!isOwner && !isCollab) {
             console.warn(`[Socket] Acceso denegado: Usuario ${user.fullName || uId} no pertenece al proyecto ${projectId}`);
+            socket.data.editProject = undefined;
             return;
           }
         }
       } catch (err) {}
+
+      // Cambio de proyecto: se cierra la sesión del proyecto anterior
+      for (const room of Array.from(socket.rooms)) {
+        if (room !== socket.id && room !== projectId) {
+          await leaveProjectRoom(io, socket, room);
+          socket.leave(room);
+        }
+      }
 
       socket.join(projectId);
 
@@ -103,6 +212,7 @@ export const setupCollaborationSockets = (io: Server) => {
               projectId,
               userId: Number(user.id),
               startTime: joinedAt,
+              lastSeen: joinedAt,
               socketId: socket.id
             }
           });
@@ -231,36 +341,9 @@ export const setupCollaborationSockets = (io: Server) => {
     });
 
     socket.on('disconnecting', async () => {
-      for (const room of socket.rooms) {
+      for (const room of Array.from(socket.rooms)) {
         if (room !== socket.id) {
-          const projectMap = roomUsers.get(room);
-          if (projectMap) {
-            const userObj = projectMap.get(socket.id);
-            if (userObj && userObj.sessionId) {
-              const endTime = new Date();
-              const startTime = userObj.joinedAt ? new Date(userObj.joinedAt) : new Date();
-              const durationSec = Math.max(0, Math.floor((endTime.getTime() - startTime.getTime()) / 1000));
-              try {
-                await (prisma as any).workSession.update({
-                  where: { id: userObj.sessionId },
-                  data: {
-                    endTime,
-                    duration: durationSec
-                  }
-                });
-              } catch (err) {
-                console.error('[Socket] Error al cerrar WorkSession en DB:', err);
-              }
-            }
-            projectMap.delete(socket.id);
-            if (projectMap.size === 0) {
-              roomUsers.delete(room);
-            } else {
-              const activeUsers = Array.from(projectMap.values());
-              io.to(room).emit('room-users', activeUsers);
-            }
-          }
-          socket.to(room).emit('user-left', { socketId: socket.id });
+          await leaveProjectRoom(io, socket, room);
         }
       }
     });

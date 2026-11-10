@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { prisma } from '../config/prisma';
 import { AuthRequest } from '../middlewares/auth.middleware';
+import { isSessionActive } from '../sockets/collaboration.socket';
 
 export const createProject = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -184,9 +185,15 @@ export const getWorkHistory = async (req: AuthRequest, res: Response): Promise<v
       orderBy: { startTime: 'desc' }
     });
 
-    const totalDurationSeconds = sessions.reduce((acc: number, s: any) => {
+    // Una sesión abierta solo cuenta si está conectada ahora; las que quedaron sin cierre se marcan huérfanas
+    const withStatus = sessions.map((s: any) => ({
+      ...s,
+      orphan: !s.endTime && !isSessionActive(s.id)
+    }));
+
+    const totalDurationSeconds = withStatus.reduce((acc: number, s: any) => {
       if (s.duration) return acc + s.duration;
-      if (!s.endTime && s.startTime) {
+      if (!s.endTime && !s.orphan && s.startTime) {
         const diff = Math.floor((Date.now() - new Date(s.startTime).getTime()) / 1000);
         return acc + Math.max(0, diff);
       }
@@ -194,7 +201,7 @@ export const getWorkHistory = async (req: AuthRequest, res: Response): Promise<v
     }, 0);
 
     res.json({
-      sessions,
+      sessions: withStatus,
       totalDurationSeconds
     });
   } catch (error: any) {

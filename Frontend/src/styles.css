@@ -60,6 +60,65 @@
   --transition-slow: all 0.35s ease;
 }
 
+/* Tema claro (toggle Sol): grises suaves y texto pizarra para no cansar la vista */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-darkest: #eef1f6;
+  --bg-dark: #f3f5f9;
+  --bg-panel: #ffffff;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f5f8fc;
+  --bg-surface: #e8edf4;
+  --bg-surface-light: #dfe5ee;
+
+  --cyan: #0891b2;
+  --cyan-dark: #0e7490;
+  --cyan-glow: rgba(8, 145, 178, 0.12);
+  --violet: #6d28d9;
+  --violet-light: #7c3aed;
+  --violet-glow: rgba(109, 40, 217, 0.12);
+  --yellow-accent: #d97706;
+  --yellow-glow: rgba(217, 119, 6, 0.15);
+  --green: #059669;
+  --red: #dc2626;
+
+  --text-primary: #1e293b;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --text-bright: #0f172a;
+
+  --border: rgba(15, 23, 42, 0.1);
+  --border-hover: rgba(8, 145, 178, 0.35);
+  --border-active: rgba(8, 145, 178, 0.6);
+
+  --shadow-sm: 0 1px 4px rgba(15, 23, 42, 0.08);
+  --shadow-md: 0 4px 14px rgba(15, 23, 42, 0.1);
+  --shadow-lg: 0 8px 28px rgba(15, 23, 42, 0.12);
+  --shadow-cyan: 0 0 12px rgba(8, 145, 178, 0.15);
+  --shadow-violet: 0 0 12px rgba(109, 40, 217, 0.15);
+}
+
+/* Fade suave mientras se cambia de tema */
+html.theme-transition,
+html.theme-transition *,
+html.theme-transition *::before,
+html.theme-transition *::after {
+  transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease, fill 0.4s ease, stroke 0.4s ease !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  html.theme-transition,
+  html.theme-transition * { transition: none !important; }
+}
+
+:root[data-theme="light"] .glass-panel {
+  background: rgba(255, 255, 255, 0.92);
+}
+/* Los bloques de código se mantienen oscuros: el resaltado se lee mejor así */
+:root[data-theme="light"] .code-block {
+  background: #1e293b;
+}
+
 /* Reset */
 *, *::before, *::after {
   box-sizing: border-box;

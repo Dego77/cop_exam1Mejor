@@ -157,6 +157,34 @@ import { SupportAgentService } from '../../core/services/support-agent.service';
       background: #00d4ff;
       color: #000000;
     }
+
+    /* Tema claro */
+    :host-context([data-theme="light"]) .mascot-tooltip {
+      background: #ffffff;
+      border-color: rgba(8, 145, 178, 0.35);
+      box-shadow: var(--shadow-lg);
+    }
+    :host-context([data-theme="light"]) .tooltip-title {
+      color: var(--cyan);
+    }
+    :host-context([data-theme="light"]) .close-btn {
+      color: var(--text-secondary);
+    }
+    :host-context([data-theme="light"]) .close-btn:hover {
+      color: var(--text-bright);
+    }
+    :host-context([data-theme="light"]) .tooltip-text {
+      color: var(--text-primary);
+    }
+    :host-context([data-theme="light"]) .action-btn {
+      background: var(--cyan-glow);
+      border-color: var(--cyan);
+      color: var(--cyan-dark);
+    }
+    :host-context([data-theme="light"]) .action-btn:hover {
+      background: var(--cyan);
+      color: #ffffff;
+    }
   `]
 })
 export class AgentBubbleComponent implements OnInit, OnDestroy {
