@@ -779,7 +779,8 @@ import { MinimapComponent } from '../minimap/minimap.component';
       width: 230px;
       background: var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: var(--radius-md);
+      /* Rectángulo UML: esquinas en ángulo recto */
+      border-radius: 0;
       box-shadow: var(--shadow-md);
       cursor: move;
       pointer-events: auto;
@@ -2101,10 +2102,12 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     return (index - (sameFaceConns.length - 1) / 2) * spacing;
   }
 
-  getConnectorPath(conn: UMLConnector): string {
+  // Extremos de la relación sobre el borde de cada clase. La cara se elige por la dirección dominante
+  // y getConnectorOffsetOnFace separa las relaciones que comparten cara.
+  private getRawEndpoints(conn: UMLConnector): { sx: number; sy: number; tx: number; ty: number } | null {
     const source = this.findNode(conn.sourceNodeId);
     const target = this.findNode(conn.targetNodeId);
-    if (!source || !target) return '';
+    if (!source || !target) return null;
 
     const sourceW = this.getNodeWidth(source);
     const sourceH = this.getNodeHeight(source);
@@ -2122,10 +2125,27 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     const srcOffset = this.getConnectorOffsetOnFace(conn, false);
     const tgtOffset = this.getConnectorOffsetOnFace(conn, true);
 
-    let sx = scx;
-    let sy = scy;
-    let tx = tcx;
-    let ty = tcy;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      return {
+        sx: dx >= 0 ? source.positionX + sourceW : source.positionX,
+        sy: scy + srcOffset,
+        tx: dx >= 0 ? target.positionX : target.positionX + targetW,
+        ty: tcy + tgtOffset,
+      };
+    }
+    return {
+      sx: scx + srcOffset,
+      sy: dy >= 0 ? source.positionY + sourceH : source.positionY,
+      tx: tcx + tgtOffset,
+      ty: dy >= 0 ? target.positionY : target.positionY + targetH,
+    };
+  }
+
+  // Línea recta de borde a borde (UML 2.5); se recorta en el destino para que termine donde empieza el rombo o el triángulo
+  getConnectorPath(conn: UMLConnector): string {
+    const ends = this.getRawEndpoints(conn);
+    if (!ends) return '';
+    const { sx, sy, tx, ty } = ends;
 
     let trimOffset = 0;
     if (conn.type === 'Aggregation' || conn.type === 'Composition') {
@@ -2134,25 +2154,10 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
       trimOffset = 14;
     }
 
-    if (Math.abs(dx) >= Math.abs(dy)) {
-      // Recorrido horizontal
-      sx = dx >= 0 ? source.positionX + sourceW : source.positionX;
-      sy = scy + srcOffset;
-      const rawTx = dx >= 0 ? target.positionX : target.positionX + targetW;
-      tx = dx >= 0 ? rawTx - trimOffset : rawTx + trimOffset;
-      ty = tcy + tgtOffset;
-      const c1x = sx + (tx - sx) / 2;
-      return `M ${sx} ${sy} C ${c1x} ${sy}, ${c1x} ${ty}, ${tx} ${ty}`;
-    } else {
-      // Recorrido vertical
-      sx = scx + srcOffset;
-      sy = dy >= 0 ? source.positionY + sourceH : source.positionY;
-      const rawTy = dy >= 0 ? target.positionY : target.positionY + targetH;
-      tx = tcx + tgtOffset;
-      ty = dy >= 0 ? rawTy - trimOffset : rawTy + trimOffset;
-      const c1y = sy + (ty - sy) / 2;
-      return `M ${sx} ${sy} C ${sx} ${c1y}, ${tx} ${c1y}, ${tx} ${ty}`;
-    }
+    const len = Math.hypot(tx - sx, ty - sy) || 1;
+    const ex = tx - ((tx - sx) / len) * trimOffset;
+    const ey = ty - ((ty - sy) / len) * trimOffset;
+    return `M ${sx} ${sy} L ${ex} ${ey}`;
   }
 
   shouldShowSourceMultiplicity(conn: UMLConnector): boolean {
@@ -2311,70 +2316,17 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
   }
 
 
+  // El ángulo sigue a la línea recta, así el rombo y el triángulo quedan alineados aunque sea diagonal
   getSourceEndpoint(conn: UMLConnector): { x: number; y: number; angle: number } {
-    const source = this.findNode(conn.sourceNodeId);
-    const target = this.findNode(conn.targetNodeId);
-    if (!source || !target) return { x: 0, y: 0, angle: 0 };
-
-    const sourceW = this.getNodeWidth(source);
-    const sourceH = this.getNodeHeight(source);
-    const targetW = this.getNodeWidth(target);
-    const targetH = this.getNodeHeight(target);
-
-    const scx = source.positionX + sourceW / 2;
-    const scy = source.positionY + sourceH / 2;
-    const tcx = target.positionX + targetW / 2;
-    const tcy = target.positionY + targetH / 2;
-
-    const dx = tcx - scx;
-    const dy = tcy - scy;
-
-    const srcOffset = this.getConnectorOffsetOnFace(conn, false);
-
-    if (Math.abs(dx) >= Math.abs(dy)) {
-      const ex = dx >= 0 ? source.positionX + sourceW : source.positionX;
-      const ey = scy + srcOffset;
-      const angle = dx >= 0 ? 0 : Math.PI;
-      return { x: ex, y: ey, angle };
-    } else {
-      const ex = scx + srcOffset;
-      const ey = dy >= 0 ? source.positionY + sourceH : source.positionY;
-      const angle = dy >= 0 ? Math.PI / 2 : -Math.PI / 2;
-      return { x: ex, y: ey, angle };
-    }
+    const ends = this.getRawEndpoints(conn);
+    if (!ends) return { x: 0, y: 0, angle: 0 };
+    return { x: ends.sx, y: ends.sy, angle: Math.atan2(ends.ty - ends.sy, ends.tx - ends.sx) };
   }
 
   getTargetEndpoint(conn: UMLConnector): { x: number; y: number; angle: number } {
-    const source = this.findNode(conn.sourceNodeId);
-    const target = this.findNode(conn.targetNodeId);
-    if (!source || !target) return { x: 0, y: 0, angle: 0 };
-
-    const sourceW = this.getNodeWidth(source);
-    const sourceH = this.getNodeHeight(source);
-    const targetW = this.getNodeWidth(target);
-    const targetH = this.getNodeHeight(target);
-
-    const scx = source.positionX + sourceW / 2;
-    const scy = source.positionY + sourceH / 2;
-    const tcx = target.positionX + targetW / 2;
-    const tcy = target.positionY + targetH / 2;
-
-    const dx = tcx - scx;
-    const dy = tcy - scy;
-
-    const tgtOffset = this.getConnectorOffsetOnFace(conn, true);
-
-    if (Math.abs(dx) >= Math.abs(dy)) {
-      const ex = dx >= 0 ? target.positionX : target.positionX + targetW;
-      const ey = tcy + tgtOffset;
-      const angle = dx >= 0 ? 0 : Math.PI;
-      return { x: ex, y: ey, angle };
-    } else {
-      const ex = tcx + tgtOffset;
-      const ey = dy >= 0 ? target.positionY : target.positionY + targetH;
-      const angle = dy >= 0 ? Math.PI / 2 : -Math.PI / 2;
-      return { x: ex, y: ey, angle };
-    }
+    const ends = this.getRawEndpoints(conn);
+    if (!ends) return { x: 0, y: 0, angle: 0 };
+    return { x: ends.tx, y: ends.ty, angle: Math.atan2(ends.ty - ends.sy, ends.tx - ends.sx) };
   }
 
   getDiamondPoints(conn: UMLConnector): string {

@@ -50,7 +50,6 @@ import { CursorData } from '../../core/services/websocket.service';
             [attr.y]="node.positionY"
             width="220"
             height="140"
-            rx="8"
             fill="rgba(0, 212, 255, 0.25)"
             stroke="#00d4ff"
             stroke-width="2"
