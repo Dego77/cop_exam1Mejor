@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { UMLNode, UMLConnector, CanvasLabel, DiagramService } from '../../core/services/diagram.service';
 import { MinimapComponent } from '../minimap/minimap.component';
+import { UML_TYPES, normalizeUmlType } from '../../core/utils/uml-types';
 
 @Component({
   selector: 'app-canvas',
@@ -107,6 +108,19 @@ import { MinimapComponent } from '../minimap/minimap.component';
               stroke-width="2.5"
               stroke-linejoin="miter"
               style="cursor: pointer; pointer-events: all; filter: drop-shadow(0 0 6px rgba(0,212,255,0.8));"
+              (click)="onConnectorClick($event, conn)"
+            />
+
+            <!-- Flecha abierta de dependencia, en SVG -->
+            <polyline
+              *ngIf="conn.type === 'Dependency'"
+              [attr.points]="getOpenArrowPoints(conn)"
+              fill="none"
+              stroke="#00d4ff"
+              stroke-width="2.5"
+              stroke-linejoin="miter"
+              stroke-linecap="round"
+              style="cursor: pointer; pointer-events: all;"
               (click)="onConnectorClick($event, conn)"
             />
 
@@ -394,7 +408,6 @@ import { MinimapComponent } from '../minimap/minimap.component';
           <!-- Separador y lista de atributos -->
           <div class="card-section">
             <div class="section-header">
-              <span>Atributos</span>
               <button class="icon-btn-sm" (click)="addAttribute($event, node)" title="Añadir atributo">+</button>
             </div>
             
@@ -408,7 +421,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
               >
                 <span class="visibility-badge">{{ attr.visibility || '+' }}</span>
                 <span class="member-name">{{ attr.name }}</span>
-                <span class="member-type">: {{ attr.type }}</span>
+                <span class="member-type">: {{ displayType(attr.type) }}</span>
                 <button class="member-del" (click)="deleteAttribute($event, node, i)" title="Eliminar Atributo">✕</button>
               </div>
 
@@ -427,21 +440,18 @@ import { MinimapComponent } from '../minimap/minimap.component';
                 <input type="text" class="input-name" [(ngModel)]="attr.name" (blur)="saveMemberEdit(node)" (keyup.enter)="saveMemberEdit(node)" placeholder="nombre" />
                 <span class="colon">:</span>
                 <select class="input-type" [(ngModel)]="attr.type" (change)="saveMemberEdit(node)">
-                  <option *ngFor="let t of dataTypeOptions" [value]="t">{{ t }}</option>
+                  <option *ngFor="let t of typeOptionsFor(attr.type)" [value]="t">{{ t }}</option>
                 </select>
                 <button class="member-del-active" (click)="deleteAttribute($event, node, i)" title="Eliminar">✕</button>
               </div>
             </div>
 
-            <div class="member-empty" *ngIf="!node.attributes || node.attributes.length === 0">
-              + sin atributos (clic + para agregar)
-            </div>
+            <div class="member-empty" *ngIf="!node.attributes || node.attributes.length === 0"></div>
           </div>
 
           <!-- Separador y lista de métodos -->
           <div class="card-section">
             <div class="section-header">
-              <span>Métodos</span>
               <button class="icon-btn-sm" (click)="addMethod($event, node)" title="Añadir método">+</button>
             </div>
 
@@ -455,7 +465,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
               >
                 <span class="visibility-badge">{{ m.visibility || '+' }}</span>
                 <span class="member-name">{{ m.name }}()</span>
-                <span class="member-type">: {{ m.returnType || 'void' }}</span>
+                <span class="member-type">: {{ displayType(m.returnType || 'void') }}</span>
                 <button class="member-del" (click)="deleteMethod($event, node, i)" title="Eliminar Método">✕</button>
               </div>
 
@@ -478,9 +488,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
               </div>
             </div>
 
-            <div class="member-empty" *ngIf="!node.methods || node.methods.length === 0">
-              + sin métodos (clic + para agregar)
-            </div>
+            <div class="member-empty" *ngIf="!node.methods || node.methods.length === 0"></div>
           </div>
         </div>
 
@@ -586,6 +594,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
               <option value="Implementation">Implementación (- - ▷)</option>
               <option value="Aggregation">Agregación (───◇)</option>
               <option value="Composition">Composición (───◆)</option>
+              <option value="Dependency">Dependencia (- - -&gt;)</option>
             </select>
           </div>
 
@@ -848,15 +857,35 @@ import { MinimapComponent } from '../minimap/minimap.component';
     .card-section:last-child {
       border-bottom: none;
     }
+    /* Compartimento UML sin título: el "+" sale pegado al borde derecho y solo se ve al pasar el mouse por la clase */
+    .card-section {
+      position: relative;
+    }
     .section-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      font-size: 10px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      font-weight: 600;
-      margin-bottom: 4px;
+      position: absolute;
+      top: 50%;
+      left: 100%;
+      transform: translateY(-50%);
+      z-index: 1;
+    }
+    .uml-card .section-header .icon-btn-sm {
+      background: var(--bg-card);
+      border: 1px solid var(--border-hover);
+      border-left: none;
+      color: var(--cyan);
+      font-weight: 700;
+      border-radius: 0 3px 3px 0;
+    }
+    .uml-card .section-header .icon-btn-sm,
+    .uml-card .card-actions {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease;
+    }
+    .uml-card:hover .section-header .icon-btn-sm,
+    .uml-card:hover .card-actions {
+      opacity: 1;
+      pointer-events: auto;
     }
     .member-item {
       display: flex;
@@ -928,7 +957,7 @@ import { MinimapComponent } from '../minimap/minimap.component';
       color: var(--text-muted);
       cursor: pointer;
       font-size: 11px;
-      opacity: 0.6;
+      opacity: 0;
       transition: opacity 0.15s ease, color 0.15s ease;
     }
     .member-item:hover .member-del {
@@ -951,9 +980,16 @@ import { MinimapComponent } from '../minimap/minimap.component';
       color: #fff;
     }
     .member-empty {
-      font-size: 10px;
-      color: var(--text-muted);
-      font-style: italic;
+      min-height: 14px;
+    }
+    /* En pantallas táctiles no hay hover: los botones de edición quedan visibles */
+    @media (hover: none) {
+      .uml-card .section-header .icon-btn-sm,
+      .uml-card .card-actions,
+      .member-del {
+        opacity: 1;
+        pointer-events: auto;
+      }
     }
     .icon-btn, .icon-btn-sm {
       background: transparent;
@@ -1356,7 +1392,17 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
   }
 
   multOptions = ['+1', '+*', '+0..1', '+1..*', '1', '0..1', '1..*', '0..*', '*', '1..1'];
-  dataTypeOptions = ['Int', 'String', 'Double', 'Bool', 'Date', 'Char', 'Long', 'Arrays'];
+  dataTypeOptions = UML_TYPES;
+
+  displayType(type: string | null | undefined): string {
+    return normalizeUmlType(type);
+  }
+
+  // Si el atributo usa un tipo fuera de la lista (p. ej. una clase), se agrega para que el select no quede vacío.
+  typeOptionsFor(type: string | null | undefined): string[] {
+    const current = normalizeUmlType(type);
+    return current && !this.dataTypeOptions.includes(current) ? [...this.dataTypeOptions, current] : this.dataTypeOptions;
+  }
 
   // Arrastre y tamaño del lazo reflexivo
   draggingLoopConn: UMLConnector | null = null;
@@ -1847,6 +1893,8 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
 
   editAttr(event: MouseEvent, node: UMLNode, index: number): void {
     event.stopPropagation();
+    const attr = node.attributes[index];
+    if (attr) attr.type = normalizeUmlType(attr.type);
     this.editingAttrKey = `${node.id}_${index}`;
     this.editingMethodKey = null;
   }
@@ -1858,6 +1906,8 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
   }
 
   saveMemberEdit(node: UMLNode): void {
+    (node.attributes || []).forEach(a => a.type = normalizeUmlType(a.type));
+    (node.methods || []).forEach(m => { if (m.returnType) m.returnType = normalizeUmlType(m.returnType); });
     this.nodeMoved.emit(node);
   }
 
@@ -2370,6 +2420,24 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     const y2 = ep.y - size * sin + width * cos;
 
     return `${x0},${y0} ${x1},${y1} ${x2},${y2}`;
+  }
+
+  // Flecha abierta ">" de la dependencia: solo los dos brazos, sin cerrar el triángulo
+  getOpenArrowPoints(conn: UMLConnector): string {
+    const ep = this.getTargetEndpoint(conn);
+    const size = 14;
+    const width = 8;
+
+    const cos = Math.cos(ep.angle);
+    const sin = Math.sin(ep.angle);
+
+    const x1 = ep.x - size * cos + width * sin;
+    const y1 = ep.y - size * sin - width * cos;
+
+    const x2 = ep.x - size * cos - width * sin;
+    const y2 = ep.y - size * sin + width * cos;
+
+    return `${x1},${y1} ${ep.x},${ep.y} ${x2},${y2}`;
   }
 
   getMarkerEnd(type: string): string {

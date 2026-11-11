@@ -123,10 +123,10 @@ Cuando recibas un pedido (texto, transcripción de voz o foto de pizarrón), res
       "positionX": 100,
       "positionY": 100,
       "attributes": [
-        { "name": "attributeName", "type": "String | Integer | Double | Date | Boolean | UUID", "visibility": "+" }
+        { "name": "attributeName", "type": "String | Integer | Long | Double | Boolean | Char | Date | UUID | <NombreDeClase>", "visibility": "+" }
       ],
       "methods": [
-        { "name": "methodName", "returnType": "Boolean | String | void", "visibility": "+" }
+        { "name": "methodName", "returnType": "void | String | Integer | Double | Boolean | Date | <NombreDeClase>", "visibility": "+" }
       ]
     }
   ],
@@ -134,10 +134,10 @@ Cuando recibas un pedido (texto, transcripción de voz o foto de pizarrón), res
     {
       "name": "ExistingClassName",
       "attributesToAdd": [
-        { "name": "attributeName", "type": "String | Integer | Double | Date | Boolean | UUID", "visibility": "+" }
+        { "name": "attributeName", "type": "String | Integer | Long | Double | Boolean | Char | Date | UUID | <NombreDeClase>", "visibility": "+" }
       ],
       "methodsToAdd": [
-        { "name": "methodName", "returnType": "Boolean | String | void", "visibility": "+" }
+        { "name": "methodName", "returnType": "void | String | Integer | Double | Boolean | Date | <NombreDeClase>", "visibility": "+" }
       ]
     }
   ],

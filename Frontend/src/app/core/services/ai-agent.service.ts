@@ -377,7 +377,7 @@ export class AIAgentService {
               attrName = parts[0].trim();
               attrType = parts[1].trim();
             } else if (cleanAttr.toLowerCase().includes('id') || cleanAttr.toLowerCase().endsWith('_id')) {
-              attrType = 'Int';
+              attrType = 'Integer';
             } else if (cleanAttr.toLowerCase().includes('fecha') || cleanAttr.toLowerCase().includes('date')) {
               attrType = 'Date';
             } else if (cleanAttr.toLowerCase().includes('monto') || cleanAttr.toLowerCase().includes('precio')) {
@@ -398,7 +398,7 @@ export class AIAgentService {
       // Si no se extrajo ningún atributo, agregar un id por defecto
       if (attributes.length === 0) {
         const defaultId = `id_${className.toLowerCase()}`;
-        attributes.push({ visibility: '+', name: defaultId, type: 'Int' });
+        attributes.push({ visibility: '+', name: defaultId, type: 'Integer' });
       }
 
       const newNode: UMLNode = {

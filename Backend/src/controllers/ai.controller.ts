@@ -23,6 +23,7 @@ import {
 import { validateMutationPayload, reviewDiagramChange } from '../services/diagram-commands';
 import { ChirpVoice, synthesizeAIMessage } from '../services/text-to-speech.service';
 import { LocalLLMService, isLocalModel } from '../services/local-llm.service';
+import { normalizePayloadTypes } from '../services/uml-types';
 
 const CHAT_AUTHOR_SELECT = { id: true, fullName: true, avatarUrl: true };
 
@@ -532,6 +533,7 @@ async function applyClassMutations(
   const createdNodes: any[] = [];
   const updatedNodes: any[] = [];
   const deletedNodeIds: string[] = [];
+  normalizePayloadTypes(aiResponse);
 
   // classesToDelete: borrar clases enteras
   if (aiResponse.classesToDelete && aiResponse.classesToDelete.length > 0) {
@@ -1223,6 +1225,7 @@ export const clearAIChatHistory = async (req: AuthRequest, res: Response): Promi
 };
 
 async function applyPhotoDiagram(diagramId: string, payload: any) {
+  normalizePayloadTypes(payload);
   const detectedClasses = payload?.classesGenerated || payload?.classes || payload?.nodes || [];
   const detectedConnectors = payload?.connectorsGenerated || payload?.connectors || payload?.relationships || [];
   const createdNodes: any[] = [];

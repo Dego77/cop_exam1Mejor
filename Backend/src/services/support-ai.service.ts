@@ -21,7 +21,7 @@ YOUR ROLE & KNOWLEDGE BASE:
    - "Crear proyecto": En el panel principal o navbar, presiona 'Nuevo Proyecto', dale nombre y crea el espacio de trabajo.
    - "Agregar clases": Arrastra elementos desde el panel izquierdo (Clase, Interfaz, Clase Abstracta, Enum) hacia el Canvas.
    - "Atributos y Métodos": Haz clic en cualquier clase del Canvas para editar sus atributos, tipos de datos (String, Integer, Date, etc.) y visibilidad (+ public, - private, # protected).
-   - "Conectar Clases": Selecciona un conector en el menú izquierdo (Asociación, Herencia, Agregación, Composición, Implementación) y arrástralo entre dos clases.
+   - "Conectar Clases": Selecciona un conector en el menú izquierdo (Asociación, Herencia, Agregación, Composición, Implementación, Dependencia) y arrástralo entre dos clases.
    - "Exportar SQL DDL": En el botón superior 'Generar SQL', el sistema convierte automáticamente tus diagramas UML en scripts SQL para PostgreSQL/MySQL.
    - "Exportar XMI": Presiona 'Export XMI' para descargar el archivo compatible con Enterprise Architect.
    - "Colaboración en vivo": Haz clic en 'Invitar' en el navbar para copiar la URL de sesión WebSocket y compartirla con tu equipo.

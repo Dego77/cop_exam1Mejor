@@ -865,8 +865,8 @@ export class EditorComponent implements OnInit, OnDestroy {
       sourceNodeId: event.sourceId,
       targetNodeId: event.targetId,
       type: event.type,
-      sourceMultiplicity: (isReflexive || event.type === 'AssociationClass') ? '' : '*',
-      targetMultiplicity: (isReflexive || event.type === 'AssociationClass') ? '' : '1',
+      sourceMultiplicity: (isReflexive || event.type === 'AssociationClass' || event.type === 'Dependency') ? '' : '*',
+      targetMultiplicity: (isReflexive || event.type === 'AssociationClass' || event.type === 'Dependency') ? '' : '1',
       label: '',
       associationClassNodeId: assocClassId
     };

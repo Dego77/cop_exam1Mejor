@@ -139,6 +139,14 @@ import { UMLNode } from '../../core/services/diagram.service';
             <span class="conn-icon">───◆</span>
             <span>Composición</span>
           </button>
+          <button
+            class="connector-btn"
+            [class.active]="activeConnectorType === 'Dependency'"
+            (click)="selectConnector('Dependency')"
+          >
+            <span class="conn-icon"> - - &gt;</span>
+            <span>Dependencia</span>
+          </button>
         </div>
       </div>
 

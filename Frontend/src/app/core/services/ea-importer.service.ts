@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import { UMLNode, UMLConnector } from './diagram.service';
+import { normalizeUmlType } from '../utils/uml-types';
 
 export interface ImportedDiagram {
   projectName: string;
@@ -199,6 +200,8 @@ export class EaImporterService {
 
         if (isGeneralization || eaType.includes('Generalization') || eaType.includes('Inheritance') || eaType.includes('Realisation') || eaType.includes('Realization')) {
           connType = 'Inheritance';
+        } else if (type.includes('Dependency') || tagName.includes('dependency') || eaType.includes('Dependency')) {
+          connType = 'Dependency';
         } else if (isComposite) {
           connType = 'Composition';
         } else if (isShared) {
@@ -321,15 +324,7 @@ export class EaImporterService {
   }
 
   private normalizeEaType(raw: string): string {
-    const value = raw.trim();
-    const lower = value.toLowerCase();
-    if (lower === 'int' || lower === 'integer') return 'int';
-    if (lower === 'long') return 'long';
-    if (lower === 'double' || lower === 'float' || lower === 'decimal' || lower === 'number') return 'double';
-    if (lower === 'boolean' || lower === 'bool') return 'boolean';
-    if (lower === 'date' || lower === 'datetime' || lower === 'timestamp') return 'Date';
-    if (lower === 'string' || lower === 'char' || lower === 'varchar') return 'String';
-    return value;
+    return normalizeUmlType(raw);
   }
 
   private readMethods(el: Element): { visibility: string; name: string; returnType: string }[] {
