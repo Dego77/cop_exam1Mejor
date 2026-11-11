@@ -38,6 +38,13 @@ export interface AIMessage {
   createdAt?: string;
 }
 
+export interface LocalAIStatus {
+  online: boolean;
+  models: string[];
+  defaultModel: string;
+  visionModel: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class AIAgentService {
   private readonly apiUrl = `${API_BASE}/api/ai`;
@@ -87,6 +94,11 @@ export class AIAgentService {
     return this.http.post(`${this.apiUrl}/voice`, formData, {
       headers: new HttpHeaders({ Authorization: `Bearer ${this.auth.token}` })
     });
+  }
+
+  // IA Local (Ollama en el servidor): si está encendida y qué modelos tiene instalados
+  getLocalStatus(): Observable<LocalAIStatus> {
+    return this.http.get<LocalAIStatus>(`${this.apiUrl}/local/status`, { headers: this.headers });
   }
 
   getChatHistory(projectId: string): Observable<AIMessage[]> {

@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { LocalLLMService, isLocalModel, LOCAL_MODEL_PREFIX } from './local-llm.service';
 
 export interface AIServiceResponse {
   message: string;
@@ -296,6 +297,11 @@ REGLAS CRÍTICAS:
     model: string | undefined,
     logPrefix: string
   ): Promise<string> {
+    // IA Local (Ollama): mismo prompt, sin la lista de respaldo de Gemini
+    if (isLocalModel(model)) {
+      return LocalLLMService.generate(contents, config, LocalLLMService.modelName(model));
+    }
+
     const ai = await this.getAIInstance();
     const primaryModel = this.resolveModel(model);
     // gemini-2.5-flash va al final: es un modelo más viejo y menos saturado, red de seguridad cuando
@@ -332,6 +338,9 @@ REGLAS CRÍTICAS:
 
   private static buildFailureResponse(error: any, context: string): AIServiceResponse {
     console.error(`AI ${context} Error:`, error?.message || error);
+    if (error?.isLocalAI) {
+      return { message: error.message, action: 'GENERAL_RESPONSE', error: true };
+    }
     if (this.isAuthError(error)) {
       return {
         message: 'No se pudo conectar con el servicio de IA: la clave API de Gemini es inválida o no tiene permisos. Verifica la configuración del servidor.',
@@ -459,10 +468,12 @@ REGLAS CRÍTICAS:
       const cleanMimeType = (mimeType && mimeType.startsWith('image/')) ? mimeType : 'image/png';
       const promptText = `${this.composePrompt('Analiza la foto del pizarrón y copia solo lo que está dibujado. No rediseñes el diagrama y no digas que ya se reemplazó el lienzo.', '', options)}\nAnaliza esta foto de un pizarrón o cuaderno con un diagrama de clases UML. Extrae TODAS las clases con el nombre exacto, el estereotipo (Entity, Interface, Abstract, Enum), la visibilidad (- privado, + público, # protegido), los nombres y tipos de los atributos, los nombres y tipos de retorno de los métodos, y las coordenadas positionX/positionY.\nOBLIGATORIO: detecta TODAS las líneas, flechas y rombos entre clases y ponlos en 'connectorsGenerated' con 'sourceTempId', 'targetTempId', 'sourceClassName', 'targetClassName' y 'type' (Association | Aggregation | Composition | Inheritance | Implementation | Dependency).\nATENCIÓN: revisa los dos extremos de cada línea por multiplicidades (por ejemplo '+*', '+1'). Si una clase (como 'Cliente') toca rombos negros sólidos hacia hijos (como 'comprador', 'Vendedor'), el 'type' es 'Composition' y targetTempId es esa clase padre.\nCRÍTICO: responde SOLO con un JSON válido del esquema pedido. Sin markdown ni saludo fuera del JSON. En una copia de foto no agregues alternativas de senior. Las claves se quedan en inglés.`;
 
+      // La IA local necesita un modelo con visión para leer la foto
+      const visionModel = isLocalModel(model) ? `${LOCAL_MODEL_PREFIX}${LocalLLMService.visionModel}` : model;
       const text = await this.generateWithRetry(
         [promptText, { inlineData: { mimeType: cleanMimeType, data: base64Data } }],
         { responseMimeType: 'application/json', temperature: 0.1 },
-        model,
+        visionModel,
         'Vision'
       );
       const parsed = this.parseJsonResponse(text);

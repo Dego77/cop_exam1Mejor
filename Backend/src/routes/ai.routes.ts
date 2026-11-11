@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { handleTextPrompt, handlePhotoPrompt, handleVoicePrompt, getAIChatHistory, clearAIChatHistory, handleSupportPrompt, decideAIProposal, getAIMessageSpeech } from '../controllers/ai.controller';
+import { handleTextPrompt, handlePhotoPrompt, handleVoicePrompt, getAIChatHistory, clearAIChatHistory, handleSupportPrompt, decideAIProposal, getAIMessageSpeech, getLocalAIStatus } from '../controllers/ai.controller';
 import { authenticateToken } from '../middlewares/auth.middleware';
 import { upload } from '../middlewares/upload.middleware';
 
@@ -14,6 +14,7 @@ router.post('/voice', upload.single('voice'), handleVoicePrompt);
 router.post('/support', handleSupportPrompt);
 router.get('/history/:projectId', getAIChatHistory);
 router.get('/speech/:messageId', getAIMessageSpeech);
+router.get('/local/status', getLocalAIStatus);
 router.delete('/history/:projectId', clearAIChatHistory);
 
 export default router;

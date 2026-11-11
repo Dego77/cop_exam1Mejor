@@ -22,6 +22,7 @@ import {
 } from '../services/chat-prompt';
 import { validateMutationPayload, reviewDiagramChange } from '../services/diagram-commands';
 import { ChirpVoice, synthesizeAIMessage } from '../services/text-to-speech.service';
+import { LocalLLMService, isLocalModel } from '../services/local-llm.service';
 
 const CHAT_AUTHOR_SELECT = { id: true, fullName: true, avatarUrl: true };
 
@@ -1067,10 +1068,11 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
 
     const isPrivate = isPrivateRequest(req);
 
+    // El texto lo reconoce el navegador; sin él (por ejemplo en Firefox) queda el mensaje genérico
+    const transcript = String(req.body?.transcript || '').trim().slice(0, 5000);
+
     let userMessage: ChatMessageRecord | null = null;
     if (userId && !isPrivate) {
-      // El texto lo reconoce el navegador; sin él (por ejemplo en Firefox) queda el mensaje genérico
-      const transcript = String(req.body?.transcript || '').trim().slice(0, 5000);
       const content = transcript ? `🎙️ "${transcript}"` : 'Nota de voz enviada';
       userMessage = await saveAndBroadcastChat(req, { projectId, userId, sender: 'USER', mode: 'VOICE', content, mediaUrl: `/uploads/${file.filename}` });
       emitAIThinking(req, projectId, userMessage.user, true);
@@ -1082,7 +1084,18 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
     const contextToUse = buildDiagramContext(diagram);
     let aiResponse: AIServiceResponse;
     try {
-      aiResponse = await AIAgentService.processVoicePrompt(file.path, file.mimetype, contextToUse, model, asker);
+      if (!isLocalModel(model)) {
+        aiResponse = await AIAgentService.processVoicePrompt(file.path, file.mimetype, contextToUse, model, asker);
+      } else if (transcript) {
+        // La IA local no escucha audio: responde al texto que reconoció el navegador
+        aiResponse = await AIAgentService.processTextPrompt(transcript, contextToUse, model, asker);
+      } else {
+        aiResponse = {
+          message: 'La IA local necesita el texto reconocido de la nota de voz. Usa Chrome o escribe el pedido.',
+          action: 'GENERAL_RESPONSE',
+          error: true,
+        };
+      }
     } finally {
       if (userMessage) emitAIThinking(req, projectId, userMessage.user, false);
     }
@@ -1106,6 +1119,11 @@ export const handleVoicePrompt = async (req: AuthRequest, res: Response): Promis
   } catch (error: any) {
     res.status(500).json({ error: 'Error al procesar nota de voz: ' + error.message });
   }
+};
+
+// IA Local: si Ollama está encendido en el servidor y qué modelos tiene instalados
+export const getLocalAIStatus = async (_req: AuthRequest, res: Response): Promise<void> => {
+  res.json(await LocalLLMService.status());
 };
 
 export const getAIChatHistory = async (req: AuthRequest, res: Response): Promise<void> => {

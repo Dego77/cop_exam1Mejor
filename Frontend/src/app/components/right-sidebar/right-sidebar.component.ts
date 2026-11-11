@@ -12,6 +12,15 @@ import { AuthService } from '../../core/services/auth.service';
 import { ChatTextComponent } from '../chat-text/chat-text.component';
 import { colorForUser } from '../../core/utils/avatar-color';
 
+// Modelo elegible en el chat. Los locales (id 'local:<modelo>') corren con Ollama en el servidor.
+interface AIAgentOption {
+  id: string;
+  name: string;
+  provider: string;
+  local?: boolean;
+  offline?: boolean;
+}
+
 @Component({
   selector: 'app-right-sidebar',
   standalone: true,
@@ -172,6 +181,15 @@ import { colorForUser } from '../../core/utils/avatar-color';
               <span class="agent-name">{{ selectedAgent.name }}</span>
               <span class="chevron">▾</span>
             </button>
+            <button
+              class="local-ai-chip"
+              [class.active]="isLocalAgent"
+              (click)="toggleLocalAI()"
+              [title]="isLocalAgent ? 'Volver a Gemini' : 'Usar la IA Local (Ollama en el servidor, sin internet)'"
+            >
+              <span class="local-dot" [class.online]="localAIOnline === true" [class.offline]="localAIOnline === false"></span>
+              IA Local
+            </button>
 
             <!-- Menú flotante del agente -->
             <div class="agent-dropdown-menu" *ngIf="showAgentMenu" (click)="$event.stopPropagation()">
@@ -180,6 +198,7 @@ import { colorForUser } from '../../core/utils/avatar-color';
                 *ngFor="let agent of availableAgents" 
                 class="agent-dropdown-item"
                 [class.active]="agent.id === selectedAgent.id"
+                [class.disabled]="agent.offline"
                 (click)="selectAgent(agent)"
               >
                 <div class="agent-item-info">
@@ -709,6 +728,43 @@ import { colorForUser } from '../../core/utils/avatar-color';
       font-size: 12px;
       font-weight: 700;
     }
+    .agent-dropdown-item.disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .local-ai-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-left: 6px;
+      padding: 4px 10px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .local-ai-chip:hover {
+      color: var(--green);
+      border-color: var(--green);
+    }
+    .local-ai-chip.active {
+      background: var(--green);
+      border-color: var(--green);
+      color: #fff;
+    }
+    .local-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+    .local-dot.online { background: var(--green); }
+    .local-dot.offline { background: var(--red); }
+    .local-ai-chip.active .local-dot { background: #fff; }
     .chat-input-row {
       display: flex;
       align-items: flex-end;
@@ -1263,21 +1319,91 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
   isDraggingPhoto = false;
 
 
-  availableAgents = [
+  private readonly cloudAgents: AIAgentOption[] = [
     { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', provider: 'Google GenAI (Predeterminado)' },
     { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', provider: 'Google High-Reasoning' },
   ];
-  selectedAgent = this.availableAgents[0];
+  availableAgents: AIAgentOption[] = [...this.cloudAgents];
+  selectedAgent: AIAgentOption = this.availableAgents[0];
   showAgentMenu = false;
+  // null = todavía no se consultó si Ollama está encendido en el servidor
+  localAIOnline: boolean | null = null;
+
+  get isLocalAgent(): boolean {
+    return !!this.selectedAgent.local;
+  }
 
   toggleAgentMenu(event: MouseEvent): void {
     event.stopPropagation();
     this.showAgentMenu = !this.showAgentMenu;
+    if (this.showAgentMenu) this.refreshLocalAI();
   }
 
-  selectAgent(agent: any): void {
+  selectAgent(agent: AIAgentOption): void {
+    if (agent.offline) {
+      this.showChatNotice('La IA local no está disponible: inicia Ollama en el servidor (ollama serve).');
+      return;
+    }
     this.selectedAgent = agent;
     this.showAgentMenu = false;
+    try { localStorage.setItem(this.agentPreferenceKey(), agent.id); } catch { }
+  }
+
+  // Botón "IA Local": cambia entre el primer modelo local instalado y Gemini
+  toggleLocalAI(): void {
+    if (this.isLocalAgent) {
+      this.selectAgent(this.cloudAgents[0]);
+      return;
+    }
+    this.refreshLocalAI(() => {
+      const local = this.availableAgents.find(a => a.local && !a.offline);
+      if (local) this.selectAgent(local);
+      else this.showChatNotice('La IA local no está disponible: inicia Ollama en el servidor (ollama serve) y descarga un modelo (ollama pull qwen2.5:7b).');
+    });
+  }
+
+  // Agrega al menú los modelos que Ollama tiene instalados (el de visión solo sirve para fotos)
+  private refreshLocalAI(done?: () => void): void {
+    this.aiService.getLocalStatus().subscribe({
+      next: (status) => {
+        this.localAIOnline = status.online;
+        const textModels = status.models.filter(m => m !== status.visionModel);
+        const localAgents: AIAgentOption[] = status.online && textModels.length
+          ? textModels.map(m => ({ id: `local:${m}`, name: `IA Local · ${m}`, provider: 'Ollama · sin internet', local: true }))
+          : [{ id: 'local:', name: 'IA Local', provider: status.online ? 'Ollama sin modelos instalados' : 'Ollama apagado', local: true, offline: true }];
+        this.availableAgents = [...this.cloudAgents, ...localAgents];
+        const current = this.availableAgents.find(a => a.id === this.selectedAgent.id);
+        if (current) this.selectedAgent = current;
+        else if (this.selectedAgent.local) this.selectedAgent = this.cloudAgents[0];
+        done?.();
+      },
+      error: () => {
+        this.localAIOnline = false;
+        done?.();
+      }
+    });
+  }
+
+  private agentPreferenceKey(): string {
+    return `classforge_ai_model_${this.auth.currentUser?.id ?? 'default'}`;
+  }
+
+  // Recupera el último modelo elegido; uno local solo si Ollama lo sigue teniendo
+  private restoreAgentPreference(): void {
+    let saved: string | null = null;
+    try { saved = localStorage.getItem(this.agentPreferenceKey()); } catch { }
+    if (!saved) return;
+    const cloud = this.cloudAgents.find(a => a.id === saved);
+    if (cloud) {
+      this.selectedAgent = cloud;
+      return;
+    }
+    if (saved.startsWith('local:')) {
+      this.refreshLocalAI(() => {
+        const local = this.availableAgents.find(a => a.id === saved && !a.offline);
+        if (local) this.selectedAgent = local;
+      });
+    }
   }
 
   triggerFileSelect(): void {
@@ -1362,6 +1488,7 @@ export class RightSidebarComponent implements OnInit, OnChanges, OnDestroy {
 
   ngOnInit(): void {
     this.restoreAIVoicePreference();
+    this.restoreAgentPreference();
     if (this.projectId) {
       this.loadHistory();
     }
