@@ -3,7 +3,7 @@
   "appName": "ClassForge Viewer",
   "webDir": "www",
   "server": {
-    "url": "http://3.138.124.211:4200/view",
+    "url": "http://18.207.168.32:4200/view",
     "cleartext": true
   },
   "android": {

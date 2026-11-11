@@ -3,7 +3,7 @@
 La app abre la página web de ClassForge en `/view`: el dueño o un colaborador ve el diagrama y el chat de la IA en tiempo real, sin poder editar.
 
 ## Configurar el servidor
-En `capacitor.config.json`, `server.url` apunta al frontend desplegado (por defecto `http://3.138.124.211:4200/view`). Si cambia la IP o el puerto, edítalo y ejecuta:
+En `capacitor.config.json`, `server.url` apunta al frontend desplegado (por defecto `http://18.207.168.32:4200/view`). Si cambia la IP o el puerto, edítalo y ejecuta:
 
 ```bash
 npm run android:sync
